@@ -1,14 +1,19 @@
-use std::{marker::PhantomData, rc::Rc};
+use std::{fmt, marker::PhantomData, rc::Rc};
 
 use windows::Win32::{
     Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
-    Media::Audio::{
-        DEVICE_STATE_ACTIVE, EDataFlow, IMMDevice, IMMDeviceCollection, IMMDeviceEnumerator,
-        MMDeviceEnumerator, eCapture, eConsole, eRender,
+    Media::{
+        Audio::{
+            DEVICE_STATE_ACTIVE, EDataFlow, IAudioClient, IMMDevice, IMMDeviceCollection,
+            IMMDeviceEnumerator, MMDeviceEnumerator, WAVE_FORMAT_PCM, WAVEFORMATEX,
+            WAVEFORMATEXTENSIBLE, WAVEFORMATEXTENSIBLE_0, eCapture, eConsole, eRender,
+        },
+        KernelStreaming::{KSDATAFORMAT_SUBTYPE_PCM, WAVE_FORMAT_EXTENSIBLE},
+        Multimedia::{KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, WAVE_FORMAT_IEEE_FLOAT},
     },
     System::Com::{
-        CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
-        STGM_READ,
+        CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
+        CoUninitialize, STGM_READ,
     },
 };
 
@@ -44,9 +49,170 @@ impl AudioDevice {
         let name = unsafe { property_store.GetValue(&PKEY_Device_FriendlyName)? };
         Ok(name.to_string())
     }
+
+    pub fn get_audio_client(&self) -> anyhow::Result<AudioClient> {
+        let client = unsafe { self.device.Activate::<IAudioClient>(CLSCTX_ALL, None)? };
+        Ok(AudioClient { client })
+    }
 }
 
-/// Get active audio devices (render or capture) and return them in a vector, with the default device first
+pub struct AudioClient {
+    client: IAudioClient,
+}
+
+const WAVEFORMATEXTENSIBLE_CB_SIZE: usize =
+    size_of::<WAVEFORMATEXTENSIBLE>() - size_of::<WAVEFORMATEX>();
+
+impl AudioClient {
+    pub fn get_mix_format(&self) -> anyhow::Result<WaveFormatExtensible> {
+        let temp_fmt_ptr = unsafe { self.client.GetMixFormat()? };
+        let temp_fmt = unsafe { *temp_fmt_ptr };
+
+        // GetMixFormat有可能返回WAVEFORMATEX或WAVEFORMATEXTENSIBLE
+        if temp_fmt.wFormatTag as u32 == WAVE_FORMAT_EXTENSIBLE
+            && temp_fmt.cbSize as usize == WAVEFORMATEXTENSIBLE_CB_SIZE
+        {
+            // 返回了WAVEFORMATEXTENSIBLE，直接读取
+            let format = WaveFormatExtensible {
+                wave_format_extensible: unsafe {
+                    temp_fmt_ptr.cast::<WAVEFORMATEXTENSIBLE>().read()
+                },
+            };
+
+            unsafe { CoTaskMemFree(Some(temp_fmt_ptr.cast())) };
+
+            Ok(format)
+        } else {
+            unsafe { CoTaskMemFree(Some(temp_fmt_ptr.cast())) };
+
+            // 返回了WAVEFORMATEX，转换为WAVEFORMATEXTENSIBLE
+            WaveFormatExtensible::from_wave_format_ex(temp_fmt)
+        }
+    }
+}
+
+pub enum SampleType {
+    Float,
+    Int,
+}
+
+pub struct WaveFormatExtensible {
+    wave_format_extensible: WAVEFORMATEXTENSIBLE,
+}
+
+impl fmt::Debug for WaveFormatExtensible {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let format_ext = &self.wave_format_extensible;
+        let format = &format_ext.Format;
+        f.debug_struct("WaveFormat")
+            .field("nAvgBytesPerSec", &{ format.nAvgBytesPerSec })
+            .field("cbSize", &{ format.cbSize })
+            .field("nBlockAlign", &{ format.nBlockAlign })
+            .field("wBitsPerSample", &{ format.wBitsPerSample })
+            .field("nSamplesPerSec", &{ format.nSamplesPerSec })
+            .field("wFormatTag", &{ format.wFormatTag })
+            .field("wValidBitsPerSample", &unsafe {
+                format_ext.Samples.wValidBitsPerSample
+            })
+            .field("SubFormat", &{ format_ext.SubFormat })
+            .field("nChannel", &{ format_ext.Format.nChannels })
+            .field("dwChannelMask", &{ format_ext.dwChannelMask })
+            .finish()
+    }
+}
+
+impl WaveFormatExtensible {
+    /// Build a [WAVEFORMATEXTENSIBLE](https://docs.microsoft.com/en-us/windows/win32/api/mmreg/ns-mmreg-waveformatextensible) struct for the given parameters.
+    /// `channel_mask` is optional. If a mask is provided, it will be used. If not, a default mask will be created.
+    /// This can be used to work around quirks for some device drivers.
+    /// If the default is not accepted, try again using a zero mask, `Some(0)`.
+    fn new(
+        storebits: usize,
+        validbits: usize,
+        sample_type: SampleType,
+        samplerate: usize,
+        channels: usize,
+        channel_mask: Option<u32>,
+    ) -> Self {
+        let blockalign = channels * storebits / 8;
+        let byterate = samplerate * blockalign;
+
+        let wave_format_ex = WAVEFORMATEX {
+            cbSize: 22,
+            nAvgBytesPerSec: byterate as u32,
+            nBlockAlign: blockalign as u16,
+            nChannels: channels as u16,
+            nSamplesPerSec: samplerate as u32,
+            wBitsPerSample: storebits as u16,
+            wFormatTag: WAVE_FORMAT_EXTENSIBLE as u16,
+        };
+        let sample = WAVEFORMATEXTENSIBLE_0 {
+            wValidBitsPerSample: validbits as u16,
+        };
+        let subformat = match sample_type {
+            SampleType::Float => KSDATAFORMAT_SUBTYPE_IEEE_FLOAT,
+            SampleType::Int => KSDATAFORMAT_SUBTYPE_PCM,
+        };
+        // Only max 18 mask channel positions are defined,
+        // https://docs.microsoft.com/en-us/windows/win32/api/mmreg/ns-mmreg-waveformatextensible
+        let mask = if let Some(given_mask) = channel_mask {
+            given_mask
+        } else {
+            match channels {
+                ch if ch <= 18 => {
+                    // setting bit for each channel
+                    (1 << ch) - 1
+                }
+                _ => 0,
+            }
+        };
+        let wave_format_extensible = WAVEFORMATEXTENSIBLE {
+            Format: wave_format_ex,
+            Samples: sample,
+            SubFormat: subformat,
+            dwChannelMask: mask,
+        };
+        Self {
+            wave_format_extensible,
+        }
+    }
+
+    fn from_wave_format_ex(wave_format_ex: WAVEFORMATEX) -> anyhow::Result<Self> {
+        Ok(Self {
+            wave_format_extensible: WAVEFORMATEXTENSIBLE {
+                Format: WAVEFORMATEX {
+                    wFormatTag: WAVE_FORMAT_EXTENSIBLE as u16,
+                    cbSize: WAVEFORMATEXTENSIBLE_CB_SIZE as u16,
+                    // blockalign是一个frame的字节数, nSamplesPerSec是每秒的frame数（或者说每秒每个通道的sample数）
+                    nAvgBytesPerSec: wave_format_ex.nSamplesPerSec
+                        * wave_format_ex.nBlockAlign as u32,
+                    // 8 * blockalign算出一个frame的bits数，一个frame包含nChannels个sample，除以nChannels得到每个sample/channel的bits数
+                    // frame1(channel1, channel2) frame2(channel1, channel2) frame3(channel1, channel2) ... frameN(channel1, channel2)
+                    // 原来的wBitsPerSample是有效位数，但是WAVEFORMATEXTENSIBLE中代表存储位数
+                    wBitsPerSample: 8 * wave_format_ex.nBlockAlign / wave_format_ex.nChannels,
+                    ..wave_format_ex
+                },
+                Samples: WAVEFORMATEXTENSIBLE_0 {
+                    wValidBitsPerSample: wave_format_ex.wBitsPerSample,
+                },
+                dwChannelMask: if wave_format_ex.nChannels <= 18 {
+                    (1 << wave_format_ex.nChannels) - 1
+                } else {
+                    0
+                },
+                SubFormat: match wave_format_ex.wFormatTag as u32 {
+                    WAVE_FORMAT_PCM => KSDATAFORMAT_SUBTYPE_PCM,
+                    WAVE_FORMAT_IEEE_FLOAT => KSDATAFORMAT_SUBTYPE_IEEE_FLOAT,
+                    _ => anyhow::bail!(
+                        "Unsupported format tag: {}",
+                        wave_format_ex.wFormatTag as u32
+                    ),
+                },
+            },
+        })
+    }
+}
+
 fn get_active_audio_devices(e_data_flow: EDataFlow) -> anyhow::Result<Vec<AudioDevice>> {
     let enumerator: IMMDeviceEnumerator =
         unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)? };
@@ -58,46 +224,28 @@ fn get_active_audio_devices(e_data_flow: EDataFlow) -> anyhow::Result<Vec<AudioD
         let device = unsafe { device_collection.Item(i)? };
         devices.push(AudioDevice { device });
     }
-    let default_device = AudioDevice {
-        device: unsafe { enumerator.GetDefaultAudioEndpoint(e_data_flow, eConsole)? },
-    };
-    let default_device_id = default_device.get_id()?;
-    for i in 0..count {
-        if devices[i as usize].get_id()? == default_device_id {
-            println!(
-                "Default device: {}",
-                devices[i as usize].get_friendly_name()?
-            );
-            devices.swap(0, i as usize);
-            break;
-        }
-    }
     Ok(devices)
-}
-
-pub fn get_active_render_devices() -> anyhow::Result<Vec<AudioDevice>> {
-    get_active_audio_devices(eRender)
 }
 
 pub fn get_active_capture_devices() -> anyhow::Result<Vec<AudioDevice>> {
     get_active_audio_devices(eCapture)
 }
 
-#[test]
-fn test() -> anyhow::Result<()> {
-    let _com_mta_guard = init_com_mta()?;
-    let render_devices = get_active_render_devices()?;
-    let capture_devices = get_active_capture_devices()?;
+pub fn get_active_render_devices() -> anyhow::Result<Vec<AudioDevice>> {
+    get_active_audio_devices(eRender)
+}
 
-    println!("Active render devices: {}", render_devices.len());
-    for device in render_devices {
-        println!("  - {} ({})", device.get_friendly_name()?, device.get_id()?);
-    }
+fn get_default_audio_device(e_data_flow: EDataFlow) -> anyhow::Result<AudioDevice> {
+    let enumerator: IMMDeviceEnumerator =
+        unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)? };
+    let device = unsafe { enumerator.GetDefaultAudioEndpoint(e_data_flow, eConsole)? };
+    Ok(AudioDevice { device })
+}
 
-    println!("Active capture devices: {}", capture_devices.len());
-    for device in capture_devices {
-        println!("  - {} ({})", device.get_friendly_name()?, device.get_id()?);
-    }
+pub fn get_default_capture_device() -> anyhow::Result<AudioDevice> {
+    get_default_audio_device(eCapture)
+}
 
-    Ok(())
+pub fn get_default_render_device() -> anyhow::Result<AudioDevice> {
+    get_default_audio_device(eRender)
 }
