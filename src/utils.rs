@@ -39,7 +39,7 @@ pub fn reg_subkey_exists(full_path: &str) -> anyhow::Result<bool> {
     }
 }
 
-pub fn get_reg_value<T>(full_path: &str) -> anyhow::Result<T>
+pub fn reg_get_value<T>(full_path: &str) -> anyhow::Result<T>
 where
     T: FromRegValue,
 {
@@ -49,7 +49,7 @@ where
     Ok(value)
 }
 
-pub fn set_reg_value<T>(full_path: &str, value: &T) -> anyhow::Result<()>
+pub fn reg_set_value<T>(full_path: &str, value: &T) -> anyhow::Result<()>
 where
     T: ToRegValue,
 {
