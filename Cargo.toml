@@ -3,6 +3,9 @@ name = "voice_box"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
 anyhow = "1.0.104"
 constcat = "0.6.1"
