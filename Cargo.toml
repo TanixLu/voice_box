@@ -6,6 +6,9 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib"]
 
+[profile.release]
+panic = "abort"
+
 [dependencies]
 anyhow = "1.0.104"
 constcat = "0.6.1"
