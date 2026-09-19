@@ -2,6 +2,7 @@ use core::fmt;
 use std::fmt::Debug;
 
 use is_elevated::is_elevated;
+use single_instance::SingleInstance;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{
     fmt::{
@@ -19,7 +20,7 @@ use winreg::{
     types::{FromRegValue, ToRegValue},
 };
 
-const LOG_ENV_VAR: &str = "VOICE_BOX_LOG";
+pub const LOG_ENABLE_STR: &str = "VOICE_BOX_LOG";
 const LOG_FILE_NAME: &str = "voice_box.log";
 
 fn split_reg_path(full_path: &str) -> anyhow::Result<(RegKey, &str, &str)> {
@@ -99,11 +100,14 @@ where
 }
 
 pub fn init_logging() {
-    if std::env::var_os(LOG_ENV_VAR).is_none() {
+    // runas::Command不能传递环境变量，因此使用命令行参数来启用日志记录
+    let args: Vec<String> = std::env::args().collect();
+    let log_enable = std::env::var_os(LOG_ENABLE_STR).is_some()
+        || args.get(3).map(String::as_str) == Some(LOG_ENABLE_STR);
+    if !log_enable {
         return;
     }
 
-    // 只有在环境变量 LOG_ENV_VAR 被设置时才启用日志记录
     let role = if is_elevated() { "ADMIN" } else { "USER" };
     let pid = std::process::id();
     let formatter = ProcessFormatter { role, pid };
@@ -114,4 +118,13 @@ pub fn init_logging() {
         .with_writer(log_file)
         .event_format(formatter)
         .init();
+}
+
+pub fn check_single_instance() -> anyhow::Result<SingleInstance> {
+    let single_instance = SingleInstance::new("VoiceBoxSingleInstance")?;
+    anyhow::ensure!(
+        single_instance.is_single(),
+        "Another instance of VoiceBox is already running."
+    );
+    Ok(single_instance)
 }

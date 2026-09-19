@@ -6,32 +6,30 @@ use wasapi::{DeviceEnumerator, Direction, initialize_mta};
 
 use crate::{
     apo_reg::{ensure_device_reg, maybe_elevated_reg},
-    utils::init_logging,
+    utils::{check_single_instance, init_logging},
 };
 
-fn main() -> anyhow::Result<()> {
+fn main() {
     init_logging();
 
-    match maybe_elevated_reg() {
-        Ok(true) => {
-            info!("Elevated registration operation completed successfully");
-            Ok(())
-        }
-        Ok(false) => match voice_box() {
-            Ok(_) => {
-                info!("VoiceBox stopped successfully");
-                Ok(())
-            }
-            Err(e) => {
-                error!("Error during VoiceBox: {:?}", e);
-                Err(e)
-            }
-        },
-        Err(e) => {
-            error!("Error during registration: {:?}", e);
-            Err(e)
-        }
+    if let Err(e) = run() {
+        error!("Application error: {e:?}");
+        std::process::exit(1);
     }
+}
+
+fn run() -> anyhow::Result<()> {
+    if maybe_elevated_reg()? {
+        info!("Elevated registration operation completed successfully");
+        return Ok(());
+    }
+
+    let _single_instance = check_single_instance()?;
+
+    voice_box()?;
+    info!("VoiceBox stopped successfully");
+
+    Ok(())
 }
 
 fn voice_box() -> anyhow::Result<()> {

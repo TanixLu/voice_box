@@ -1,8 +1,8 @@
 use is_elevated::is_elevated;
 use restart_manager::{RestartSession, ShutdownOptions};
-use tracing::{info, warn};
+use tracing::info;
 
-use crate::utils::{reg_delete_value, reg_get_value, reg_set_value};
+use crate::utils::{LOG_ENABLE_STR, reg_delete_value, reg_get_value, reg_set_value};
 
 const ELEVATED_REG_STR: &str = "--elevated-reg";
 
@@ -81,7 +81,6 @@ fn device_fx_property_backup_reg_path(device_guid: &str, property: &str) -> Stri
 const APO_DLL: &[u8] = include_bytes!("../target/voice_box.dll");
 
 const APO_DLL_PATH: &str = r"C:\Windows\System32\voice_box.dll";
-const APO_OLD_DLL_PATH: &str = r"C:\Windows\System32\voice_box.old.dll";
 const AUDIO_SERVICE_NAME: &str = "AudioSrv";
 
 fn need_reg(device_guid: &str) -> bool {
@@ -120,21 +119,30 @@ fn need_reg(device_guid: &str) -> bool {
     false
 }
 
-fn restart_audio_service() -> anyhow::Result<()> {
+fn elevated_reg(device_guid: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        is_elevated(),
+        "Elevated operation requested but not running as administrator"
+    );
+
     let mut session = RestartSession::new()?;
-    session.register_files([APO_DLL_PATH, APO_OLD_DLL_PATH])?;
+    session.register_files([APO_DLL_PATH])?;
     session.register_services([AUDIO_SERVICE_NAME])?;
     let report = session.affected_applications()?;
     for app in &report {
         info!("Affected application: {:?}", app);
     }
     let pending = session.shutdown_with_options(ShutdownOptions::default());
-    if pending.shutdown_outcome().is_success() {
-        std::fs::remove_file(APO_OLD_DLL_PATH).ok();
-        info!("old dll removed successfully");
-    } else {
-        warn!("old dll not removed");
+    if !pending.shutdown_outcome().is_success() {
+        anyhow::bail!(
+            "Audio service shutdown failed: {:?}",
+            pending.shutdown_outcome()
+        );
     }
+    info!("Audio service shutdown successfully");
+
+    elevated_reg_inner(device_guid)?;
+
     let completion = pending.restart();
     let outcome = completion.outcome().clone();
     completion.end()?;
@@ -148,18 +156,10 @@ fn restart_audio_service() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn elevated_reg(device_guid: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        is_elevated(),
-        "Elevated operation requested but not running as administrator"
-    );
-
+fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
     // 更新dll
     let dll_bytes = std::fs::read(APO_DLL_PATH).unwrap_or_default();
     if dll_bytes != APO_DLL {
-        if std::fs::exists(APO_DLL_PATH)? {
-            std::fs::rename(APO_DLL_PATH, APO_OLD_DLL_PATH)?;
-        }
         std::fs::write(APO_DLL_PATH, APO_DLL)?;
     }
 
@@ -195,15 +195,12 @@ fn elevated_reg(device_guid: &str) -> anyhow::Result<()> {
         reg_delete_value(&device_disable_apo_reg_path)?;
     }
 
-    // 更新完成后，重启音频服务
-    restart_audio_service()?;
-
     Ok(())
 }
 
 pub fn maybe_elevated_reg() -> anyhow::Result<bool> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() >= 2 && args[1] == ELEVATED_REG_STR {
+    if args.get(1).map(String::as_str) == Some(ELEVATED_REG_STR) {
         info!("Running elevated registration operation");
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
         anyhow::ensure!(
@@ -226,9 +223,15 @@ pub fn ensure_device_reg(device_guid: &str) -> anyhow::Result<()> {
         if is_elevated() {
             elevated_reg(device_guid)?;
         } else {
+            let log_enable_arg = if std::env::var_os(LOG_ENABLE_STR).is_some() {
+                LOG_ENABLE_STR
+            } else {
+                ""
+            };
             let status = runas::Command::new(std::env::current_exe()?)
                 .arg(ELEVATED_REG_STR)
                 .arg(device_guid)
+                .arg(log_enable_arg)
                 .gui(false)
                 .show(false)
                 .status()?;
