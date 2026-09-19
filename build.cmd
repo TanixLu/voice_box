@@ -49,6 +49,7 @@ echo   EXE: target\%PROFILE%\voice_box.exe
 if "%RUN_EXE%"=="1" (
     echo.
     echo Running target\%PROFILE%\voice_box.exe...
+    set "VOICE_BOX_LOG=1"
     "target\%PROFILE%\voice_box.exe"
     if errorlevel 1 goto :run_failed
 )

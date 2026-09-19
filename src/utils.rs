@@ -19,6 +19,7 @@ use winreg::{
     types::{FromRegValue, ToRegValue},
 };
 
+const LOG_ENV_VAR: &str = "VOICE_BOX_LOG";
 const LOG_FILE_NAME: &str = "voice_box.log";
 
 fn split_reg_path(full_path: &str) -> anyhow::Result<(RegKey, &str, &str)> {
@@ -98,6 +99,11 @@ where
 }
 
 pub fn init_logging() {
+    if std::env::var_os(LOG_ENV_VAR).is_none() {
+        return;
+    }
+
+    // 只有在环境变量 LOG_ENV_VAR 被设置时才启用日志记录
     let role = if is_elevated() { "ADMIN" } else { "USER" };
     let pid = std::process::id();
     let formatter = ProcessFormatter { role, pid };
