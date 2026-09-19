@@ -1,11 +1,8 @@
 use is_elevated::is_elevated;
-use tempfile::NamedTempFile;
-use windows_service::{
-    service::{Service, ServiceAccess},
-    service_manager::{ServiceManager, ServiceManagerAccess},
-};
+use restart_manager::{RestartSession, ShutdownOptions};
+use tracing::{info, warn};
 
-use crate::utils::{reg_delete_value, reg_get_value, reg_set_value, restart_servce, stop_service};
+use crate::utils::{reg_delete_value, reg_get_value, reg_set_value};
 
 const ELEVATED_REG_STR: &str = "--elevated-reg";
 
@@ -84,6 +81,8 @@ fn device_fx_property_backup_reg_path(device_guid: &str, property: &str) -> Stri
 const APO_DLL: &[u8] = include_bytes!("../target/voice_box.dll");
 
 const APO_DLL_PATH: &str = r"C:\Windows\System32\voice_box.dll";
+const APO_OLD_DLL_PATH: &str = r"C:\Windows\System32\voice_box.old.dll";
+const AUDIO_SERVICE_NAME: &str = "AudioSrv";
 
 fn need_reg(device_guid: &str) -> bool {
     // 检测dll是否需要更新
@@ -121,32 +120,46 @@ fn need_reg(device_guid: &str) -> bool {
     false
 }
 
+fn restart_audio_service() -> anyhow::Result<()> {
+    let mut session = RestartSession::new()?;
+    session.register_files([APO_DLL_PATH, APO_OLD_DLL_PATH])?;
+    session.register_services([AUDIO_SERVICE_NAME])?;
+    let report = session.affected_applications()?;
+    for app in &report {
+        info!("Affected application: {:?}", app);
+    }
+    let pending = session.shutdown_with_options(ShutdownOptions::default());
+    if pending.shutdown_outcome().is_success() {
+        std::fs::remove_file(APO_OLD_DLL_PATH).ok();
+        info!("old dll removed successfully");
+    } else {
+        warn!("old dll not removed");
+    }
+    let completion = pending.restart();
+    let outcome = completion.outcome().clone();
+    completion.end()?;
+    outcome.shutdown_outcome().clone().into_result()?;
+    outcome
+        .restart_outcome()
+        .expect("Failed to restart audio service")
+        .clone()
+        .into_result()?;
+    info!("Audio service restarted successfully");
+    Ok(())
+}
+
 fn elevated_reg(device_guid: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         is_elevated(),
         "Elevated operation requested but not running as administrator"
     );
 
-    let service_manager =
-        ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
-    let audio_service = service_manager.open_service(
-        "Audiosrv",
-        ServiceAccess::STOP | ServiceAccess::START | ServiceAccess::QUERY_STATUS,
-    )?;
-
-    let result = elevated_reg_inner(device_guid, &audio_service);
-
-    // 重启音频服务
-    restart_servce(&audio_service)?;
-
-    result
-}
-
-fn elevated_reg_inner(device_guid: &str, audio_service: &Service) -> anyhow::Result<()> {
     // 更新dll
     let dll_bytes = std::fs::read(APO_DLL_PATH).unwrap_or_default();
     if dll_bytes != APO_DLL {
-        stop_service(&audio_service)?; // 更新dll时需要先停止音频服务
+        if std::fs::exists(APO_DLL_PATH)? {
+            std::fs::rename(APO_DLL_PATH, APO_OLD_DLL_PATH)?;
+        }
         std::fs::write(APO_DLL_PATH, APO_DLL)?;
     }
 
@@ -174,7 +187,6 @@ fn elevated_reg_inner(device_guid: &str, audio_service: &Service) -> anyhow::Res
                 &old_sfx_guid,
             )?;
         }
-        stop_service(&audio_service)?; // 更新设备APO时需要先停止音频服务
         reg_set_value(&device_sfx_reg_path, &VOICE_BOX_GUID)?;
     }
 
@@ -183,12 +195,16 @@ fn elevated_reg_inner(device_guid: &str, audio_service: &Service) -> anyhow::Res
         reg_delete_value(&device_disable_apo_reg_path)?;
     }
 
+    // 更新完成后，重启音频服务
+    restart_audio_service()?;
+
     Ok(())
 }
 
 pub fn maybe_elevated_reg() -> anyhow::Result<bool> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 2 && args[1] == ELEVATED_REG_STR {
+        info!("Running elevated registration operation");
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
         anyhow::ensure!(
             is_elevated(),
@@ -197,15 +213,10 @@ pub fn maybe_elevated_reg() -> anyhow::Result<bool> {
         let device_guid = args.get(2).ok_or_else(|| {
             anyhow::anyhow!("Missing device GUID argument for elevated registration operation")
         })?;
-        if let Err(e) = elevated_reg(device_guid) {
-            let log_path = args.get(3).ok_or_else(|| {
-                anyhow::anyhow!("Missing log path argument for elevated registration operation")
-            })?;
-            std::fs::write(log_path, format!("{:?}", e))?;
-            return Err(e);
-        }
+        elevated_reg(device_guid)?;
         Ok(true)
     } else {
+        info!("Running VoiceBox");
         Ok(false)
     }
 }
@@ -215,20 +226,16 @@ pub fn ensure_device_reg(device_guid: &str) -> anyhow::Result<()> {
         if is_elevated() {
             elevated_reg(device_guid)?;
         } else {
-            let log_path = NamedTempFile::new()?.into_temp_path();
             let status = runas::Command::new(std::env::current_exe()?)
                 .arg(ELEVATED_REG_STR)
                 .arg(device_guid)
-                .arg(log_path.to_str().unwrap())
                 .gui(false)
                 .show(false)
-                .status()?; // TODO: 报错不能通过stdout返回过来，怎么看它报错
-            let log_content = std::fs::read_to_string(&log_path).unwrap_or_default();
-            log_path.close()?;
+                .status()?;
             anyhow::ensure!(
                 status.success(),
-                "Failed to execute elevated operation: {}",
-                log_content
+                "Failed to execute elevated operation: {:?}",
+                status
             );
         }
     }

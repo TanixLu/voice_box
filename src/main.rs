@@ -1,19 +1,40 @@
 mod apo_reg;
 mod utils;
 
+use tracing::{error, info};
 use wasapi::{DeviceEnumerator, Direction, initialize_mta};
 
-use crate::apo_reg::{ensure_device_reg, maybe_elevated_reg};
+use crate::{
+    apo_reg::{ensure_device_reg, maybe_elevated_reg},
+    utils::init_logging,
+};
 
 fn main() -> anyhow::Result<()> {
-    if maybe_elevated_reg()? {
-        Ok(())
-    } else {
-        normal_main()
+    init_logging();
+
+    match maybe_elevated_reg() {
+        Ok(true) => {
+            info!("Elevated registration operation completed successfully");
+            Ok(())
+        }
+        Ok(false) => match voice_box() {
+            Ok(_) => {
+                info!("VoiceBox stopped successfully");
+                Ok(())
+            }
+            Err(e) => {
+                error!("Error during VoiceBox: {:?}", e);
+                Err(e)
+            }
+        },
+        Err(e) => {
+            error!("Error during registration: {:?}", e);
+            Err(e)
+        }
     }
 }
 
-fn normal_main() -> anyhow::Result<()> {
+fn voice_box() -> anyhow::Result<()> {
     initialize_mta().unwrap();
 
     let enumerator = DeviceEnumerator::new()?;
@@ -22,16 +43,16 @@ fn normal_main() -> anyhow::Result<()> {
 
     for device in &enumerator.get_device_collection(&Direction::Capture)? {
         let device = device?;
-        print!(
-            "Device: {}, {}",
+        info!(
+            "Device: {}, {} {}",
             device.get_friendlyname()?,
             device.get_id()?,
+            if device.get_id()? == default_device.get_id()? {
+                "[default]"
+            } else {
+                ""
+            }
         );
-        if device.get_id()? == default_device.get_id()? {
-            println!(" [default]");
-        } else {
-            println!();
-        }
     }
 
     let default_device_guid = default_device

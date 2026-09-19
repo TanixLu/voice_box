@@ -1,10 +1,15 @@
-use std::{
-    fmt::Debug,
-    thread::sleep,
-    time::{Duration, Instant},
-};
+use core::fmt;
+use std::fmt::Debug;
 
-use windows_service::service::{Service, ServiceState};
+use is_elevated::is_elevated;
+use tracing::{Event, Subscriber};
+use tracing_subscriber::{
+    fmt::{
+        FmtContext, FormatEvent, FormatFields,
+        format::{self, Writer},
+    },
+    registry::LookupSpan,
+};
 use winreg::{
     RegKey,
     enums::{
@@ -13,6 +18,8 @@ use winreg::{
     },
     types::{FromRegValue, ToRegValue},
 };
+
+const LOG_FILE_NAME: &str = "voice_box.log";
 
 fn split_reg_path(full_path: &str) -> anyhow::Result<(RegKey, &str, &str)> {
     let error_fn = || anyhow::anyhow!("Invalid registry full_path: {}", full_path);
@@ -66,27 +73,39 @@ pub fn reg_delete_value(full_path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn stop_service(service: &Service) -> anyhow::Result<()> {
-    if service.query_status()?.current_state == ServiceState::Running {
-        service.stop()?;
-    }
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while service.query_status()?.current_state != ServiceState::Stopped {
-        if Instant::now() > deadline {
-            anyhow::bail!("Timeout waiting for audio service to stop");
-        }
-        sleep(Duration::from_millis(200));
-    }
-    Ok(())
+struct ProcessFormatter {
+    role: &'static str,
+    pid: u32,
 }
 
-pub fn start_service(service: &Service) -> windows_service::Result<()> {
-    service.start::<&str>(&[])?;
-    Ok(())
+impl<S, N> FormatEvent<S, N> for ProcessFormatter
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> fmt::Result {
+        // 自定义前缀
+        write!(writer, "[{}:{}] ", self.role, self.pid,)?;
+
+        // 继续使用 tracing 默认的格式
+        format::format().format_event(ctx, writer, event)
+    }
 }
 
-pub fn restart_servce(service: &Service) -> anyhow::Result<()> {
-    stop_service(service)?;
-    start_service(service)?;
-    Ok(())
+pub fn init_logging() {
+    let role = if is_elevated() { "ADMIN" } else { "USER" };
+    let pid = std::process::id();
+    let formatter = ProcessFormatter { role, pid };
+    let log_file = tracing_appender::rolling::never("", LOG_FILE_NAME);
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_ansi(false)
+        .with_writer(log_file)
+        .event_format(formatter)
+        .init();
 }
