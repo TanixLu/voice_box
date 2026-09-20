@@ -24,3 +24,13 @@ tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
 wasapi = "0.24.0"
 winreg = "0.56.0"
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Apo",
+    "Win32_Media_Multimedia",
+    "Win32_System_Com",
+    "Win32_System_Diagnostics_Etw",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
+windows-core = "0.62.2"

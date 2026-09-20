@@ -626,6 +626,8 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "wasapi",
+ "windows",
+ "windows-core",
  "winreg",
 ]
 
