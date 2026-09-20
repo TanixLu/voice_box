@@ -1,6 +1,10 @@
 use is_elevated::is_elevated;
 use restart_manager::{RestartSession, ShutdownOptions};
 use tracing::info;
+use windows::Win32::Media::Audio::Apo::{
+    APO_FLAG_BITSPERSAMPLE_MUST_MATCH, APO_FLAG_FRAMESPERSECOND_MUST_MATCH, APO_FLAG_INPLACE,
+    APO_FLAG_SAMPLESPERFRAME_MUST_MATCH,
+};
 
 use crate::utils::{LOG_ENABLE_STR, reg_delete_value, reg_get_value, reg_set_value};
 
@@ -46,6 +50,11 @@ const COMMON_STRING_REG_PAIRS: [(&str, &str); 6] = [
     (APO_REG_INTERFACE, APO_INTERFACE_IID),
 ];
 
+const VOICE_BOX_APO_FLAGS: u32 = (APO_FLAG_INPLACE.0
+    | APO_FLAG_SAMPLESPERFRAME_MUST_MATCH.0
+    | APO_FLAG_FRAMESPERSECOND_MUST_MATCH.0
+    | APO_FLAG_BITSPERSAMPLE_MUST_MATCH.0) as u32;
+
 const COMMON_U32_REG_PAIRS: [(&str, u32); 10] = [
     (DISABLE_PROTECTED_AUDIO_DG_REG_PATH, 1),
     (APO_REG_MAJOR_VERSION, 1),
@@ -56,7 +65,7 @@ const COMMON_U32_REG_PAIRS: [(&str, u32); 10] = [
     (APO_REG_MIN_OUTPUT_CONNECTIONS, 1),
     (APO_REG_MAX_OUTPUT_CONNECTIONS, 1),
     (APO_REG_MAX_INSTANCES, u32::MAX),
-    (APO_REG_FLAGS, 0b00001101),
+    (APO_REG_FLAGS, VOICE_BOX_APO_FLAGS),
 ];
 
 const EFFECT_CLSID: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d}";
