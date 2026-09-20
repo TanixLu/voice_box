@@ -37,7 +37,7 @@ const APO_REG_FLAGS: &str = constcat::concat!(APO_REG_BASE, r"Flags");
 
 const APO_INTERFACE_IID: &str = "{FD7F2B29-24D0-4B5C-B177-592C39F9CA10}";
 
-const COMMON_STRING_REG_PAIRS: &[(&str, &str)] = &[
+const COMMON_STRING_REG_PAIRS: [(&str, &str); 6] = [
     (COM_REG_BASE, "VoiceBox APO"),
     (COM_REG_INPROC, APO_DLL_PATH),
     (COM_REG_THREADING_MODEL, "Both"),
@@ -46,7 +46,7 @@ const COMMON_STRING_REG_PAIRS: &[(&str, &str)] = &[
     (APO_REG_INTERFACE, APO_INTERFACE_IID),
 ];
 
-const COMMON_U32_REG_PAIRS: &[(&str, u32)] = &[
+const COMMON_U32_REG_PAIRS: [(&str, u32); 10] = [
     (DISABLE_PROTECTED_AUDIO_DG_REG_PATH, 1),
     (APO_REG_MAJOR_VERSION, 1),
     (APO_REG_MINOR_VERSION, 0),
@@ -85,34 +85,30 @@ const AUDIO_SERVICE_NAME: &str = "AudioSrv";
 
 fn need_reg(device_guid: &str) -> bool {
     // 检测dll是否需要更新
-    let dll_bytes = std::fs::read(APO_DLL_PATH).unwrap_or_default();
-    if dll_bytes != APO_DLL {
+    if std::fs::read(APO_DLL_PATH).ok().as_deref() != Some(APO_DLL) {
         return true;
     }
 
     // 检测注册表是否需要更新
     for (reg_path, expected_value) in COMMON_STRING_REG_PAIRS {
-        let actual_value: String = reg_get_value(reg_path).unwrap_or_default();
-        if actual_value != *expected_value {
+        if reg_get_value::<String>(reg_path).ok().as_deref() != Some(expected_value) {
             return true;
         }
     }
     for (reg_path, expected_value) in COMMON_U32_REG_PAIRS {
-        let actual_value: u32 = reg_get_value(reg_path).unwrap_or_default();
-        if actual_value != *expected_value {
+        if reg_get_value::<u32>(reg_path).ok() != Some(expected_value) {
             return true;
         }
     }
     // 检测设备FxProperties是否需要更新
-    let old_sfx_guid: String =
-        reg_get_value(&device_fx_property_reg_path(device_guid, SFX_GUID)).unwrap_or_default();
-    if old_sfx_guid != VOICE_BOX_GUID {
+    if reg_get_value::<String>(&device_fx_property_reg_path(device_guid, SFX_GUID))
+        .ok()
+        .as_deref()
+        != Some(VOICE_BOX_GUID)
+    {
         return true;
     }
-    if reg_get_value::<u32>(&device_fx_property_reg_path(device_guid, DISABLE_APO_GUID))
-        .unwrap_or_default()
-        != 0
-    {
+    if reg_get_value::<u32>(&device_fx_property_reg_path(device_guid, DISABLE_APO_GUID)).is_ok() {
         return true;
     }
 
@@ -157,40 +153,39 @@ fn elevated_reg(device_guid: &str) -> anyhow::Result<()> {
 
 fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
     // 更新dll
-    let dll_bytes = std::fs::read(APO_DLL_PATH).unwrap_or_default();
-    if dll_bytes != APO_DLL {
+    if std::fs::read(APO_DLL_PATH).ok().as_deref() != Some(APO_DLL) {
         std::fs::write(APO_DLL_PATH, APO_DLL)?;
     }
 
     // 更新注册表
     for (reg_path, expected_value) in COMMON_STRING_REG_PAIRS {
-        let actual_value: String = reg_get_value(reg_path).unwrap_or_default();
-        if actual_value != *expected_value {
-            reg_set_value(reg_path, expected_value)?;
+        if reg_get_value::<String>(reg_path).ok().as_deref() != Some(expected_value) {
+            reg_set_value(reg_path, &expected_value)?;
         }
     }
     for (reg_path, expected_value) in COMMON_U32_REG_PAIRS {
-        let actual_value: u32 = reg_get_value(reg_path).unwrap_or_default();
-        if actual_value != *expected_value {
-            reg_set_value(reg_path, expected_value)?;
+        if reg_get_value::<u32>(reg_path).ok() != Some(expected_value) {
+            reg_set_value(reg_path, &expected_value)?;
         }
     }
 
     // 更新设备FxProperties
     let device_sfx_reg_path = device_fx_property_reg_path(device_guid, SFX_GUID);
-    let old_sfx_guid: String = reg_get_value(&device_sfx_reg_path).unwrap_or_default();
-    if old_sfx_guid != VOICE_BOX_GUID {
-        if !old_sfx_guid.is_empty() {
-            reg_set_value(
-                &device_fx_property_backup_reg_path(device_guid, SFX_GUID),
-                &old_sfx_guid,
-            )?;
+    let maybe_old_sfx_guid: Option<String> = reg_get_value(&device_sfx_reg_path).ok();
+    if maybe_old_sfx_guid.as_deref() != Some(VOICE_BOX_GUID) {
+        if let Some(old_sfx_guid) = maybe_old_sfx_guid {
+            if !old_sfx_guid.is_empty() {
+                reg_set_value(
+                    &device_fx_property_backup_reg_path(device_guid, SFX_GUID),
+                    &old_sfx_guid,
+                )?;
+            }
         }
         reg_set_value(&device_sfx_reg_path, &VOICE_BOX_GUID)?;
     }
 
     let device_disable_apo_reg_path = device_fx_property_reg_path(device_guid, DISABLE_APO_GUID);
-    if reg_get_value::<u32>(&device_disable_apo_reg_path).unwrap_or_default() != 0 {
+    if reg_get_value::<u32>(&device_disable_apo_reg_path).is_ok() {
         reg_delete_value(&device_disable_apo_reg_path)?;
     }
 
