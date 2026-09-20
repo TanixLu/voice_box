@@ -155,17 +155,20 @@ fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
     // 更新dll
     if std::fs::read(APO_DLL_PATH).ok().as_deref() != Some(APO_DLL) {
         std::fs::write(APO_DLL_PATH, APO_DLL)?;
+        info!("Updated APO DLL at {}", APO_DLL_PATH);
     }
 
     // 更新注册表
     for (reg_path, expected_value) in COMMON_STRING_REG_PAIRS {
         if reg_get_value::<String>(reg_path).ok().as_deref() != Some(expected_value) {
             reg_set_value(reg_path, &expected_value)?;
+            info!("Updated registry key {} to {}", reg_path, expected_value);
         }
     }
     for (reg_path, expected_value) in COMMON_U32_REG_PAIRS {
         if reg_get_value::<u32>(reg_path).ok() != Some(expected_value) {
             reg_set_value(reg_path, &expected_value)?;
+            info!("Updated registry key {} to {}", reg_path, expected_value);
         }
     }
 
@@ -179,14 +182,26 @@ fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
                     &device_fx_property_backup_reg_path(device_guid, SFX_GUID),
                     &old_sfx_guid,
                 )?;
+                info!(
+                    "Backed up old SFX GUID {} for device {}",
+                    old_sfx_guid, device_guid
+                );
             }
         }
         reg_set_value(&device_sfx_reg_path, &VOICE_BOX_GUID)?;
+        info!(
+            "Updated device {} SFX GUID to {}",
+            device_guid, VOICE_BOX_GUID
+        );
     }
 
     let device_disable_apo_reg_path = device_fx_property_reg_path(device_guid, DISABLE_APO_GUID);
     if reg_get_value::<u32>(&device_disable_apo_reg_path).is_ok() {
         reg_delete_value(&device_disable_apo_reg_path)?;
+        info!(
+            "Removed device {} DisableProtectedAudioDG property",
+            device_guid
+        );
     }
 
     Ok(())
