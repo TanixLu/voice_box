@@ -126,7 +126,6 @@ fn elevated_reg(device_guid: &str) -> anyhow::Result<()> {
     );
 
     let mut session = RestartSession::new()?;
-    session.register_files([APO_DLL_PATH])?;
     session.register_services([AUDIO_SERVICE_NAME])?;
     let report = session.affected_applications()?;
     for app in &report {
