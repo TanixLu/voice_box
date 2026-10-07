@@ -52,6 +52,20 @@ where
     Ok(value)
 }
 
+pub fn reg_get_optional_value<T: FromRegValue>(full_path: &str) -> anyhow::Result<Option<T>> {
+    match reg_get_value(full_path) {
+        Ok(value) => Ok(Some(value)),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|cause| cause.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 pub fn reg_set_value<T>(full_path: &str, value: &T) -> anyhow::Result<()>
 where
     T: ToRegValue + Debug,

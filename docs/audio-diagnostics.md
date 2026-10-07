@@ -1,4 +1,51 @@
-# 麦克风 / EFX APO 诊断
+# 麦克风 / APO 诊断
+
+## COM 边界修复
+
+当前版本在锁定时检查输入、输出最大帧数和字节容量，在处理时拒绝超出已声明容量的帧数。
+锁定后的格式查询不会改写实际声道数；协商失败保留调用方的输出指针。
+DSP 访问使用不等待的原子保护，Reset 请求由处理线程应用，避免并发修改 DSP。
+
+变声注册为 SFX，支持的采集模式不包含 RAW；直接以 RAW 模式初始化时直通音频，并返回空效果列表。
+安装器没有旧 EFX 的检测、恢复或删除逻辑。已有的旧 EFX 注册需单独处理，
+同时挂载 VoiceBox 的 SFX 和 EFX 会重复处理音频，旧 EFX 也会继续影响 RAW 流。
+
+运行回归检查：
+
+```powershell
+cargo test --lib --offline
+cargo test --lib --release --offline
+```
+
+九项测试包含 160 种 PCM/浮点、采样率和声道组合，以及容量越界、锁定后协商、
+失败输出参数、RAW 直通和效果发现、并发 Reset、COM 身份和聚合引用计数。
+额外验证了 PCM 正负极值及有效位填充、浮点 NaN/Infinity、跨缓冲区相位连续性，
+以及初始化结构版本 1/2/3、未对齐初始化数据、重复锁定/解锁和仅发现用途的生命周期。
+本地发布 DLL 的协商和原地处理检查结果为 `target/audio-diagnostics-com-hardening-local/report.txt`，0 违规。
+这些检查不代表其他硬件、Windows 版本或受保护 AudioDG 环境已经通过兼容性认证。
+安装器仍采用开发安装方式；正式部署所需的签名和 HLK 验证需要另行完成。
+
+## SFX 实机复测：2026-10-07
+
+按用户授权删除了当前麦克风上指向 VoiceBox 的旧 EFX 注册值，再安装新版 SFX。
+该删除是本次测试的操作，安装器没有添加旧 EFX 清理或迁移逻辑。
+本机为 Windows build 26200，Intel Smart Sound 麦克风，48 kHz 双声道。
+系统与本地发布 DLL 的 SHA256 均为 `5AEE54CE205A97E82956C3C6C240AD84CAF357F07298F2DB7BA553518E00DFB8`。
+
+- Debug 和 Release 的九项回归测试均通过；Clippy（`-D warnings`）、格式和差异检查通过。
+- 发布 DLL 的直接协商及原地处理检查连续十轮通过，无违规或 DLL 无法卸载的记录。
+- 完整实机诊断 `target/audio-diagnostics-sfx-system/report.txt` 为 **8/8 通过**。
+  每种采集方式 3 秒、重开三轮，共 21 轮采集；均有非零样本，NaN/Infinity 和时间戳错误为 0。
+  Stop、Reset、释放及重新打开均成功，未检测到相关应用崩溃事件。
+- ETW 提取结果为 `voicebox-events.csv` 和 `etw-summary.json`。
+  五种非 RAW 共享场景每种都有三次实际处理后解锁记录；例如普通模式每轮处理 144480 帧。
+  RAW 场景的测试时间段内没有 VoiceBox 锁定或实际处理记录，证实本机 RAW 绕过 SFX。
+  独占采集同样绕过 VoiceBox；没有 LockForProcess 失败事件。
+- 共享采集各轮仅首包报告一次 discontinuity，之后没有新增；独占采集没有 discontinuity。
+
+测试证明当前 DLL 在本机接口和采集链路上的行为，Windows 设置、录音机和网页界面仍需实际打开确认。
+
+以下“本机结果”记录的是之前 EFX 版本的实机诊断。
 
 构建并在普通 PowerShell 中运行（允许麦克风访问，测试过程中可以说话）：
 

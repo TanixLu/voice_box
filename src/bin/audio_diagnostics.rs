@@ -651,18 +651,18 @@ fn parent(options: &Options) -> Result<bool> {
         .or(default_id)
         .context("No default capture endpoint; use --device")?;
     registry_snapshot(&mut report, &id)?;
-    if let Ok(manager) = enumerator.get_device(&id)?.get_iaudiosessionmanager() {
-        if let Ok(sessions) = manager.get_audiosessionenumerator() {
-            for index in 0..sessions.get_count()? {
-                let session = sessions.get_session(index)?;
-                writeln!(
-                    report,
-                    "SESSION pid={:?} state={:?} name={:?}",
-                    session.get_process_id(),
-                    session.get_state(),
-                    session.get_display_name()
-                )?;
-            }
+    if let Ok(manager) = enumerator.get_device(&id)?.get_iaudiosessionmanager()
+        && let Ok(sessions) = manager.get_audiosessionenumerator()
+    {
+        for index in 0..sessions.get_count()? {
+            let session = sessions.get_session(index)?;
+            writeln!(
+                report,
+                "SESSION pid={:?} state={:?} name={:?}",
+                session.get_process_id(),
+                session.get_state(),
+                session.get_display_name()
+            )?;
         }
     }
     report.flush()?;
