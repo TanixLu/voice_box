@@ -11,257 +11,471 @@ const fn decode() -> [f32; 48825] {
     }
     out
 }
-pub(super) fn tensor(name: &str) -> &'static [f32] {
-    match name {
-        "erb.erb_fc.weight" => &DATA[0..12288],
-        "erb.ierb_fc.weight" => &DATA[12288..24576],
-        "encoder.en_convs.0.conv.weight" => &DATA[24576..25296],
-        "encoder.en_convs.0.conv.bias" => &DATA[25296..25312],
-        "encoder.en_convs.0.bn.weight" => &DATA[25312..25328],
-        "encoder.en_convs.0.bn.bias" => &DATA[25328..25344],
-        "encoder.en_convs.0.bn.running_mean" => &DATA[25344..25360],
-        "encoder.en_convs.0.bn.running_var" => &DATA[25360..25376],
-        "encoder.en_convs.0.act.weight" => &DATA[25376..25377],
-        "encoder.en_convs.1.conv.weight" => &DATA[25377..26017],
-        "encoder.en_convs.1.conv.bias" => &DATA[26017..26033],
-        "encoder.en_convs.1.bn.weight" => &DATA[26033..26049],
-        "encoder.en_convs.1.bn.bias" => &DATA[26049..26065],
-        "encoder.en_convs.1.bn.running_mean" => &DATA[26065..26081],
-        "encoder.en_convs.1.bn.running_var" => &DATA[26081..26097],
-        "encoder.en_convs.1.act.weight" => &DATA[26097..26098],
-        "encoder.en_convs.2.point_conv1.weight" => &DATA[26098..26482],
-        "encoder.en_convs.2.point_conv1.bias" => &DATA[26482..26498],
-        "encoder.en_convs.2.point_bn1.weight" => &DATA[26498..26514],
-        "encoder.en_convs.2.point_bn1.bias" => &DATA[26514..26530],
-        "encoder.en_convs.2.point_bn1.running_mean" => &DATA[26530..26546],
-        "encoder.en_convs.2.point_bn1.running_var" => &DATA[26546..26562],
-        "encoder.en_convs.2.point_act.weight" => &DATA[26562..26563],
-        "encoder.en_convs.2.depth_conv.weight" => &DATA[26563..26707],
-        "encoder.en_convs.2.depth_conv.bias" => &DATA[26707..26723],
-        "encoder.en_convs.2.depth_bn.weight" => &DATA[26723..26739],
-        "encoder.en_convs.2.depth_bn.bias" => &DATA[26739..26755],
-        "encoder.en_convs.2.depth_bn.running_mean" => &DATA[26755..26771],
-        "encoder.en_convs.2.depth_bn.running_var" => &DATA[26771..26787],
-        "encoder.en_convs.2.depth_act.weight" => &DATA[26787..26788],
-        "encoder.en_convs.2.point_conv2.weight" => &DATA[26788..26916],
-        "encoder.en_convs.2.point_conv2.bias" => &DATA[26916..26924],
-        "encoder.en_convs.2.point_bn2.weight" => &DATA[26924..26932],
-        "encoder.en_convs.2.point_bn2.bias" => &DATA[26932..26940],
-        "encoder.en_convs.2.point_bn2.running_mean" => &DATA[26940..26948],
-        "encoder.en_convs.2.point_bn2.running_var" => &DATA[26948..26956],
-        "encoder.en_convs.2.tra.att_gru.weight_ih_l0" => &DATA[26956..27340],
-        "encoder.en_convs.2.tra.att_gru.weight_hh_l0" => &DATA[27340..28108],
-        "encoder.en_convs.2.tra.att_gru.bias_ih_l0" => &DATA[28108..28156],
-        "encoder.en_convs.2.tra.att_gru.bias_hh_l0" => &DATA[28156..28204],
-        "encoder.en_convs.2.tra.att_fc.weight" => &DATA[28204..28332],
-        "encoder.en_convs.2.tra.att_fc.bias" => &DATA[28332..28340],
-        "encoder.en_convs.3.point_conv1.weight" => &DATA[28340..28724],
-        "encoder.en_convs.3.point_conv1.bias" => &DATA[28724..28740],
-        "encoder.en_convs.3.point_bn1.weight" => &DATA[28740..28756],
-        "encoder.en_convs.3.point_bn1.bias" => &DATA[28756..28772],
-        "encoder.en_convs.3.point_bn1.running_mean" => &DATA[28772..28788],
-        "encoder.en_convs.3.point_bn1.running_var" => &DATA[28788..28804],
-        "encoder.en_convs.3.point_act.weight" => &DATA[28804..28805],
-        "encoder.en_convs.3.depth_conv.weight" => &DATA[28805..28949],
-        "encoder.en_convs.3.depth_conv.bias" => &DATA[28949..28965],
-        "encoder.en_convs.3.depth_bn.weight" => &DATA[28965..28981],
-        "encoder.en_convs.3.depth_bn.bias" => &DATA[28981..28997],
-        "encoder.en_convs.3.depth_bn.running_mean" => &DATA[28997..29013],
-        "encoder.en_convs.3.depth_bn.running_var" => &DATA[29013..29029],
-        "encoder.en_convs.3.depth_act.weight" => &DATA[29029..29030],
-        "encoder.en_convs.3.point_conv2.weight" => &DATA[29030..29158],
-        "encoder.en_convs.3.point_conv2.bias" => &DATA[29158..29166],
-        "encoder.en_convs.3.point_bn2.weight" => &DATA[29166..29174],
-        "encoder.en_convs.3.point_bn2.bias" => &DATA[29174..29182],
-        "encoder.en_convs.3.point_bn2.running_mean" => &DATA[29182..29190],
-        "encoder.en_convs.3.point_bn2.running_var" => &DATA[29190..29198],
-        "encoder.en_convs.3.tra.att_gru.weight_ih_l0" => &DATA[29198..29582],
-        "encoder.en_convs.3.tra.att_gru.weight_hh_l0" => &DATA[29582..30350],
-        "encoder.en_convs.3.tra.att_gru.bias_ih_l0" => &DATA[30350..30398],
-        "encoder.en_convs.3.tra.att_gru.bias_hh_l0" => &DATA[30398..30446],
-        "encoder.en_convs.3.tra.att_fc.weight" => &DATA[30446..30574],
-        "encoder.en_convs.3.tra.att_fc.bias" => &DATA[30574..30582],
-        "encoder.en_convs.4.point_conv1.weight" => &DATA[30582..30966],
-        "encoder.en_convs.4.point_conv1.bias" => &DATA[30966..30982],
-        "encoder.en_convs.4.point_bn1.weight" => &DATA[30982..30998],
-        "encoder.en_convs.4.point_bn1.bias" => &DATA[30998..31014],
-        "encoder.en_convs.4.point_bn1.running_mean" => &DATA[31014..31030],
-        "encoder.en_convs.4.point_bn1.running_var" => &DATA[31030..31046],
-        "encoder.en_convs.4.point_act.weight" => &DATA[31046..31047],
-        "encoder.en_convs.4.depth_conv.weight" => &DATA[31047..31191],
-        "encoder.en_convs.4.depth_conv.bias" => &DATA[31191..31207],
-        "encoder.en_convs.4.depth_bn.weight" => &DATA[31207..31223],
-        "encoder.en_convs.4.depth_bn.bias" => &DATA[31223..31239],
-        "encoder.en_convs.4.depth_bn.running_mean" => &DATA[31239..31255],
-        "encoder.en_convs.4.depth_bn.running_var" => &DATA[31255..31271],
-        "encoder.en_convs.4.depth_act.weight" => &DATA[31271..31272],
-        "encoder.en_convs.4.point_conv2.weight" => &DATA[31272..31400],
-        "encoder.en_convs.4.point_conv2.bias" => &DATA[31400..31408],
-        "encoder.en_convs.4.point_bn2.weight" => &DATA[31408..31416],
-        "encoder.en_convs.4.point_bn2.bias" => &DATA[31416..31424],
-        "encoder.en_convs.4.point_bn2.running_mean" => &DATA[31424..31432],
-        "encoder.en_convs.4.point_bn2.running_var" => &DATA[31432..31440],
-        "encoder.en_convs.4.tra.att_gru.weight_ih_l0" => &DATA[31440..31824],
-        "encoder.en_convs.4.tra.att_gru.weight_hh_l0" => &DATA[31824..32592],
-        "encoder.en_convs.4.tra.att_gru.bias_ih_l0" => &DATA[32592..32640],
-        "encoder.en_convs.4.tra.att_gru.bias_hh_l0" => &DATA[32640..32688],
-        "encoder.en_convs.4.tra.att_fc.weight" => &DATA[32688..32816],
-        "encoder.en_convs.4.tra.att_fc.bias" => &DATA[32816..32824],
-        "dpgrnn1.intra_rnn.rnn1.weight_ih_l0" => &DATA[32824..32920],
-        "dpgrnn1.intra_rnn.rnn1.weight_hh_l0" => &DATA[32920..32968],
-        "dpgrnn1.intra_rnn.rnn1.bias_ih_l0" => &DATA[32968..32980],
-        "dpgrnn1.intra_rnn.rnn1.bias_hh_l0" => &DATA[32980..32992],
-        "dpgrnn1.intra_rnn.rnn1.weight_ih_l0_reverse" => &DATA[32992..33088],
-        "dpgrnn1.intra_rnn.rnn1.weight_hh_l0_reverse" => &DATA[33088..33136],
-        "dpgrnn1.intra_rnn.rnn1.bias_ih_l0_reverse" => &DATA[33136..33148],
-        "dpgrnn1.intra_rnn.rnn1.bias_hh_l0_reverse" => &DATA[33148..33160],
-        "dpgrnn1.intra_rnn.rnn2.weight_ih_l0" => &DATA[33160..33256],
-        "dpgrnn1.intra_rnn.rnn2.weight_hh_l0" => &DATA[33256..33304],
-        "dpgrnn1.intra_rnn.rnn2.bias_ih_l0" => &DATA[33304..33316],
-        "dpgrnn1.intra_rnn.rnn2.bias_hh_l0" => &DATA[33316..33328],
-        "dpgrnn1.intra_rnn.rnn2.weight_ih_l0_reverse" => &DATA[33328..33424],
-        "dpgrnn1.intra_rnn.rnn2.weight_hh_l0_reverse" => &DATA[33424..33472],
-        "dpgrnn1.intra_rnn.rnn2.bias_ih_l0_reverse" => &DATA[33472..33484],
-        "dpgrnn1.intra_rnn.rnn2.bias_hh_l0_reverse" => &DATA[33484..33496],
-        "dpgrnn1.intra_fc.weight" => &DATA[33496..33752],
-        "dpgrnn1.intra_fc.bias" => &DATA[33752..33768],
-        "dpgrnn1.intra_ln.weight" => &DATA[33768..34296],
-        "dpgrnn1.intra_ln.bias" => &DATA[34296..34824],
-        "dpgrnn1.inter_rnn.rnn1.weight_ih_l0" => &DATA[34824..35016],
-        "dpgrnn1.inter_rnn.rnn1.weight_hh_l0" => &DATA[35016..35208],
-        "dpgrnn1.inter_rnn.rnn1.bias_ih_l0" => &DATA[35208..35232],
-        "dpgrnn1.inter_rnn.rnn1.bias_hh_l0" => &DATA[35232..35256],
-        "dpgrnn1.inter_rnn.rnn2.weight_ih_l0" => &DATA[35256..35448],
-        "dpgrnn1.inter_rnn.rnn2.weight_hh_l0" => &DATA[35448..35640],
-        "dpgrnn1.inter_rnn.rnn2.bias_ih_l0" => &DATA[35640..35664],
-        "dpgrnn1.inter_rnn.rnn2.bias_hh_l0" => &DATA[35664..35688],
-        "dpgrnn1.inter_fc.weight" => &DATA[35688..35944],
-        "dpgrnn1.inter_fc.bias" => &DATA[35944..35960],
-        "dpgrnn1.inter_ln.weight" => &DATA[35960..36488],
-        "dpgrnn1.inter_ln.bias" => &DATA[36488..37016],
-        "dpgrnn2.intra_rnn.rnn1.weight_ih_l0" => &DATA[37016..37112],
-        "dpgrnn2.intra_rnn.rnn1.weight_hh_l0" => &DATA[37112..37160],
-        "dpgrnn2.intra_rnn.rnn1.bias_ih_l0" => &DATA[37160..37172],
-        "dpgrnn2.intra_rnn.rnn1.bias_hh_l0" => &DATA[37172..37184],
-        "dpgrnn2.intra_rnn.rnn1.weight_ih_l0_reverse" => &DATA[37184..37280],
-        "dpgrnn2.intra_rnn.rnn1.weight_hh_l0_reverse" => &DATA[37280..37328],
-        "dpgrnn2.intra_rnn.rnn1.bias_ih_l0_reverse" => &DATA[37328..37340],
-        "dpgrnn2.intra_rnn.rnn1.bias_hh_l0_reverse" => &DATA[37340..37352],
-        "dpgrnn2.intra_rnn.rnn2.weight_ih_l0" => &DATA[37352..37448],
-        "dpgrnn2.intra_rnn.rnn2.weight_hh_l0" => &DATA[37448..37496],
-        "dpgrnn2.intra_rnn.rnn2.bias_ih_l0" => &DATA[37496..37508],
-        "dpgrnn2.intra_rnn.rnn2.bias_hh_l0" => &DATA[37508..37520],
-        "dpgrnn2.intra_rnn.rnn2.weight_ih_l0_reverse" => &DATA[37520..37616],
-        "dpgrnn2.intra_rnn.rnn2.weight_hh_l0_reverse" => &DATA[37616..37664],
-        "dpgrnn2.intra_rnn.rnn2.bias_ih_l0_reverse" => &DATA[37664..37676],
-        "dpgrnn2.intra_rnn.rnn2.bias_hh_l0_reverse" => &DATA[37676..37688],
-        "dpgrnn2.intra_fc.weight" => &DATA[37688..37944],
-        "dpgrnn2.intra_fc.bias" => &DATA[37944..37960],
-        "dpgrnn2.intra_ln.weight" => &DATA[37960..38488],
-        "dpgrnn2.intra_ln.bias" => &DATA[38488..39016],
-        "dpgrnn2.inter_rnn.rnn1.weight_ih_l0" => &DATA[39016..39208],
-        "dpgrnn2.inter_rnn.rnn1.weight_hh_l0" => &DATA[39208..39400],
-        "dpgrnn2.inter_rnn.rnn1.bias_ih_l0" => &DATA[39400..39424],
-        "dpgrnn2.inter_rnn.rnn1.bias_hh_l0" => &DATA[39424..39448],
-        "dpgrnn2.inter_rnn.rnn2.weight_ih_l0" => &DATA[39448..39640],
-        "dpgrnn2.inter_rnn.rnn2.weight_hh_l0" => &DATA[39640..39832],
-        "dpgrnn2.inter_rnn.rnn2.bias_ih_l0" => &DATA[39832..39856],
-        "dpgrnn2.inter_rnn.rnn2.bias_hh_l0" => &DATA[39856..39880],
-        "dpgrnn2.inter_fc.weight" => &DATA[39880..40136],
-        "dpgrnn2.inter_fc.bias" => &DATA[40136..40152],
-        "dpgrnn2.inter_ln.weight" => &DATA[40152..40680],
-        "dpgrnn2.inter_ln.bias" => &DATA[40680..41208],
-        "decoder.de_convs.0.point_conv1.weight" => &DATA[41208..41592],
-        "decoder.de_convs.0.point_conv1.bias" => &DATA[41592..41608],
-        "decoder.de_convs.0.point_bn1.weight" => &DATA[41608..41624],
-        "decoder.de_convs.0.point_bn1.bias" => &DATA[41624..41640],
-        "decoder.de_convs.0.point_bn1.running_mean" => &DATA[41640..41656],
-        "decoder.de_convs.0.point_bn1.running_var" => &DATA[41656..41672],
-        "decoder.de_convs.0.point_act.weight" => &DATA[41672..41673],
-        "decoder.de_convs.0.depth_conv.weight" => &DATA[41673..41817],
-        "decoder.de_convs.0.depth_conv.bias" => &DATA[41817..41833],
-        "decoder.de_convs.0.depth_bn.weight" => &DATA[41833..41849],
-        "decoder.de_convs.0.depth_bn.bias" => &DATA[41849..41865],
-        "decoder.de_convs.0.depth_bn.running_mean" => &DATA[41865..41881],
-        "decoder.de_convs.0.depth_bn.running_var" => &DATA[41881..41897],
-        "decoder.de_convs.0.depth_act.weight" => &DATA[41897..41898],
-        "decoder.de_convs.0.point_conv2.weight" => &DATA[41898..42026],
-        "decoder.de_convs.0.point_conv2.bias" => &DATA[42026..42034],
-        "decoder.de_convs.0.point_bn2.weight" => &DATA[42034..42042],
-        "decoder.de_convs.0.point_bn2.bias" => &DATA[42042..42050],
-        "decoder.de_convs.0.point_bn2.running_mean" => &DATA[42050..42058],
-        "decoder.de_convs.0.point_bn2.running_var" => &DATA[42058..42066],
-        "decoder.de_convs.0.tra.att_gru.weight_ih_l0" => &DATA[42066..42450],
-        "decoder.de_convs.0.tra.att_gru.weight_hh_l0" => &DATA[42450..43218],
-        "decoder.de_convs.0.tra.att_gru.bias_ih_l0" => &DATA[43218..43266],
-        "decoder.de_convs.0.tra.att_gru.bias_hh_l0" => &DATA[43266..43314],
-        "decoder.de_convs.0.tra.att_fc.weight" => &DATA[43314..43442],
-        "decoder.de_convs.0.tra.att_fc.bias" => &DATA[43442..43450],
-        "decoder.de_convs.1.point_conv1.weight" => &DATA[43450..43834],
-        "decoder.de_convs.1.point_conv1.bias" => &DATA[43834..43850],
-        "decoder.de_convs.1.point_bn1.weight" => &DATA[43850..43866],
-        "decoder.de_convs.1.point_bn1.bias" => &DATA[43866..43882],
-        "decoder.de_convs.1.point_bn1.running_mean" => &DATA[43882..43898],
-        "decoder.de_convs.1.point_bn1.running_var" => &DATA[43898..43914],
-        "decoder.de_convs.1.point_act.weight" => &DATA[43914..43915],
-        "decoder.de_convs.1.depth_conv.weight" => &DATA[43915..44059],
-        "decoder.de_convs.1.depth_conv.bias" => &DATA[44059..44075],
-        "decoder.de_convs.1.depth_bn.weight" => &DATA[44075..44091],
-        "decoder.de_convs.1.depth_bn.bias" => &DATA[44091..44107],
-        "decoder.de_convs.1.depth_bn.running_mean" => &DATA[44107..44123],
-        "decoder.de_convs.1.depth_bn.running_var" => &DATA[44123..44139],
-        "decoder.de_convs.1.depth_act.weight" => &DATA[44139..44140],
-        "decoder.de_convs.1.point_conv2.weight" => &DATA[44140..44268],
-        "decoder.de_convs.1.point_conv2.bias" => &DATA[44268..44276],
-        "decoder.de_convs.1.point_bn2.weight" => &DATA[44276..44284],
-        "decoder.de_convs.1.point_bn2.bias" => &DATA[44284..44292],
-        "decoder.de_convs.1.point_bn2.running_mean" => &DATA[44292..44300],
-        "decoder.de_convs.1.point_bn2.running_var" => &DATA[44300..44308],
-        "decoder.de_convs.1.tra.att_gru.weight_ih_l0" => &DATA[44308..44692],
-        "decoder.de_convs.1.tra.att_gru.weight_hh_l0" => &DATA[44692..45460],
-        "decoder.de_convs.1.tra.att_gru.bias_ih_l0" => &DATA[45460..45508],
-        "decoder.de_convs.1.tra.att_gru.bias_hh_l0" => &DATA[45508..45556],
-        "decoder.de_convs.1.tra.att_fc.weight" => &DATA[45556..45684],
-        "decoder.de_convs.1.tra.att_fc.bias" => &DATA[45684..45692],
-        "decoder.de_convs.2.point_conv1.weight" => &DATA[45692..46076],
-        "decoder.de_convs.2.point_conv1.bias" => &DATA[46076..46092],
-        "decoder.de_convs.2.point_bn1.weight" => &DATA[46092..46108],
-        "decoder.de_convs.2.point_bn1.bias" => &DATA[46108..46124],
-        "decoder.de_convs.2.point_bn1.running_mean" => &DATA[46124..46140],
-        "decoder.de_convs.2.point_bn1.running_var" => &DATA[46140..46156],
-        "decoder.de_convs.2.point_act.weight" => &DATA[46156..46157],
-        "decoder.de_convs.2.depth_conv.weight" => &DATA[46157..46301],
-        "decoder.de_convs.2.depth_conv.bias" => &DATA[46301..46317],
-        "decoder.de_convs.2.depth_bn.weight" => &DATA[46317..46333],
-        "decoder.de_convs.2.depth_bn.bias" => &DATA[46333..46349],
-        "decoder.de_convs.2.depth_bn.running_mean" => &DATA[46349..46365],
-        "decoder.de_convs.2.depth_bn.running_var" => &DATA[46365..46381],
-        "decoder.de_convs.2.depth_act.weight" => &DATA[46381..46382],
-        "decoder.de_convs.2.point_conv2.weight" => &DATA[46382..46510],
-        "decoder.de_convs.2.point_conv2.bias" => &DATA[46510..46518],
-        "decoder.de_convs.2.point_bn2.weight" => &DATA[46518..46526],
-        "decoder.de_convs.2.point_bn2.bias" => &DATA[46526..46534],
-        "decoder.de_convs.2.point_bn2.running_mean" => &DATA[46534..46542],
-        "decoder.de_convs.2.point_bn2.running_var" => &DATA[46542..46550],
-        "decoder.de_convs.2.tra.att_gru.weight_ih_l0" => &DATA[46550..46934],
-        "decoder.de_convs.2.tra.att_gru.weight_hh_l0" => &DATA[46934..47702],
-        "decoder.de_convs.2.tra.att_gru.bias_ih_l0" => &DATA[47702..47750],
-        "decoder.de_convs.2.tra.att_gru.bias_hh_l0" => &DATA[47750..47798],
-        "decoder.de_convs.2.tra.att_fc.weight" => &DATA[47798..47926],
-        "decoder.de_convs.2.tra.att_fc.bias" => &DATA[47926..47934],
-        "decoder.de_convs.3.conv.weight" => &DATA[47934..48574],
-        "decoder.de_convs.3.conv.bias" => &DATA[48574..48590],
-        "decoder.de_convs.3.bn.weight" => &DATA[48590..48606],
-        "decoder.de_convs.3.bn.bias" => &DATA[48606..48622],
-        "decoder.de_convs.3.bn.running_mean" => &DATA[48622..48638],
-        "decoder.de_convs.3.bn.running_var" => &DATA[48638..48654],
-        "decoder.de_convs.3.act.weight" => &DATA[48654..48655],
-        "decoder.de_convs.4.conv.weight" => &DATA[48655..48815],
-        "decoder.de_convs.4.conv.bias" => &DATA[48815..48817],
-        "decoder.de_convs.4.bn.weight" => &DATA[48817..48819],
-        "decoder.de_convs.4.bn.bias" => &DATA[48819..48821],
-        "decoder.de_convs.4.bn.running_mean" => &DATA[48821..48823],
-        "decoder.de_convs.4.bn.running_var" => &DATA[48823..48825],
-        _ => panic!("unknown GTCRN tensor: {name}"),
+
+// Each slice is checked and resolved during constant evaluation; all reference DATA.
+const fn slice(start: usize, end: usize) -> &'static [f32] {
+    assert!(start <= end);
+    DATA.split_at(end).0.split_at(start).1
+}
+#[derive(Clone, Copy)]
+pub(super) struct Pair {
+    pub weight: &'static [f32],
+    pub bias: &'static [f32],
+}
+#[derive(Clone, Copy)]
+pub(super) struct Norm {
+    pub parameters: Pair,
+    pub mean: &'static [f32],
+    pub variance: &'static [f32],
+}
+#[derive(Clone, Copy)]
+pub(super) struct Conv {
+    pub parameters: Pair,
+    pub norm: Norm,
+    pub slope: f32,
+}
+#[derive(Clone, Copy)]
+pub(super) struct Gru {
+    pub weight_input: &'static [f32],
+    pub weight_hidden: &'static [f32],
+    pub bias_input: &'static [f32],
+    pub bias_hidden: &'static [f32],
+}
+#[derive(Clone, Copy)]
+pub(super) struct GtBlock {
+    pub point: [Conv; 2],
+    pub depth: Conv,
+    pub attention: Gru,
+    pub attention_fc: Pair,
+}
+#[derive(Clone, Copy)]
+pub(super) struct DpBlock {
+    pub intra: [Gru; 4],
+    pub intra_fc: Pair,
+    pub intra_norm: Pair,
+    pub inter: [Gru; 2],
+    pub inter_fc: Pair,
+    pub inter_norm: Pair,
+}
+
+const fn pair(weight: &'static [f32], bias: &'static [f32]) -> Pair {
+    Pair { weight, bias }
+}
+const fn norm(parameters: Pair, mean: &'static [f32], variance: &'static [f32]) -> Norm {
+    Norm {
+        parameters,
+        mean,
+        variance,
     }
 }
+const fn conv(parameters: Pair, norm: Norm, slope: f32) -> Conv {
+    Conv {
+        parameters,
+        norm,
+        slope,
+    }
+}
+const fn gru(
+    weight_input: &'static [f32],
+    weight_hidden: &'static [f32],
+    bias_input: &'static [f32],
+    bias_hidden: &'static [f32],
+) -> Gru {
+    Gru {
+        weight_input,
+        weight_hidden,
+        bias_input,
+        bias_hidden,
+    }
+}
+const fn gt_block(point: [Conv; 2], depth: Conv, attention: Gru, attention_fc: Pair) -> GtBlock {
+    GtBlock {
+        point,
+        depth,
+        attention,
+        attention_fc,
+    }
+}
+const fn dp_block(
+    intra: [Gru; 4],
+    intra_fc: Pair,
+    intra_norm: Pair,
+    inter: [Gru; 2],
+    inter_fc: Pair,
+    inter_norm: Pair,
+) -> DpBlock {
+    DpBlock {
+        intra,
+        intra_fc,
+        intra_norm,
+        inter,
+        inter_fc,
+        inter_norm,
+    }
+}
+pub(super) const ERB: &[f32] = slice(0, 12288);
+pub(super) const INVERSE_ERB: &[f32] = slice(12288, 24576);
+pub(super) const ENCODER: [Conv; 2] = [
+    conv(
+        pair(slice(24576, 25296), slice(25296, 25312)),
+        norm(
+            pair(slice(25312, 25328), slice(25328, 25344)),
+            slice(25344, 25360),
+            slice(25360, 25376),
+        ),
+        slice(25376, 25377)[0],
+    ),
+    conv(
+        pair(slice(25377, 26017), slice(26017, 26033)),
+        norm(
+            pair(slice(26033, 26049), slice(26049, 26065)),
+            slice(26065, 26081),
+            slice(26081, 26097),
+        ),
+        slice(26097, 26098)[0],
+    ),
+];
+pub(super) const BLOCKS: [GtBlock; 6] = [
+    gt_block(
+        [
+            conv(
+                pair(slice(26098, 26482), slice(26482, 26498)),
+                norm(
+                    pair(slice(26498, 26514), slice(26514, 26530)),
+                    slice(26530, 26546),
+                    slice(26546, 26562),
+                ),
+                slice(26562, 26563)[0],
+            ),
+            conv(
+                pair(slice(26788, 26916), slice(26916, 26924)),
+                norm(
+                    pair(slice(26924, 26932), slice(26932, 26940)),
+                    slice(26940, 26948),
+                    slice(26948, 26956),
+                ),
+                1.0,
+            ),
+        ],
+        conv(
+            pair(slice(26563, 26707), slice(26707, 26723)),
+            norm(
+                pair(slice(26723, 26739), slice(26739, 26755)),
+                slice(26755, 26771),
+                slice(26771, 26787),
+            ),
+            slice(26787, 26788)[0],
+        ),
+        gru(
+            slice(26956, 27340),
+            slice(27340, 28108),
+            slice(28108, 28156),
+            slice(28156, 28204),
+        ),
+        pair(slice(28204, 28332), slice(28332, 28340)),
+    ),
+    gt_block(
+        [
+            conv(
+                pair(slice(28340, 28724), slice(28724, 28740)),
+                norm(
+                    pair(slice(28740, 28756), slice(28756, 28772)),
+                    slice(28772, 28788),
+                    slice(28788, 28804),
+                ),
+                slice(28804, 28805)[0],
+            ),
+            conv(
+                pair(slice(29030, 29158), slice(29158, 29166)),
+                norm(
+                    pair(slice(29166, 29174), slice(29174, 29182)),
+                    slice(29182, 29190),
+                    slice(29190, 29198),
+                ),
+                1.0,
+            ),
+        ],
+        conv(
+            pair(slice(28805, 28949), slice(28949, 28965)),
+            norm(
+                pair(slice(28965, 28981), slice(28981, 28997)),
+                slice(28997, 29013),
+                slice(29013, 29029),
+            ),
+            slice(29029, 29030)[0],
+        ),
+        gru(
+            slice(29198, 29582),
+            slice(29582, 30350),
+            slice(30350, 30398),
+            slice(30398, 30446),
+        ),
+        pair(slice(30446, 30574), slice(30574, 30582)),
+    ),
+    gt_block(
+        [
+            conv(
+                pair(slice(30582, 30966), slice(30966, 30982)),
+                norm(
+                    pair(slice(30982, 30998), slice(30998, 31014)),
+                    slice(31014, 31030),
+                    slice(31030, 31046),
+                ),
+                slice(31046, 31047)[0],
+            ),
+            conv(
+                pair(slice(31272, 31400), slice(31400, 31408)),
+                norm(
+                    pair(slice(31408, 31416), slice(31416, 31424)),
+                    slice(31424, 31432),
+                    slice(31432, 31440),
+                ),
+                1.0,
+            ),
+        ],
+        conv(
+            pair(slice(31047, 31191), slice(31191, 31207)),
+            norm(
+                pair(slice(31207, 31223), slice(31223, 31239)),
+                slice(31239, 31255),
+                slice(31255, 31271),
+            ),
+            slice(31271, 31272)[0],
+        ),
+        gru(
+            slice(31440, 31824),
+            slice(31824, 32592),
+            slice(32592, 32640),
+            slice(32640, 32688),
+        ),
+        pair(slice(32688, 32816), slice(32816, 32824)),
+    ),
+    gt_block(
+        [
+            conv(
+                pair(slice(41208, 41592), slice(41592, 41608)),
+                norm(
+                    pair(slice(41608, 41624), slice(41624, 41640)),
+                    slice(41640, 41656),
+                    slice(41656, 41672),
+                ),
+                slice(41672, 41673)[0],
+            ),
+            conv(
+                pair(slice(41898, 42026), slice(42026, 42034)),
+                norm(
+                    pair(slice(42034, 42042), slice(42042, 42050)),
+                    slice(42050, 42058),
+                    slice(42058, 42066),
+                ),
+                1.0,
+            ),
+        ],
+        conv(
+            pair(slice(41673, 41817), slice(41817, 41833)),
+            norm(
+                pair(slice(41833, 41849), slice(41849, 41865)),
+                slice(41865, 41881),
+                slice(41881, 41897),
+            ),
+            slice(41897, 41898)[0],
+        ),
+        gru(
+            slice(42066, 42450),
+            slice(42450, 43218),
+            slice(43218, 43266),
+            slice(43266, 43314),
+        ),
+        pair(slice(43314, 43442), slice(43442, 43450)),
+    ),
+    gt_block(
+        [
+            conv(
+                pair(slice(43450, 43834), slice(43834, 43850)),
+                norm(
+                    pair(slice(43850, 43866), slice(43866, 43882)),
+                    slice(43882, 43898),
+                    slice(43898, 43914),
+                ),
+                slice(43914, 43915)[0],
+            ),
+            conv(
+                pair(slice(44140, 44268), slice(44268, 44276)),
+                norm(
+                    pair(slice(44276, 44284), slice(44284, 44292)),
+                    slice(44292, 44300),
+                    slice(44300, 44308),
+                ),
+                1.0,
+            ),
+        ],
+        conv(
+            pair(slice(43915, 44059), slice(44059, 44075)),
+            norm(
+                pair(slice(44075, 44091), slice(44091, 44107)),
+                slice(44107, 44123),
+                slice(44123, 44139),
+            ),
+            slice(44139, 44140)[0],
+        ),
+        gru(
+            slice(44308, 44692),
+            slice(44692, 45460),
+            slice(45460, 45508),
+            slice(45508, 45556),
+        ),
+        pair(slice(45556, 45684), slice(45684, 45692)),
+    ),
+    gt_block(
+        [
+            conv(
+                pair(slice(45692, 46076), slice(46076, 46092)),
+                norm(
+                    pair(slice(46092, 46108), slice(46108, 46124)),
+                    slice(46124, 46140),
+                    slice(46140, 46156),
+                ),
+                slice(46156, 46157)[0],
+            ),
+            conv(
+                pair(slice(46382, 46510), slice(46510, 46518)),
+                norm(
+                    pair(slice(46518, 46526), slice(46526, 46534)),
+                    slice(46534, 46542),
+                    slice(46542, 46550),
+                ),
+                1.0,
+            ),
+        ],
+        conv(
+            pair(slice(46157, 46301), slice(46301, 46317)),
+            norm(
+                pair(slice(46317, 46333), slice(46333, 46349)),
+                slice(46349, 46365),
+                slice(46365, 46381),
+            ),
+            slice(46381, 46382)[0],
+        ),
+        gru(
+            slice(46550, 46934),
+            slice(46934, 47702),
+            slice(47702, 47750),
+            slice(47750, 47798),
+        ),
+        pair(slice(47798, 47926), slice(47926, 47934)),
+    ),
+];
+pub(super) const DUAL_PATH: [DpBlock; 2] = [
+    dp_block(
+        [
+            gru(
+                slice(32824, 32920),
+                slice(32920, 32968),
+                slice(32968, 32980),
+                slice(32980, 32992),
+            ),
+            gru(
+                slice(32992, 33088),
+                slice(33088, 33136),
+                slice(33136, 33148),
+                slice(33148, 33160),
+            ),
+            gru(
+                slice(33160, 33256),
+                slice(33256, 33304),
+                slice(33304, 33316),
+                slice(33316, 33328),
+            ),
+            gru(
+                slice(33328, 33424),
+                slice(33424, 33472),
+                slice(33472, 33484),
+                slice(33484, 33496),
+            ),
+        ],
+        pair(slice(33496, 33752), slice(33752, 33768)),
+        pair(slice(33768, 34296), slice(34296, 34824)),
+        [
+            gru(
+                slice(34824, 35016),
+                slice(35016, 35208),
+                slice(35208, 35232),
+                slice(35232, 35256),
+            ),
+            gru(
+                slice(35256, 35448),
+                slice(35448, 35640),
+                slice(35640, 35664),
+                slice(35664, 35688),
+            ),
+        ],
+        pair(slice(35688, 35944), slice(35944, 35960)),
+        pair(slice(35960, 36488), slice(36488, 37016)),
+    ),
+    dp_block(
+        [
+            gru(
+                slice(37016, 37112),
+                slice(37112, 37160),
+                slice(37160, 37172),
+                slice(37172, 37184),
+            ),
+            gru(
+                slice(37184, 37280),
+                slice(37280, 37328),
+                slice(37328, 37340),
+                slice(37340, 37352),
+            ),
+            gru(
+                slice(37352, 37448),
+                slice(37448, 37496),
+                slice(37496, 37508),
+                slice(37508, 37520),
+            ),
+            gru(
+                slice(37520, 37616),
+                slice(37616, 37664),
+                slice(37664, 37676),
+                slice(37676, 37688),
+            ),
+        ],
+        pair(slice(37688, 37944), slice(37944, 37960)),
+        pair(slice(37960, 38488), slice(38488, 39016)),
+        [
+            gru(
+                slice(39016, 39208),
+                slice(39208, 39400),
+                slice(39400, 39424),
+                slice(39424, 39448),
+            ),
+            gru(
+                slice(39448, 39640),
+                slice(39640, 39832),
+                slice(39832, 39856),
+                slice(39856, 39880),
+            ),
+        ],
+        pair(slice(39880, 40136), slice(40136, 40152)),
+        pair(slice(40152, 40680), slice(40680, 41208)),
+    ),
+];
+pub(super) const DECODER: [Conv; 2] = [
+    conv(
+        pair(slice(47934, 48574), slice(48574, 48590)),
+        norm(
+            pair(slice(48590, 48606), slice(48606, 48622)),
+            slice(48622, 48638),
+            slice(48638, 48654),
+        ),
+        slice(48654, 48655)[0],
+    ),
+    conv(
+        pair(slice(48655, 48815), slice(48815, 48817)),
+        norm(
+            pair(slice(48817, 48819), slice(48819, 48821)),
+            slice(48821, 48823),
+            slice(48823, 48825),
+        ),
+        0.0,
+    ),
+];

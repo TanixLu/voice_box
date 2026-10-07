@@ -5,25 +5,28 @@
 //! temporal convolution and GRU state uses past frames only.
 
 use super::StreamingModel;
+use super::simd::Kernels;
 use super::spectral::{Complex, Stft};
-use super::weights::tensor;
+use super::weights;
 
 const WIDTH: usize = 33;
 const CHANNELS: usize = 16;
 const FEATURES: usize = WIDTH * CHANNELS;
 
 struct BatchNorm {
+    kernels: Kernels,
     scale: [f32; CHANNELS],
     bias: [f32; CHANNELS],
 }
 
 impl BatchNorm {
-    fn new(prefix: &str) -> Self {
-        let weight = tensor(&format!("{prefix}.weight"));
-        let bias = tensor(&format!("{prefix}.bias"));
-        let mean = tensor(&format!("{prefix}.running_mean"));
-        let variance = tensor(&format!("{prefix}.running_var"));
+    fn new(weights: weights::Norm) -> Self {
+        let weight = weights.parameters.weight;
+        let bias = weights.parameters.bias;
+        let mean = weights.mean;
+        let variance = weights.variance;
         let mut result = Self {
+            kernels: Kernels::new(),
             scale: [0.0; CHANNELS],
             bias: [0.0; CHANNELS],
         };
@@ -36,14 +39,13 @@ impl BatchNorm {
 
     fn apply(&self, data: &mut [f32], width: usize) {
         for (c, row) in data.chunks_exact_mut(width).enumerate() {
-            for value in row {
-                *value = *value * self.scale[c] + self.bias[c];
-            }
+            self.kernels.norm(row, self.scale[c], self.bias[c]);
         }
     }
 }
 
 struct Conv {
+    kernels: Kernels,
     weight: &'static [f32],
     bias: &'static [f32],
     norm: BatchNorm,
@@ -59,7 +61,7 @@ struct Conv {
 
 impl Conv {
     fn new(
-        prefix: &str,
+        weights: weights::Conv,
         inputs: usize,
         outputs: usize,
         transpose: bool,
@@ -67,14 +69,11 @@ impl Conv {
         last: bool,
     ) -> Self {
         Self {
-            weight: tensor(&format!("{prefix}.conv.weight")),
-            bias: tensor(&format!("{prefix}.conv.bias")),
-            norm: BatchNorm::new(&format!("{prefix}.bn")),
-            slope: if last {
-                0.0
-            } else {
-                tensor(&format!("{prefix}.act.weight"))[0]
-            },
+            kernels: Kernels::new(),
+            weight: weights.parameters.weight,
+            bias: weights.parameters.bias,
+            norm: BatchNorm::new(weights.norm),
+            slope: weights.slope,
             inputs,
             outputs,
             kernel: 5,
@@ -85,16 +84,13 @@ impl Conv {
         }
     }
 
-    fn point(prefix: &str, stage: usize, inputs: usize, outputs: usize, transpose: bool) -> Self {
+    fn point(weights: weights::Conv, inputs: usize, outputs: usize, transpose: bool) -> Self {
         Self {
-            weight: tensor(&format!("{prefix}.point_conv{stage}.weight")),
-            bias: tensor(&format!("{prefix}.point_conv{stage}.bias")),
-            norm: BatchNorm::new(&format!("{prefix}.point_bn{stage}")),
-            slope: if stage == 1 {
-                tensor(&format!("{prefix}.point_act.weight"))[0]
-            } else {
-                1.0
-            },
+            kernels: Kernels::new(),
+            weight: weights.parameters.weight,
+            bias: weights.parameters.bias,
+            norm: BatchNorm::new(weights.norm),
+            slope: weights.slope,
             inputs,
             outputs,
             kernel: 1,
@@ -145,12 +141,12 @@ impl Conv {
             }
         }
         self.norm.apply(output, out_width);
-        for value in output {
-            *value = if self.last {
-                value.tanh()
-            } else {
-                prelu(*value, self.slope)
-            };
+        if self.last {
+            for value in output {
+                *value = value.tanh();
+            }
+        } else {
+            self.kernels.prelu(output, self.slope);
         }
     }
 }
@@ -164,6 +160,7 @@ fn sigmoid(value: f32) -> f32 {
 }
 
 struct Gru {
+    kernels: Kernels,
     weight_input: &'static [f32],
     weight_hidden: &'static [f32],
     bias_input: &'static [f32],
@@ -173,13 +170,13 @@ struct Gru {
 }
 
 impl Gru {
-    fn new(prefix: &str, inputs: usize, hidden: usize, reverse: bool) -> Self {
-        let suffix = if reverse { "_reverse" } else { "" };
+    fn new(weights: weights::Gru, inputs: usize, hidden: usize) -> Self {
         Self {
-            weight_input: tensor(&format!("{prefix}.weight_ih_l0{suffix}")),
-            weight_hidden: tensor(&format!("{prefix}.weight_hh_l0{suffix}")),
-            bias_input: tensor(&format!("{prefix}.bias_ih_l0{suffix}")),
-            bias_hidden: tensor(&format!("{prefix}.bias_hh_l0{suffix}")),
+            kernels: Kernels::new(),
+            weight_input: weights.weight_input,
+            weight_hidden: weights.weight_hidden,
+            bias_input: weights.bias_input,
+            bias_hidden: weights.bias_hidden,
             inputs,
             hidden,
         }
@@ -188,18 +185,19 @@ impl Gru {
     fn step(&self, input: &[f32], state: &mut [f32]) {
         let mut gates_input = [0.0; 48];
         let mut gates_hidden = [0.0; 48];
-        for row in 0..self.hidden * 3 {
-            let mut a = self.bias_input[row];
-            let mut b = self.bias_hidden[row];
-            for (i, value) in input[..self.inputs].iter().enumerate() {
-                a += self.weight_input[row * self.inputs + i] * value;
-            }
-            for (i, value) in state[..self.hidden].iter().enumerate() {
-                b += self.weight_hidden[row * self.hidden + i] * value;
-            }
-            gates_input[row] = a;
-            gates_hidden[row] = b;
-        }
+        let gates = self.hidden * 3;
+        self.kernels.linear(
+            self.weight_input,
+            &input[..self.inputs],
+            self.bias_input,
+            &mut gates_input[..gates],
+        );
+        self.kernels.linear(
+            self.weight_hidden,
+            &state[..self.hidden],
+            self.bias_hidden,
+            &mut gates_hidden[..gates],
+        );
         for i in 0..self.hidden {
             let reset = sigmoid(gates_input[i] + gates_hidden[i]);
             let update = sigmoid(gates_input[self.hidden + i] + gates_hidden[self.hidden + i]);
@@ -212,28 +210,25 @@ impl Gru {
 }
 
 struct Linear {
+    kernels: Kernels,
     weight: &'static [f32],
     bias: &'static [f32],
     inputs: usize,
 }
 
 impl Linear {
-    fn new(prefix: &str, inputs: usize) -> Self {
+    fn new(weights: weights::Pair, inputs: usize) -> Self {
         Self {
-            weight: tensor(&format!("{prefix}.weight")),
-            bias: tensor(&format!("{prefix}.bias")),
+            kernels: Kernels::new(),
+            weight: weights.weight,
+            bias: weights.bias,
             inputs,
         }
     }
 
     fn run(&self, input: &[f32], output: &mut [f32]) {
-        for (row, value) in output.iter_mut().enumerate() {
-            let mut sum = self.bias[row];
-            for (i, input) in input[..self.inputs].iter().enumerate() {
-                sum += self.weight[row * self.inputs + i] * input;
-            }
-            *value = sum;
-        }
+        self.kernels
+            .linear(self.weight, &input[..self.inputs], self.bias, output);
     }
 }
 
@@ -253,16 +248,16 @@ struct GtBlock {
 }
 
 impl GtBlock {
-    fn new(prefix: &str, dilation: usize, transpose: bool) -> Self {
+    fn new(weights: weights::GtBlock, dilation: usize, transpose: bool) -> Self {
         Self {
-            point1: Conv::point(prefix, 1, 24, 16, transpose),
-            point2: Conv::point(prefix, 2, 16, 8, transpose),
-            depth_weight: tensor(&format!("{prefix}.depth_conv.weight")),
-            depth_bias: tensor(&format!("{prefix}.depth_conv.bias")),
-            depth_norm: BatchNorm::new(&format!("{prefix}.depth_bn")),
-            depth_slope: tensor(&format!("{prefix}.depth_act.weight"))[0],
-            attention: Gru::new(&format!("{prefix}.tra.att_gru"), 8, 16, false),
-            attention_fc: Linear::new(&format!("{prefix}.tra.att_fc"), 16),
+            point1: Conv::point(weights.point[0], 24, 16, transpose),
+            point2: Conv::point(weights.point[1], 16, 8, transpose),
+            depth_weight: weights.depth.parameters.weight,
+            depth_bias: weights.depth.parameters.bias,
+            depth_norm: BatchNorm::new(weights.depth.norm),
+            depth_slope: weights.depth.slope,
+            attention: Gru::new(weights.attention, 8, 16),
+            attention_fc: Linear::new(weights.attention_fc, 16),
             attention_state: [0.0; 16],
             history: vec![0.0; 2 * dilation * FEATURES],
             dilation,
@@ -354,10 +349,10 @@ struct LayerNorm {
 }
 
 impl LayerNorm {
-    fn new(prefix: &str) -> Self {
+    fn new(weights: weights::Pair) -> Self {
         Self {
-            weight: tensor(&format!("{prefix}.weight")),
-            bias: tensor(&format!("{prefix}.bias")),
+            weight: weights.weight,
+            bias: weights.bias,
         }
     }
 
@@ -383,23 +378,14 @@ struct DpBlock {
 }
 
 impl DpBlock {
-    fn new(prefix: &str) -> Self {
+    fn new(weights: weights::DpBlock) -> Self {
         Self {
-            intra: std::array::from_fn(|i| {
-                Gru::new(
-                    &format!("{prefix}.intra_rnn.rnn{}", i / 2 + 1),
-                    8,
-                    4,
-                    i % 2 == 1,
-                )
-            }),
-            intra_fc: Linear::new(&format!("{prefix}.intra_fc"), 16),
-            intra_norm: LayerNorm::new(&format!("{prefix}.intra_ln")),
-            inter: std::array::from_fn(|i| {
-                Gru::new(&format!("{prefix}.inter_rnn.rnn{}", i + 1), 8, 8, false)
-            }),
-            inter_fc: Linear::new(&format!("{prefix}.inter_fc"), 16),
-            inter_norm: LayerNorm::new(&format!("{prefix}.inter_ln")),
+            intra: std::array::from_fn(|i| Gru::new(weights.intra[i], 8, 4)),
+            intra_fc: Linear::new(weights.intra_fc, 16),
+            intra_norm: LayerNorm::new(weights.intra_norm),
+            inter: std::array::from_fn(|i| Gru::new(weights.inter[i], 8, 8)),
+            inter_fc: Linear::new(weights.inter_fc, 16),
+            inter_norm: LayerNorm::new(weights.inter_norm),
             state: [0.0; FEATURES],
         }
     }
@@ -455,6 +441,7 @@ impl DpBlock {
 }
 
 pub(super) struct Gtcrn {
+    kernels: Kernels,
     encoder: [Conv; 2],
     blocks: [GtBlock; 6],
     dual_path: [DpBlock; 2],
@@ -465,32 +452,32 @@ pub(super) struct Gtcrn {
 impl Gtcrn {
     pub(super) fn new() -> Self {
         Self {
+            kernels: Kernels::new(),
             encoder: [
-                Conv::new("encoder.en_convs.0", 9, 16, false, 1, false),
-                Conv::new("encoder.en_convs.1", 16, 16, false, 2, false),
+                Conv::new(weights::ENCODER[0], 9, 16, false, 1, false),
+                Conv::new(weights::ENCODER[1], 16, 16, false, 2, false),
             ],
             blocks: std::array::from_fn(|i| {
                 if i < 3 {
-                    GtBlock::new(&format!("encoder.en_convs.{}", i + 2), [1, 2, 5][i], false)
+                    GtBlock::new(weights::BLOCKS[i], [1, 2, 5][i], false)
                 } else {
-                    GtBlock::new(
-                        &format!("decoder.de_convs.{}", i - 3),
-                        [5, 2, 1][i - 3],
-                        true,
-                    )
+                    GtBlock::new(weights::BLOCKS[i], [5, 2, 1][i - 3], true)
                 }
             }),
-            dual_path: [DpBlock::new("dpgrnn1"), DpBlock::new("dpgrnn2")],
+            dual_path: [
+                DpBlock::new(weights::DUAL_PATH[0]),
+                DpBlock::new(weights::DUAL_PATH[1]),
+            ],
             decoder: [
-                Conv::new("decoder.de_convs.3", 16, 16, true, 2, false),
-                Conv::new("decoder.de_convs.4", 16, 2, true, 1, true),
+                Conv::new(weights::DECODER[0], 16, 16, true, 2, false),
+                Conv::new(weights::DECODER[1], 16, 2, true, 1, true),
             ],
             stft: Stft::new(),
         }
     }
 
     fn enhance(&mut self, spectrum: &mut [Complex; 257]) {
-        let filter = tensor("erb.erb_fc.weight");
+        let filter = weights::ERB;
         let mut erb = [0.0; 3 * 129];
         for c in 0..3 {
             let mut feature = [0.0; 257];
@@ -505,13 +492,12 @@ impl Gtcrn {
                 };
             }
             erb[c * 129..c * 129 + 65].copy_from_slice(&feature[..65]);
-            for b in 0..64 {
-                let mut sum = 0.0;
-                for f in 0..192 {
-                    sum += filter[b * 192 + f] * feature[f + 65];
-                }
-                erb[c * 129 + 65 + b] = sum;
-            }
+            self.kernels.linear(
+                filter,
+                &feature[65..],
+                &[0.0; 64],
+                &mut erb[c * 129 + 65..(c + 1) * 129],
+            );
         }
         let mut subbands = [0.0; 9 * 129];
         unfold(&erb, 129, &mut subbands);
@@ -545,20 +531,19 @@ impl Gtcrn {
         }
         let mut mask = [0.0; 2 * 129];
         self.decoder[1].run(&dec0, 65, &mut mask);
-        let inverse = tensor("erb.ierb_fc.weight");
+        let inverse = weights::INVERSE_ERB;
+        let mut expanded = [[0.0; 257]; 2];
+        for (c, output) in expanded.iter_mut().enumerate() {
+            output[..65].copy_from_slice(&mask[c * 129..c * 129 + 65]);
+            self.kernels.linear(
+                inverse,
+                &mask[c * 129 + 65..(c + 1) * 129],
+                &[0.0; 192],
+                &mut output[65..],
+            );
+        }
         for f in 0..257 {
-            let mut m = [0.0; 2];
-            for c in 0..2 {
-                m[c] = if f < 65 {
-                    mask[c * 129 + f]
-                } else {
-                    let mut sum = 0.0;
-                    for b in 0..64 {
-                        sum += inverse[(f - 65) * 64 + b] * mask[c * 129 + 65 + b];
-                    }
-                    sum
-                };
-            }
+            let m = [expanded[0][f], expanded[1][f]];
             let input = spectrum[f];
             spectrum[f] = Complex {
                 re: input.re * m[0] - input.im * m[1],

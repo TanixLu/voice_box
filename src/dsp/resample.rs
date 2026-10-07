@@ -1,136 +1,125 @@
-//! Causal band-limited sample-rate conversion with precomputed polyphase FIRs.
-//! No coefficient generation, allocation or buffering growth during processing.
+//! Rubato sinc conversion with fixed one-millisecond input chunks and buffers.
 
-use std::sync::Arc;
-
-const PHASES: usize = 128;
-
-pub(super) struct Kernel {
-    coefficients: Vec<f32>,
-    taps: usize,
-    radius: usize,
-    step: f64,
-}
-
-impl Kernel {
-    pub(super) fn new(input_rate: f64, output_rate: f64) -> Arc<Self> {
-        if input_rate == output_rate {
-            return Arc::new(Self {
-                coefficients: vec![1.0],
-                taps: 1,
-                radius: 0,
-                step: 1.0,
-            });
-        }
-        let ratio = (input_rate / output_rate).max(1.0);
-        let radius = (32.0 * ratio).ceil() as usize;
-        let taps = 2 * radius + 2;
-        let cutoff = 0.45 / ratio;
-        let mut coefficients = vec![0.0; (PHASES + 1) * taps];
-        for phase in 0..=PHASES {
-            let fraction = phase as f64 / PHASES as f64;
-            let row = &mut coefficients[phase * taps..(phase + 1) * taps];
-            let mut total = 0.0;
-            for (i, value) in row.iter_mut().enumerate() {
-                let distance = radius as f64 + fraction - i as f64;
-                let sinc_argument = 2.0 * cutoff * distance;
-                let sinc = if sinc_argument.abs() < 1e-12 {
-                    1.0
-                } else {
-                    let angle = std::f64::consts::PI * sinc_argument;
-                    angle.sin() / angle
-                };
-                let normalized = distance / radius as f64;
-                let window = if normalized.abs() <= 1.0 {
-                    0.42 + 0.5 * (std::f64::consts::PI * normalized).cos()
-                        + 0.08 * (std::f64::consts::TAU * normalized).cos()
-                } else {
-                    0.0
-                };
-                *value = (2.0 * cutoff * sinc * window) as f32;
-                total += f64::from(*value);
-            }
-            for value in row {
-                *value = (f64::from(*value) / total) as f32;
-            }
-        }
-        Arc::new(Self {
-            coefficients,
-            taps,
-            radius,
-            step: input_rate / output_rate,
-        })
-    }
-
-    pub(super) fn delay_samples(&self) -> usize {
-        self.radius
-    }
-}
+use rubato::audioadapter_buffers::direct::SequentialSlice;
+use rubato::{
+    Async, FixedAsync, Resampler as _, SincInterpolationParameters, SincInterpolationType,
+    WindowFunction,
+};
 
 pub(super) struct Resampler {
-    kernel: Arc<Kernel>,
-    history: Vec<f32>,
-    write: usize,
-    input_count: u64,
-    output_count: u64,
+    engine: Option<Async<f32>>,
+    input: Vec<f32>,
+    output: Vec<f32>,
+    pending: usize,
+    read: usize,
+    available: usize,
+    delay_seconds: f64,
 }
 
 impl Resampler {
-    pub(super) fn new(kernel: Arc<Kernel>) -> Self {
+    pub(super) fn new(input_rate: f64, output_rate: f64) -> Self {
+        if input_rate == output_rate {
+            return Self {
+                engine: None,
+                input: vec![0.0],
+                output: vec![0.0],
+                pending: 0,
+                read: 0,
+                available: 0,
+                delay_seconds: 0.0,
+            };
+        }
+        let ratio = output_rate / input_rate;
+        let parameters = SincInterpolationParameters {
+            sinc_len: (64.0 / ratio.min(1.0)).ceil() as usize,
+            f_cutoff: Some(0.9),
+            oversampling_factor: 128,
+            interpolation: SincInterpolationType::Linear,
+            window: WindowFunction::Blackman,
+        };
+        let engine = Async::new_sinc(
+            ratio,
+            1.0,
+            &parameters,
+            (input_rate / 1000.0).ceil() as usize,
+            1,
+            FixedAsync::Input,
+        )
+        .expect("validated sample rates and sinc parameters");
+        // Preserve the fractional part truncated by Rubato's output_delay().
+        // Its interpolation index advances before the first output sample.
+        let sinc_len = parameters.sinc_len.next_multiple_of(8);
+        let fractional = sinc_len as f64 * ratio / 2.0 - engine.output_delay() as f64;
+        let delay_seconds = (engine.output_delay() as f64 + fractional - 1.0) / output_rate;
         Self {
-            history: vec![0.0; kernel.taps],
-            kernel,
-            write: 0,
-            input_count: 0,
-            output_count: 0,
+            input: vec![0.0; engine.input_frames_max()],
+            output: vec![0.0; engine.output_frames_max()],
+            engine: Some(engine),
+            pending: 0,
+            read: 0,
+            available: 0,
+            delay_seconds,
+        }
+    }
+
+    pub(super) fn delay_seconds(&self) -> f64 {
+        self.delay_seconds
+    }
+    pub(super) fn input_chunk(&self) -> usize {
+        if self.engine.is_some() {
+            self.input.len()
+        } else {
+            0
         }
     }
 
     pub(super) fn reset(&mut self) {
-        self.history.fill(0.0);
-        self.write = 0;
-        self.input_count = 0;
-        self.output_count = 0;
+        if let Some(engine) = &mut self.engine {
+            engine.reset();
+        }
+        self.input.fill(0.0);
+        self.output.fill(0.0);
+        self.pending = 0;
+        self.read = 0;
+        self.available = 0;
     }
 
-    pub(super) fn push(&mut self, input: f32) {
-        self.history[self.write] = input;
-        self.write = (self.write + 1) % self.history.len();
-        self.input_count += 1;
+    pub(super) fn push(&mut self, sample: f32) {
+        self.input[self.pending] = sample;
+        self.pending += 1;
+        if self.pending != self.input.len() {
+            return;
+        }
+        assert_eq!(
+            self.read, self.available,
+            "previous resampler output must be drained"
+        );
+        self.pending = 0;
+        self.read = 0;
+        self.available = if let Some(engine) = &mut self.engine {
+            let input =
+                SequentialSlice::new(&self.input, 1, self.input.len()).expect("fixed mono input");
+            let output_len = self.output.len();
+            let mut output = SequentialSlice::new_mut(&mut self.output, 1, output_len)
+                .expect("fixed mono output");
+            let (consumed, produced) = engine
+                .process_into_buffer(&input, &mut output, None)
+                .expect("fixed resampler buffers");
+            debug_assert_eq!(consumed, self.input.len());
+            produced
+        } else {
+            self.output[0] = sample;
+            1
+        };
     }
 
     pub(super) fn next(&mut self) -> Option<f32> {
-        if self.input_count == 0 {
+        if self.read == self.available {
             return None;
         }
-        let time = self.output_count as f64 * self.kernel.step;
-        let latest = (self.input_count - 1) as f64;
-        if time > latest + 1e-8 {
-            return None;
-        }
-        self.output_count += 1;
-        if self.kernel.taps == 1 {
-            return Some(self.history[0]);
-        }
-        let fraction = (latest - time).clamp(0.0, 1.0);
-        let phase = (fraction * PHASES as f64).round() as usize;
-        let coefficients =
-            &self.kernel.coefficients[phase * self.kernel.taps..(phase + 1) * self.kernel.taps];
-        let mut sum = 0.0;
-        let mut index = if self.write == 0 {
-            self.history.len() - 1
-        } else {
-            self.write - 1
-        };
-        for coefficient in coefficients {
-            sum += coefficient * self.history[index];
-            index = if index == 0 {
-                self.history.len() - 1
-            } else {
-                index - 1
-            };
-        }
-        Some(sum)
+        let sample = self.output[self.read];
+        self.read += 1;
+        Some(sample)
     }
 }
 
@@ -141,7 +130,7 @@ mod tests {
     #[test]
     fn downsampling_rejects_aliases_and_preserves_speech_band() {
         let measure = |frequency: f64| {
-            let mut resampler = Resampler::new(Kernel::new(48_000.0, 16_000.0));
+            let mut resampler = Resampler::new(48_000.0, 16_000.0);
             let mut energy = 0.0;
             let mut count = 0;
             for i in 0..48_000 {
@@ -163,27 +152,39 @@ mod tests {
     #[test]
     fn fractional_and_upsampling_clocks_do_not_drift() {
         for (input_rate, output_rate) in [
+            (16_000.0, 16_000.0),
             (44_100.0, 16_000.0),
             (8_000.0, 16_000.0),
             (16_000.0, 192_000.0),
         ] {
-            let mut resampler = Resampler::new(Kernel::new(input_rate, output_rate));
+            let mut resampler = Resampler::new(input_rate, output_rate);
             let mut count = 0;
-            for _ in 0..input_rate as usize {
-                resampler.push(0.5);
-                while let Some(value) = resampler.next() {
-                    assert!(value.is_finite());
-                    if resampler.input_count > resampler.kernel.taps as u64 {
-                        assert!((value - 0.5).abs() < 1e-5);
+            let tolerance =
+                (resampler.input_chunk() as f64 * output_rate / input_rate).ceil() as usize + 2;
+            for seconds in 1..=10 {
+                for _ in 0..input_rate as usize {
+                    resampler.push(0.5);
+                    while let Some(value) = resampler.next() {
+                        assert!(value.is_finite());
+                        if count > output_rate as usize / 10 {
+                            assert!((value - 0.5).abs() < 1e-5);
+                        }
+                        count += 1;
                     }
-                    count += 1;
+                }
+                let expected = seconds * output_rate as usize;
+                assert!(
+                    count.abs_diff(expected) <= tolerance,
+                    "seconds={seconds} count={count} expected={expected}"
+                );
+            }
+            resampler.reset();
+            for _ in 0..(input_rate / 100.0) as usize {
+                resampler.push(0.0);
+                while let Some(value) = resampler.next() {
+                    assert_eq!(value, 0.0);
                 }
             }
-            let expected = ((input_rate - 1.0) * output_rate / input_rate).floor() as usize + 1;
-            assert_eq!(count, expected);
-            resampler.reset();
-            resampler.push(0.0);
-            assert_eq!(resampler.next(), Some(0.0));
         }
     }
 }

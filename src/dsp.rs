@@ -2,12 +2,12 @@
 
 mod gtcrn;
 mod resample;
+mod simd;
 mod spectral;
 mod weights;
 
 use gtcrn::Gtcrn;
-use resample::{Kernel, Resampler};
-use std::sync::Arc;
+use resample::Resampler;
 
 // Resource bounds apply during format negotiation, before any model allocation.
 pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
@@ -126,17 +126,20 @@ struct Channel {
 }
 
 impl Channel {
-    fn new(
-        model: Box<dyn StreamingModel>,
-        down: Arc<Kernel>,
-        up: Arc<Kernel>,
-        prefill: usize,
-    ) -> Self {
+    fn new(model: Box<dyn StreamingModel>, sample_rate: f64) -> Self {
         let hop = model.hop_size();
+        let rate = f64::from(model.sample_rate());
+        let down = Resampler::new(sample_rate, rate);
+        let up = Resampler::new(rate, sample_rate);
+        // Reserve a complete model hop and both chunk boundaries. Filter group
+        // delays are in the samples themselves, not this scheduling FIFO.
+        let prefill = ((hop + up.input_chunk()) as f64 * sample_rate / rate).ceil() as usize
+            + down.input_chunk()
+            + 2;
         let mut channel = Self {
             model,
-            down: Resampler::new(down),
-            up: Resampler::new(up),
+            down,
+            up,
             input: vec![0.0; hop],
             output: vec![0.0; hop],
             pending: 0,
@@ -222,28 +225,16 @@ impl AudioProcessor {
         if let Some(kind) = model {
             let first = kind.create();
             let rate = f64::from(first.sample_rate());
-            let ratio = sample_rate / rate;
-            let prefill = (first.hop_size() as f64 * ratio).ceil() as usize + 2;
-            let down = Kernel::new(sample_rate, rate);
-            let up = Kernel::new(rate, sample_rate);
-            let delay = prefill as f64 / sample_rate
-                + first.latency_samples() as f64 / rate
-                + down.delay_samples() as f64 / sample_rate
-                + up.delay_samples() as f64 / rate;
+            let intrinsic = first.latency_samples();
+            let first = Channel::new(first, sample_rate);
+            let delay = first.prefill as f64 / sample_rate
+                + intrinsic as f64 / rate
+                + first.down.delay_seconds()
+                + first.up.delay_seconds();
             latency_hns = (delay * 10_000_000.0).ceil() as i64;
-            processors.push(Channel::new(
-                first,
-                Arc::clone(&down),
-                Arc::clone(&up),
-                prefill,
-            ));
+            processors.push(first);
             for _ in 1..channels {
-                processors.push(Channel::new(
-                    kind.create(),
-                    Arc::clone(&down),
-                    Arc::clone(&up),
-                    prefill,
-                ));
+                processors.push(Channel::new(kind.create(), sample_rate));
             }
         }
         self.format = Some(format);

@@ -94,17 +94,19 @@ fn packet_sizes_do_not_change_audio_and_channels_are_independent() {
 
 #[test]
 fn process_and_reset_do_not_allocate_or_free_memory() {
-    let mut dsp = processor(48_000.0, 2);
-    let input = voice(48_000.0, 9_600, 2);
-    let mut buffer = input.clone();
-    ALLOCATIONS.set(0);
-    TRACK.set(true);
-    dsp.process(&mut buffer);
-    dsp.reset();
-    buffer.copy_from_slice(&input);
-    dsp.process(&mut buffer);
-    TRACK.set(false);
-    assert_eq!(ALLOCATIONS.get(), 0, "real-time heap activity");
+    for rate in [8_000.0, 16_000.0, 44_100.0, 48_000.0, 192_000.0] {
+        let mut dsp = processor(rate, 2);
+        let input = voice(rate, (rate * 0.2) as usize, 2);
+        let mut buffer = input.clone();
+        ALLOCATIONS.set(0);
+        TRACK.set(true);
+        dsp.process(&mut buffer);
+        dsp.reset();
+        buffer.copy_from_slice(&input);
+        dsp.process(&mut buffer);
+        TRACK.set(false);
+        assert_eq!(ALLOCATIONS.get(), 0, "rate={rate}: real-time heap activity");
+    }
 }
 
 #[test]
@@ -188,28 +190,28 @@ fn reported_latency_matches_an_identity_model_impulse() {
             self.0.synthesize(&spectrum, output);
         }
     }
-    for rate in [8_000.0, 16_000.0, 44_100.0, 48_000.0, 192_000.0] {
+    for rate in [
+        8_000.0, 11_025.0, 16_000.0, 22_050.0, 24_000.0, 32_000.0, 44_100.0, 48_000.0, 48_001.0,
+        96_000.0, 176_400.0, 192_000.0,
+    ] {
         let dsp = processor(rate, 1);
         let expected = dsp.latency_hns() as f64 * rate / 10_000_000.0;
-        let prefill = (256.0 * rate / 16_000.0).ceil() as usize + 2;
-        let mut channel = Channel::new(
-            Box::new(Identity(spectral::Stft::new())),
-            Kernel::new(rate, 16_000.0),
-            Kernel::new(16_000.0, rate),
-            prefill,
-        );
-        let mut peak = (0, 0.0_f32);
-        for i in 0..(rate * 0.08) as usize {
-            let value = channel.process_sample(if i == 0 { 0.5 } else { 0.0 });
-            if value.abs() > peak.1 {
-                peak = (i, value.abs());
+        let mut channel = Channel::new(Box::new(Identity(spectral::Stft::new())), rate);
+        for impulse in [0, (rate * 0.025) as usize + 7] {
+            channel.reset();
+            let mut peak = (0, 0.0_f32);
+            for i in 0..(rate * 0.12) as usize {
+                let value = channel.process_sample(if i == impulse { 0.5 } else { 0.0 });
+                if value.abs() > peak.1 {
+                    peak = (i, value.abs());
+                }
             }
+            assert!(peak.1 > 0.02);
+            assert!(
+                ((peak.0 - impulse) as f64 - expected).abs() < 2.0,
+                "rate={rate} impulse={impulse} impulse_peak={} reported={expected}",
+                peak.0
+            );
         }
-        assert!(peak.1 > 0.02);
-        assert!(
-            (peak.0 as f64 - expected).abs() < 2.0,
-            "rate={rate} impulse_peak={} reported={expected}",
-            peak.0
-        );
     }
 }

@@ -252,7 +252,11 @@ fn raw_processing_and_effect_discovery_are_consistent() {
         if is_raw {
             assert_eq!(latency, 0);
         } else {
-            assert!((360_000..370_000).contains(&latency));
+            let mut expected = AudioProcessor::default();
+            expected
+                .configure(SampleFormat::Float32, 1, 48_000.0, Some(ModelKind::Gtcrn))
+                .unwrap();
+            assert_eq!(latency, expected.latency_hns());
         }
         let mut samples = [0.5_f32; 64];
         let mut property = APO_CONNECTION_PROPERTY {
