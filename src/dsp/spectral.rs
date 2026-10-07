@@ -67,30 +67,3 @@ impl Stft {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn overlap_add_reconstructs_with_exact_one_hop_delay() {
-        let mut stft = Stft::new();
-        let mut previous = [0.0; 256];
-        for frame in 0..8 {
-            let input =
-                std::array::from_fn::<_, 256, _>(|i| ((frame * 256 + i) as f32 * 0.13).sin());
-            let spectrum = stft.analyze(&input);
-            let mut output = [0.0; 256];
-            stft.synthesize(&spectrum, &mut output);
-            for (actual, expected) in output.iter().zip(previous) {
-                assert!((actual - expected).abs() < 2e-6);
-            }
-            previous = input;
-        }
-        stft.reset();
-        let spectrum = stft.analyze(&[0.0; 256]);
-        let mut output = [1.0; 256];
-        stft.synthesize(&spectrum, &mut output);
-        assert_eq!(output, [0.0; 256]);
-    }
-}

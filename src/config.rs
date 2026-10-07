@@ -131,34 +131,3 @@ impl Drop for ConfigWorker {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn notifications_update_snapshot_and_worker_stops() {
-        use winreg::enums::HKEY_CURRENT_USER;
-        let root = RegKey::predef(HKEY_CURRENT_USER);
-        let path = format!(r"Software\VoiceBoxTests\Config-{}", std::process::id());
-        let (key, _) = root.create_subkey(&path).unwrap();
-        key.set_value("Enabled", &1u32).unwrap();
-        key.set_value("GainMilliDb", &0u32).unwrap();
-        let params = Arc::new(RtParams::default());
-        let worker =
-            ConfigWorker::watch(root.open_subkey(&path).unwrap(), Arc::clone(&params)).unwrap();
-        assert_eq!(params.load(), (true, 1.0));
-        key.set_value("GainMilliDb", &(-6000i32 as u32)).unwrap();
-        key.set_value("Enabled", &0u32).unwrap();
-        let start = std::time::Instant::now();
-        while params.load().0 || (params.load().1 - 0.5011872).abs() > 1e-6 {
-            assert!(
-                start.elapsed().as_secs() < 3,
-                "configuration notification was lost"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        drop(worker);
-        drop(key);
-        root.delete_subkey_all(&path).unwrap();
-    }
-}

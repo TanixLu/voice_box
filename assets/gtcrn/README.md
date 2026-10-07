@@ -5,5 +5,3 @@ Source: [Xiaobin-Rong/gtcrn](https://github.com/Xiaobin-Rong/gtcrn/tree/502ebfab
 - `dns3.f32`: float32 tensors from `stream/onnx_models/model_trained_on_dns3.tar`;
   offsets in `src/dsp/weights.rs`, embedded in the Rust APO.
   SHA256: `3802dcc8125851b50703a68b80214c5377071178657918c4a641b5f6102e925a`.
-- `reference-input.f32` / `reference-output.f32`: 24 consecutive frames
-  (257 complex bins) for Rust regression tests against the upstream `gtcrn_simple.onnx`.

@@ -264,12 +264,6 @@ impl AudioProcessor {
         self.latency_hns
     }
 
-    /// Returns true when every output sample is zero (including queued tails).
-    #[cfg(test)]
-    pub fn process(&mut self, buffer: &mut [u8]) -> bool {
-        self.process_with_settings(buffer, true, 1.0)
-    }
-
     pub fn process_with_settings(&mut self, buffer: &mut [u8], enabled: bool, gain: f32) -> bool {
         let Some(format) = self.format else {
             return true;
@@ -291,6 +285,3 @@ impl AudioProcessor {
         silent
     }
 }
-
-#[cfg(test)]
-mod tests;

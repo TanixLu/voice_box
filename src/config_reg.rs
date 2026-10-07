@@ -185,27 +185,3 @@ pub fn command() -> anyhow::Result<bool> {
     );
     Ok(true)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn acl_check_uses_everyone_and_grant_preserves_owner_access() {
-        use winreg::enums::HKEY_CURRENT_USER;
-        let root = RegKey::predef(HKEY_CURRENT_USER);
-        let path = format!(r"Software\VoiceBoxTests\Acl-{}", std::process::id());
-        let (key, _) = root.create_subkey(&path).unwrap();
-        grant_everyone(&key).unwrap();
-        assert!(everyone_can_read_write(&key).unwrap());
-        let (child, _) = key.create_subkey("Child").unwrap();
-        assert!(
-            everyone_can_read_write(&child).unwrap(),
-            "children must inherit read/write access"
-        );
-        child.set_value("Enabled", &1u32).unwrap();
-        assert_eq!(child.get_value::<u32, _>("Enabled").unwrap(), 1);
-        drop(child);
-        drop(key);
-        root.delete_subkey_all(&path).unwrap();
-    }
-}

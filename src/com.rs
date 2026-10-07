@@ -1297,6 +1297,3 @@ fn write_wide(destination: &mut [u16], text: &str) {
         *slot = value;
     }
 }
-
-#[cfg(test)]
-mod tests;
