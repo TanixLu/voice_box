@@ -75,13 +75,9 @@ const COMMON_U32_REG_PAIRS: [(&str, u32); 10] = [
     (APO_REG_FLAGS, VOICE_BOX_APO_FLAGS),
 ];
 
-const EFFECT_CLSID: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d}";
-const SFX_GUID: &str = constcat::concat!(EFFECT_CLSID, ",5");
-
 // Stream effects are omitted from RAW streams. Endpoint effects cannot provide
 // that guarantee because the endpoint instance is shared by all modes.
-const FX_GUID: &str = SFX_GUID;
-const FX_NAME: &str = "SFX";
+const SFX_GUID: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5";
 const SFX_PROCESSING_MODES: &str = "{d3993a3f-99c2-4402-b5ec-a92a0367664b},5";
 
 fn processing_modes() -> Vec<String> {
@@ -132,7 +128,7 @@ fn need_reg(device_guid: &str) -> bool {
         }
     }
     // 检测设备FxProperties是否需要更新
-    if reg_get_value::<String>(&device_fx_property_reg_path(device_guid, FX_GUID))
+    if reg_get_value::<String>(&device_fx_property_reg_path(device_guid, SFX_GUID))
         .ok()
         .as_deref()
         != Some(VOICE_BOX_GUID)
@@ -216,25 +212,25 @@ fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
     }
 
     // 更新设备FxProperties
-    let device_fx_reg_path = device_fx_property_reg_path(device_guid, FX_GUID);
+    let device_fx_reg_path = device_fx_property_reg_path(device_guid, SFX_GUID);
     let maybe_old_fx_guid: Option<String> = reg_get_optional_value(&device_fx_reg_path)?;
     if maybe_old_fx_guid.as_deref() != Some(VOICE_BOX_GUID) {
         if let Some(old_fx_guid) = maybe_old_fx_guid
             && !old_fx_guid.is_empty()
         {
             reg_set_value(
-                &device_fx_property_backup_reg_path(device_guid, FX_GUID),
+                &device_fx_property_backup_reg_path(device_guid, SFX_GUID),
                 &old_fx_guid,
             )?;
             info!(
-                "Backed up old {} GUID {} for device {}",
-                FX_NAME, old_fx_guid, device_guid
+                "Backed up old SFX GUID {} for device {}",
+                old_fx_guid, device_guid
             );
         }
         reg_set_value(&device_fx_reg_path, &VOICE_BOX_GUID)?;
         info!(
-            "Updated device {} {} GUID to {}",
-            device_guid, FX_NAME, VOICE_BOX_GUID
+            "Updated device {} SFX GUID to {}",
+            device_guid, VOICE_BOX_GUID
         );
     }
 

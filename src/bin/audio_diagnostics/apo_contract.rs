@@ -1,6 +1,7 @@
 //! Direct negotiation and processing probes of installed or locally built APOs.
 use super::{call, say};
 use anyhow::{Context, Result, ensure};
+use std::time::Instant;
 use std::{ffi::c_void, mem::ManuallyDrop, os::windows::ffi::OsStrExt, path::Path, ptr};
 use wasapi::{DeviceEnumerator, SampleType, WaveFormat};
 use windows::Win32::{
@@ -277,7 +278,7 @@ fn check_negotiation(
 }
 
 fn check_in_place_processing(apo: &IAudioProcessingObject, channels: usize) -> Result<u32> {
-    const FRAMES: usize = 64;
+    const FRAMES: usize = 480;
     let label = format!("in-place-float32-{channels}ch");
     let format = media_type(WaveFormat::new(
         32,
@@ -309,6 +310,8 @@ fn check_in_place_processing(apo: &IAudioProcessingObject, channels: usize) -> R
         return Ok(1);
     }
     let mut violations = 0;
+    let latency = unsafe { apo.GetLatency() }?;
+    say(format!("CONTRACT {label}: latency_hns={latency}"));
     let mut property = APO_CONNECTION_PROPERTY {
         pBuffer: samples.as_mut_ptr() as usize,
         u32ValidFrameCount: FRAMES as u32,
@@ -319,31 +322,46 @@ fn check_in_place_processing(apo: &IAudioProcessingObject, channels: usize) -> R
     // exactly as the engine may do for an APO registered with APO_FLAG_INPLACE.
     let mut output = ptr::from_mut(&mut property);
     let input = output.cast_const();
-    for channel in 0..channels {
-        samples[channel] = 0.5;
-        samples[channels + channel] = -0.25;
+    let blocks = (latency.max(0) as usize * 48_000 / 10_000_000 / FRAMES) + 12;
+    let mut heard_audio = false;
+    let mut timings = Vec::with_capacity(blocks);
+    for block in 0..blocks {
+        for frame in 0..FRAMES {
+            let t = (block * FRAMES + frame) as f32 / 48_000.0;
+            let value = 0.25 * (std::f32::consts::TAU * 230.0 * t).sin()
+                + 0.1 * (std::f32::consts::TAU * 1_170.0 * t).sin();
+            samples[frame * channels..(frame + 1) * channels].fill(value);
+        }
+        property.u32BufferFlags = BUFFER_VALID;
+        let start = Instant::now();
+        unsafe { realtime.APOProcess(1, &input, 1, &mut output) };
+        timings.push(start.elapsed().as_secs_f64() * 1_000.0);
+        heard_audio |= samples.iter().any(|sample| sample.abs() > 0.001);
+        if property.u32BufferFlags != BUFFER_VALID
+            || property.u32ValidFrameCount != FRAMES as u32
+            || !samples.iter().all(|sample| sample.is_finite())
+        {
+            say(format!(
+                "CONTRACT_VIOLATION {label}: aliased processing lost validity or produced nonfinite samples"
+            ));
+            violations += 1;
+        }
     }
-    unsafe { realtime.APOProcess(1, &input, 1, &mut output) };
-    if property.u32BufferFlags != BUFFER_VALID
-        || property.u32ValidFrameCount != FRAMES as u32
-        || !samples[..channels * 2]
-            .iter()
-            .all(|sample| sample.is_finite() && sample.abs() > 0.1)
-    {
+    timings.sort_by(f64::total_cmp);
+    say(format!(
+        "CONTRACT {label}: process_ms_median={:.3} process_ms_max={:.3}",
+        timings[timings.len() / 2],
+        timings[timings.len() - 1]
+    ));
+    if !heard_audio {
         say(format!(
-            "CONTRACT_VIOLATION {label}: valid aliased input lost audio or output validity; flags={:?} frames={} first_samples={:?}",
-            property.u32BufferFlags,
-            property.u32ValidFrameCount,
-            &samples[..channels * 2]
+            "CONTRACT_VIOLATION {label}: no output after reported startup latency"
         ));
         violations += 1;
     }
-    if samples[channels * 2..].iter().any(|sample| *sample != 0.0) {
-        say(format!(
-            "CONTRACT_VIOLATION {label}: impulse created a delayed tail"
-        ));
-        violations += 1;
-    }
+    // Buffered algorithms may legitimately output tails on zero input. Reset
+    // before checking digital silence rather than asserting zero-delay behavior.
+    unsafe { apo.Reset() }?;
     samples.fill(0.0);
     property.u32BufferFlags = BUFFER_VALID;
     unsafe { realtime.APOProcess(1, &input, 1, &mut output) };
@@ -354,7 +372,7 @@ fn check_in_place_processing(apo: &IAudioProcessingObject, channels: usize) -> R
         violations += 1;
     }
     // A silent buffer need not contain initialized samples on input. The APO
-    // must clear the output without confusing its aliased flags with INVALID.
+    // must clear a reset output without confusing aliased flags with INVALID.
     samples.fill(0.5);
     property.u32BufferFlags = BUFFER_SILENT;
     unsafe { realtime.APOProcess(1, &input, 1, &mut output) };

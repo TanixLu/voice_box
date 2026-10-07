@@ -1,4 +1,4 @@
-//! VoiceBox APO: an immediate, conspicuous robot voice effect.
+//! VoiceBox APO: streaming GTCRN microphone speech enhancement.
 //!
 //! Windows/COM plumbing lives in [`com`]; the real-time algorithm lives in
 //! [`dsp`].

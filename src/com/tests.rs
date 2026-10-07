@@ -248,6 +248,12 @@ fn raw_processing_and_effect_discovery_are_consistent() {
                 .LockForProcess(&[&descriptor], &[&descriptor])
                 .unwrap()
         };
+        let latency = unsafe { apo.GetLatency().unwrap() };
+        if is_raw {
+            assert_eq!(latency, 0);
+        } else {
+            assert!((360_000..370_000).contains(&latency));
+        }
         let mut samples = [0.5_f32; 64];
         let mut property = APO_CONNECTION_PROPERTY {
             pBuffer: samples.as_mut_ptr() as usize,
@@ -323,7 +329,7 @@ fn reset_and_lifecycle_overlap_do_not_alias_the_dsp() {
     unsafe { apo.Reset().unwrap() };
     samples.fill(0.5);
     process(&apo, &mut property);
-    assert_eq!(samples[0], 0.5);
+    assert_eq!(samples[0], 0.0);
     unsafe { config.UnlockForProcess().unwrap() };
 }
 
@@ -378,12 +384,18 @@ fn pcm_and_float_formats_process_across_rates_and_channel_counts() {
                 process(&apo, &mut property);
                 assert_eq!(property.u32BufferFlags, BUFFER_VALID);
                 assert_eq!(property.u32ValidFrameCount, 512);
-                assert_eq!(&buffer[..bytes as usize], encoded);
+                let silence = if subtype == KSDATAFORMAT_SUBTYPE_PCM && bytes == 1 {
+                    128
+                } else {
+                    0
+                };
+                assert!(buffer[..bytes as usize].iter().all(|byte| *byte == silence));
                 assert_ne!(
                     buffer, original,
                     "effect missing: bytes={bytes} bits={bits} rate={rate} channels={channels}"
                 );
                 buffer.fill(0xff);
+                unsafe { apo.Reset().unwrap() };
                 property.u32BufferFlags = BUFFER_SILENT;
                 process(&apo, &mut property);
                 let silence = if subtype == KSDATAFORMAT_SUBTYPE_PCM && bytes == 1 {
@@ -410,7 +422,7 @@ fn pcm_and_float_formats_process_across_rates_and_channel_counts() {
 }
 
 #[test]
-fn signed_pcm_extremes_and_padding_follow_the_carrier() {
+fn signed_pcm_extremes_and_padding_remain_valid_after_denoising() {
     const FRAMES: usize = 1_201;
     for bytes in 1..=4 {
         for bits in [bytes * 8, bytes * 8 - 4] {
@@ -445,9 +457,8 @@ fn signed_pcm_extremes_and_padding_follow_the_carrier() {
             };
             process(&apo, &mut property);
             assert_eq!(property.u32BufferFlags, BUFFER_VALID);
-            for (index, frame) in buffer.chunks_exact(bytes as usize * 4).enumerate() {
-                let carrier = (core::f64::consts::TAU * index as f64 * 80.0 / 48_000.0).cos();
-                for (sample, input) in frame.chunks_exact(bytes as usize).zip(values) {
+            for frame in buffer.chunks_exact(bytes as usize * 4) {
+                for sample in frame.chunks_exact(bytes as usize) {
                     let container = if bytes == 1 {
                         i64::from(sample[0]) - 128
                     } else {
@@ -464,15 +475,7 @@ fn signed_pcm_extremes_and_padding_follow_the_carrier() {
                         0,
                         "padding changed: bytes={bytes} bits={bits}"
                     );
-                    let actual = container >> padding;
-                    let expected = (input as f64 * carrier)
-                        .round()
-                        .clamp(-limit as f64, (limit - 1) as f64)
-                        as i64;
-                    assert!(
-                        (actual - expected).abs() <= 1,
-                        "bytes={bytes} bits={bits} frame={index} input={input} actual={actual} expected={expected}"
-                    );
+                    assert!((-limit..limit).contains(&(container >> padding)));
                 }
             }
             unsafe { config.UnlockForProcess().unwrap() };
@@ -481,7 +484,7 @@ fn signed_pcm_extremes_and_padding_follow_the_carrier() {
 }
 
 #[test]
-fn block_boundaries_preserve_phase_and_nonfinite_samples_are_sanitized() {
+fn block_boundaries_preserve_model_state_and_nonfinite_samples_are_sanitized() {
     for bytes in [4, 8] {
         let media = format(
             KSDATAFORMAT_SUBTYPE_IEEE_FLOAT,
@@ -493,7 +496,7 @@ fn block_boundaries_preserve_phase_and_nonfinite_samples_are_sanitized() {
         let render = |blocks: &[usize]| {
             let apo = instance(AUDIO_SIGNALPROCESSINGMODE_DEFAULT);
             let config: IAudioProcessingObjectConfiguration = apo.cast().unwrap();
-            let descriptor = descriptor(&media, 601);
+            let descriptor = descriptor(&media, 3_601);
             unsafe {
                 config
                     .LockForProcess(&[&descriptor], &[&descriptor])
@@ -531,11 +534,11 @@ fn block_boundaries_preserve_phase_and_nonfinite_samples_are_sanitized() {
             unsafe { config.UnlockForProcess().unwrap() };
             result
         };
-        let whole = render(&[601]);
-        let split = render(&[1, 7, 63, 128, 2, 400]);
+        let whole = render(&[3_601]);
+        let split = render(&[1, 7, 63, 128, 2, 3_400]);
         assert_eq!(
             whole, split,
-            "phase reset across buffers, float width {bytes}"
+            "model state reset across buffers, float width {bytes}"
         );
         for (index, sample) in whole.chunks_exact(bytes as usize).enumerate() {
             let value = if bytes == 4 {
@@ -549,6 +552,49 @@ fn block_boundaries_preserve_phase_and_nonfinite_samples_are_sanitized() {
             }
         }
     }
+}
+
+#[test]
+fn silent_input_drains_buffered_speech_and_reset_discards_it() {
+    let apo = instance(AUDIO_SIGNALPROCESSINGMODE_DEFAULT);
+    let media = float(1);
+    let descriptor = descriptor(&media, 4_096);
+    let config: IAudioProcessingObjectConfiguration = apo.cast().unwrap();
+    unsafe {
+        config
+            .LockForProcess(&[&descriptor], &[&descriptor])
+            .unwrap()
+    };
+    let mut samples: Vec<f32> = (0..4_096)
+        .map(|i| 0.25 * (std::f32::consts::TAU * 230.0 * i as f32 / 48_000.0).sin())
+        .collect();
+    let mut property = APO_CONNECTION_PROPERTY {
+        pBuffer: samples.as_mut_ptr() as usize,
+        u32ValidFrameCount: samples.len() as u32,
+        u32BufferFlags: BUFFER_VALID,
+        ..Default::default()
+    };
+    process(&apo, &mut property);
+    samples.fill(f32::NAN); // A SILENT input has no readable sample payload.
+    property.u32BufferFlags = BUFFER_SILENT;
+    process(&apo, &mut property);
+    assert_eq!(property.u32BufferFlags, BUFFER_VALID);
+    assert!(samples.iter().any(|x| x.abs() > 0.001));
+    assert!(samples.iter().all(|x| x.is_finite()));
+    property.u32BufferFlags = BUFFER_SILENT;
+    process(&apo, &mut property);
+    assert_eq!(property.u32BufferFlags, BUFFER_SILENT);
+    assert!(samples.iter().all(|x| *x == 0.0));
+    samples.fill(0.5);
+    property.u32BufferFlags = BUFFER_VALID;
+    process(&apo, &mut property);
+    unsafe { apo.Reset().unwrap() };
+    samples.fill(f32::NAN);
+    property.u32BufferFlags = BUFFER_SILENT;
+    process(&apo, &mut property);
+    assert_eq!(property.u32BufferFlags, BUFFER_SILENT);
+    assert!(samples.iter().all(|x| *x == 0.0));
+    unsafe { config.UnlockForProcess().unwrap() };
 }
 
 #[test]

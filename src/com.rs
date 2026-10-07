@@ -5,7 +5,7 @@ use core::ffi::c_void;
 use core::ptr;
 use std::boxed::Box;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering, fence};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering, fence};
 
 use windows::Win32::Foundation::{
     CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_INVALIDARG, E_NOINTERFACE, E_NOTIMPL,
@@ -27,20 +27,23 @@ use windows::Win32::Media::Audio::Apo::{
     IAudioSystemEffects3_Vtbl, UNCOMPRESSEDAUDIOFORMAT,
 };
 use windows::Win32::Media::KernelStreaming::{
-    AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS, AUDIO_SIGNALPROCESSINGMODE_DEFAULT,
-    AUDIO_SIGNALPROCESSINGMODE_FAR_FIELD_SPEECH, AUDIO_SIGNALPROCESSINGMODE_MEDIA,
-    AUDIO_SIGNALPROCESSINGMODE_MOVIE, AUDIO_SIGNALPROCESSINGMODE_NOTIFICATION,
-    AUDIO_SIGNALPROCESSINGMODE_RAW, AUDIO_SIGNALPROCESSINGMODE_SPEECH, KSDATAFORMAT_SUBTYPE_PCM,
+    AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION, AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS,
+    AUDIO_SIGNALPROCESSINGMODE_DEFAULT, AUDIO_SIGNALPROCESSINGMODE_FAR_FIELD_SPEECH,
+    AUDIO_SIGNALPROCESSINGMODE_MEDIA, AUDIO_SIGNALPROCESSINGMODE_MOVIE,
+    AUDIO_SIGNALPROCESSINGMODE_NOTIFICATION, AUDIO_SIGNALPROCESSINGMODE_RAW,
+    AUDIO_SIGNALPROCESSINGMODE_SPEECH, KSDATAFORMAT_SUBTYPE_PCM,
 };
 use windows::Win32::Media::Multimedia::KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
 use windows::Win32::System::Com::{CoTaskMemAlloc, IClassFactory, IClassFactory_Vtbl};
 use windows_core::{BOOL, GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface};
 
-use crate::dsp::{ROBOT_FREQUENCY_HZ, SampleFormat, VoiceChanger};
+use crate::dsp::{
+    AudioProcessor, MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, ModelKind, SampleFormat,
+};
 use crate::etw::{self, apo_log};
 
 const CLSID_VOICE_BOX_APO: GUID = GUID::from_u128(0xae672075_b244_4417_b5a5_fbd45b7f0268);
-const EFFECT_ID_ROBOT: GUID = CLSID_VOICE_BOX_APO;
+const EFFECT_ID_DENOISE: GUID = AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION;
 
 static LIVE_OBJECTS: AtomicU32 = AtomicU32::new(0);
 static SERVER_LOCKS: AtomicU32 = AtomicU32::new(0);
@@ -74,7 +77,8 @@ struct ApoCom {
     input_channels: AtomicU32,
     max_input_frames: AtomicU32,
     max_output_frames: AtomicU32,
-    dsp: UnsafeCell<VoiceChanger>,
+    latency_hns: AtomicI64,
+    dsp: UnsafeCell<AudioProcessor>,
 }
 
 // Non-real-time configuration is serialized. Access to UnsafeCell is exclusive
@@ -275,11 +279,12 @@ unsafe extern "system" fn reset(this: *mut c_void) -> HRESULT {
     S_OK
 }
 
-unsafe extern "system" fn get_latency(_: *mut c_void, latency: *mut i64) -> HRESULT {
+unsafe extern "system" fn get_latency(this: *mut c_void, latency: *mut i64) -> HRESULT {
     if latency.is_null() {
         return E_POINTER;
     }
-    unsafe { *latency = 0 };
+    let object = unsafe { object_from(this) };
+    unsafe { *latency = (*object).latency_hns.load(Ordering::Acquire) };
     S_OK
 }
 
@@ -428,14 +433,14 @@ unsafe extern "system" fn get_effects_list(
         return E_OUTOFMEMORY;
     }
     unsafe {
-        memory.write(EFFECT_ID_ROBOT);
+        memory.write(EFFECT_ID_DENOISE);
         *effects = memory;
         *count = 1;
     }
     apo_log!(
         etw::INFO,
         etw::LIFECYCLE,
-        "GetEffectsList instance={object:p} count=1 effect={EFFECT_ID_ROBOT:?}"
+        "GetEffectsList instance={object:p} count=1 effect={EFFECT_ID_DENOISE:?}"
     );
     S_OK
 }
@@ -464,7 +469,7 @@ unsafe extern "system" fn get_controllable_effects_list(
     }
     unsafe {
         memory.write(AUDIO_SYSTEMEFFECT {
-            id: EFFECT_ID_ROBOT,
+            id: EFFECT_ID_DENOISE,
             canSetState: BOOL::from(false),
             state: AUDIO_SYSTEMEFFECT_STATE_ON,
         });
@@ -474,7 +479,7 @@ unsafe extern "system" fn get_controllable_effects_list(
     apo_log!(
         etw::INFO,
         etw::LIFECYCLE,
-        "GetControllableSystemEffectsList instance={object:p} count=1 effect={EFFECT_ID_ROBOT:?} state=on controllable=false"
+        "GetControllableSystemEffectsList instance={object:p} count=1 effect={EFFECT_ID_DENOISE:?} state=on controllable=false"
     );
     S_OK
 }
@@ -554,10 +559,10 @@ unsafe fn read_format(raw: *mut c_void) -> Result<UNCOMPRESSEDAUDIOFORMAT, HRESU
 }
 
 fn is_supported_format(format: &UNCOMPRESSEDAUDIOFORMAT) -> bool {
-    format.dwSamplesPerFrame > 0
+    (1..=MAX_CHANNELS as u32).contains(&format.dwSamplesPerFrame)
         && sample_format(format).is_some()
         && format.fFramesPerSecond.is_finite()
-        && f64::from(format.fFramesPerSecond) > ROBOT_FREQUENCY_HZ * 2.0
+        && (MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&f64::from(format.fFramesPerSecond))
         && frame_bytes(format).is_some()
 }
 
@@ -878,6 +883,10 @@ unsafe extern "system" fn lock_for_process(
             sample_format,
             input_format.dwSamplesPerFrame as usize,
             f64::from(input_format.fFramesPerSecond),
+            (*object)
+                .effect_enabled
+                .load(Ordering::Acquire)
+                .then_some(ModelKind::default()),
         )
     }
     .is_err()
@@ -886,11 +895,14 @@ unsafe extern "system" fn lock_for_process(
             object,
             input_count,
             output_count,
-            "cannot configure robot voice effect",
+            "cannot configure speech enhancement model",
             APOERR_INVALID_CONNECTION_FORMAT,
         );
     }
     unsafe {
+        (*object)
+            .latency_hns
+            .store((&*(*object).dsp.get()).latency_hns(), Ordering::Release);
         (*object)
             .input_channels
             .store(input_format.dwSamplesPerFrame, Ordering::Release);
@@ -908,10 +920,11 @@ unsafe extern "system" fn lock_for_process(
     apo_log!(
         etw::INFO,
         etw::CONFIGURATION,
-        "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} effect=robot carrier_hz={ROBOT_FREQUENCY_HZ} latency_seconds=0",
+        "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} effect=gtcrn latency_hns={}",
         unsafe { (**inputs).u32MaxFrameCount },
         unsafe { (**outputs).u32MaxFrameCount },
         input_format.dwSamplesPerFrame,
+        unsafe { (*object).latency_hns.load(Ordering::Acquire) },
     );
     S_OK
 }
@@ -996,12 +1009,17 @@ unsafe extern "system" fn process(
     if unsafe { (*object).reset_requested.swap(false, Ordering::AcqRel) } {
         unsafe { (&mut *(*object).dsp.get()).reset() };
     }
+    let mut output_flags = input.u32BufferFlags;
     if unsafe { (*object).effect_enabled.load(Ordering::Acquire) } {
         let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
-        unsafe { (&mut *(*object).dsp.get()).process(buffer) };
+        let silent = unsafe { (&mut *(*object).dsp.get()).process(buffer) };
+        // Buffered speech must drain even when the next input packet is SILENT.
+        if input.u32BufferFlags == BUFFER_SILENT && !silent {
+            output_flags = BUFFER_VALID;
+        }
     }
     output.u32ValidFrameCount = input.u32ValidFrameCount;
-    output.u32BufferFlags = input.u32BufferFlags;
+    output.u32BufferFlags = output_flags;
     unsafe {
         (*object)
             .processed_frames
@@ -1090,7 +1108,8 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
             input_channels: AtomicU32::new(0),
             max_input_frames: AtomicU32::new(0),
             max_output_frames: AtomicU32::new(0),
-            dsp: UnsafeCell::new(VoiceChanger::default()),
+            latency_hns: AtomicI64::new(0),
+            dsp: UnsafeCell::new(AudioProcessor::default()),
         })
     };
     let object = unsafe { &mut *raw };

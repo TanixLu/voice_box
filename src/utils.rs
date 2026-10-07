@@ -1,5 +1,4 @@
 use core::fmt;
-use std::fmt::Debug;
 
 use is_elevated::is_elevated;
 use single_instance::SingleInstance;
@@ -68,7 +67,7 @@ pub fn reg_get_optional_value<T: FromRegValue>(full_path: &str) -> anyhow::Resul
 
 pub fn reg_set_value<T>(full_path: &str, value: &T) -> anyhow::Result<()>
 where
-    T: ToRegValue + Debug,
+    T: ToRegValue,
 {
     let (root, path, name) = split_reg_path(full_path)?;
     let (subkey, _) = root.create_subkey_with_flags(path, KEY_SET_VALUE)?;
