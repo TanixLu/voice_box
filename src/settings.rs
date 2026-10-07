@@ -1,4 +1,8 @@
 //! Shared 64-bit machine-wide configuration schema.
+use windows::{
+    Win32::System::Registry::{HKEY, REG_DWORD, RegQueryMultipleValuesW, VALENTW},
+    core::{PWSTR, w},
+};
 use winreg::{
     RegKey,
     enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY},
@@ -23,20 +27,71 @@ impl Default for Settings {
 }
 
 impl Settings {
-    pub fn read(key: &RegKey) -> Self {
-        Self {
-            enabled: key.get_value::<u32, _>("Enabled").unwrap_or(1) != 0,
-            gain_millidb: (key.get_value::<u32, _>("GainMilliDb").unwrap_or(0) as i32)
-                .clamp(-60_000, 12_000),
+    pub fn read(key: &RegKey) -> std::io::Result<Self> {
+        // One query observes a complete committed configuration, even when a
+        // transaction commits concurrently with the read.
+        let mut entries = [
+            VALENTW {
+                ve_valuename: PWSTR(w!("Enabled").as_ptr().cast_mut()),
+                ..Default::default()
+            },
+            VALENTW {
+                ve_valuename: PWSTR(w!("GainMilliDb").as_ptr().cast_mut()),
+                ..Default::default()
+            },
+        ];
+        // Leave room for DWORD alignment padding between returned entries.
+        let mut buffer = [0u64; 2];
+        let mut size = core::mem::size_of_val(&buffer) as u32;
+        let result = unsafe {
+            RegQueryMultipleValuesW(
+                HKEY(key.raw_handle().cast()),
+                &mut entries,
+                Some(PWSTR(buffer.as_mut_ptr().cast())),
+                Some(&mut size),
+            )
+        };
+        if result.0 != 0 {
+            return Err(std::io::Error::from_raw_os_error(result.0 as i32));
         }
+        let invalid = || {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid VoiceBox configuration",
+            )
+        };
+        let mut values = [0u32; 2];
+        let bytes = unsafe {
+            core::slice::from_raw_parts(
+                buffer.as_ptr().cast::<u8>(),
+                core::mem::size_of_val(&buffer),
+            )
+        };
+        for (entry, value) in entries.iter().zip(&mut values) {
+            if entry.ve_type != REG_DWORD || entry.ve_valuelen != 4 {
+                return Err(invalid());
+            }
+            let offset = entry
+                .ve_valueptr
+                .checked_sub(bytes.as_ptr() as usize)
+                .ok_or_else(invalid)?;
+            let data = bytes
+                .get(offset..offset.checked_add(4).ok_or_else(invalid)?)
+                .ok_or_else(invalid)?;
+            *value = u32::from_le_bytes(data.try_into().map_err(|_| invalid())?);
+        }
+        let gain_millidb = values[1] as i32;
+        if !(-60_000..=12_000).contains(&gain_millidb) {
+            return Err(invalid());
+        }
+        Ok(Self {
+            enabled: values[0] != 0,
+            gain_millidb,
+        })
     }
-    pub fn load() -> Self {
+    pub fn try_load() -> std::io::Result<Self> {
         RegKey::predef(HKEY_LOCAL_MACHINE)
             .open_subkey_with_flags(PATH, KEY_READ | KEY_WOW64_64KEY)
-            .map(|key| Self::read(&key))
-            .unwrap_or_default()
-    }
-    pub fn gain_linear(self) -> f32 {
-        10.0_f32.powf(self.gain_millidb as f32 / 20_000.0)
+            .and_then(|key| Self::read(&key))
     }
 }

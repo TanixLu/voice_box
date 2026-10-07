@@ -12,7 +12,8 @@ use windows::Win32::Media::KernelStreaming::{
 };
 
 use crate::utils::{
-    LOG_ENABLE_STR, reg_delete_value, reg_get_optional_value, reg_get_value, reg_set_value,
+    LOG_ENABLE_STR, reg_delete_key, reg_delete_value, reg_get_optional_value, reg_get_value,
+    reg_set_value,
 };
 
 const ELEVATED_REG_STR: &str = "--elevated-reg";
@@ -196,10 +197,6 @@ fn elevated_reg(device_guid: &str) -> anyhow::Result<()> {
 fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
     crate::config_reg::initialize()?;
     // The previous backup location is no longer used; do not migrate it.
-    let root = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE).open_subkey_with_flags(
-        crate::settings::ROOT,
-        winreg::enums::KEY_READ | winreg::enums::KEY_WRITE | winreg::enums::KEY_WOW64_64KEY,
-    )?;
     anyhow::ensure!(
         device_guid.len() == 38
             && device_guid.starts_with('{')
@@ -217,11 +214,7 @@ fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
                 }),
         "Invalid device GUID"
     );
-    if let Err(error) = root.delete_subkey_all(device_guid)
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        return Err(error.into());
-    }
+    reg_delete_key(&format!(r"HKLM\{}\{device_guid}", crate::settings::ROOT))?;
     // 更新dll
     if std::fs::read(APO_DLL_PATH).ok().as_deref() != Some(APO_DLL) {
         std::fs::write(APO_DLL_PATH, APO_DLL)?;
