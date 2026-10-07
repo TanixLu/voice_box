@@ -1,4 +1,6 @@
 mod apo_reg;
+mod config_reg;
+mod settings;
 mod utils;
 
 use tracing::{error, info};
@@ -19,6 +21,9 @@ fn main() {
 }
 
 fn run() -> anyhow::Result<()> {
+    if config_reg::command()? {
+        return Ok(());
+    }
     if maybe_elevated_reg()? {
         info!("Elevated registration operation completed successfully");
         return Ok(());

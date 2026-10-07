@@ -102,7 +102,7 @@ fn device_fx_property_reg_path(device_guid: &str, property: &str) -> String {
 }
 
 fn device_fx_property_backup_reg_path(device_guid: &str, property: &str) -> String {
-    format!(r"HKLM\SOFTWARE\VoiceBox\{device_guid}\{property}")
+    format!(r"HKLM\SOFTWARE\VoiceBox\FxPropertyBackup\{device_guid}\{property}")
 }
 
 const APO_DLL: &[u8] = include_bytes!("../target/voice_box.dll");
@@ -111,6 +111,9 @@ const APO_DLL_PATH: &str = r"C:\Windows\System32\voice_box.dll";
 const AUDIO_SERVICE_NAME: &str = "AudioSrv";
 
 fn need_reg(device_guid: &str) -> bool {
+    if !crate::config_reg::ready() {
+        return true;
+    }
     // 检测dll是否需要更新
     if std::fs::read(APO_DLL_PATH).ok().as_deref() != Some(APO_DLL) {
         return true;
@@ -191,6 +194,34 @@ fn elevated_reg(device_guid: &str) -> anyhow::Result<()> {
 }
 
 fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
+    crate::config_reg::initialize()?;
+    // The previous backup location is no longer used; do not migrate it.
+    let root = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE).open_subkey_with_flags(
+        crate::settings::ROOT,
+        winreg::enums::KEY_READ | winreg::enums::KEY_WRITE | winreg::enums::KEY_WOW64_64KEY,
+    )?;
+    anyhow::ensure!(
+        device_guid.len() == 38
+            && device_guid.starts_with('{')
+            && device_guid.ends_with('}')
+            && device_guid.as_bytes()[1..37]
+                .iter()
+                .copied()
+                .enumerate()
+                .all(|(i, byte)| {
+                    if [8, 13, 18, 23].contains(&i) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_hexdigit()
+                    }
+                }),
+        "Invalid device GUID"
+    );
+    if let Err(error) = root.delete_subkey_all(device_guid)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        return Err(error.into());
+    }
     // 更新dll
     if std::fs::read(APO_DLL_PATH).ok().as_deref() != Some(APO_DLL) {
         std::fs::write(APO_DLL_PATH, APO_DLL)?;

@@ -4,6 +4,7 @@ use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr;
 use std::boxed::Box;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering, fence};
 
@@ -58,6 +59,8 @@ struct InterfaceHeader<V> {
 /// A single carrier supports normal activation and COM aggregation.
 #[repr(C)]
 struct ApoCom {
+    params: Arc<crate::config::RtParams>,
+    config_worker: Option<crate::config::ConfigWorker>,
     inner_unknown: InterfaceHeader<IUnknown_Vtbl>,
     apo: InterfaceHeader<IAudioProcessingObject_Vtbl>,
     configuration: InterfaceHeader<IAudioProcessingObjectConfiguration_Vtbl>,
@@ -246,7 +249,7 @@ unsafe extern "system" fn inner_release(this: *mut c_void) -> u32 {
     let refs = unsafe { (*object).inner_refs.fetch_sub(1, Ordering::Release) - 1 };
     if refs == 0 {
         fence(Ordering::Acquire);
-        let live_objects = LIVE_OBJECTS.fetch_sub(1, Ordering::AcqRel) - 1;
+        let live_objects = LIVE_OBJECTS.load(Ordering::Acquire);
         apo_log!(
             etw::INFO,
             etw::LIFECYCLE,
@@ -257,6 +260,8 @@ unsafe extern "system" fn inner_release(this: *mut c_void) -> u32 {
             unsafe { (*object).processed_frames.load(Ordering::Relaxed) }
         );
         unsafe { drop(Box::from_raw(object)) };
+        // The object's worker has stopped before DLL unloading becomes possible.
+        LIVE_OBJECTS.fetch_sub(1, Ordering::AcqRel);
     }
     refs
 }
@@ -372,6 +377,18 @@ unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *const 
         };
 
     unsafe {
+        if !discovery_only && mode != AUDIO_SIGNALPROCESSINGMODE_RAW {
+            match crate::config::ConfigWorker::start(Arc::clone(&(*object).params)) {
+                Ok(worker) => (*object).config_worker = worker,
+                Err(error) => {
+                    apo_log!(
+                        etw::WARNING,
+                        etw::CONFIGURATION,
+                        "Configuration watcher failed: {error}"
+                    );
+                }
+            }
+        }
         (*object)
             .effect_enabled
             .store(mode != AUDIO_SIGNALPROCESSINGMODE_RAW, Ordering::Release);
@@ -1012,7 +1029,9 @@ unsafe extern "system" fn process(
     let mut output_flags = input.u32BufferFlags;
     if unsafe { (*object).effect_enabled.load(Ordering::Acquire) } {
         let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
-        let silent = unsafe { (&mut *(*object).dsp.get()).process(buffer) };
+        let (enabled, gain) = unsafe { (*object).params.load() };
+        let silent =
+            unsafe { (&mut *(*object).dsp.get()).process_with_settings(buffer, enabled, gain) };
         // Buffered speech must drain even when the next input packet is SILENT.
         if input.u32BufferFlags == BUFFER_SILENT && !silent {
             output_flags = BUFFER_VALID;
@@ -1074,6 +1093,8 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
     }
     unsafe {
         raw.write(ApoCom {
+            params: Arc::new(crate::config::RtParams::default()),
+            config_worker: None,
             inner_unknown: InterfaceHeader {
                 vtable: &INNER_UNKNOWN,
                 object: ptr::null_mut(),

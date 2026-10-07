@@ -22,6 +22,7 @@ pub enum ModelKind {
 }
 
 trait StreamingModel: Send {
+    fn set_enabled(&mut self, _enabled: bool) {}
     fn sample_rate(&self) -> u32;
     fn hop_size(&self) -> usize;
     /// Intrinsic sample delay, excluding the adapter's frame collection buffer.
@@ -264,17 +265,25 @@ impl AudioProcessor {
     }
 
     /// Returns true when every output sample is zero (including queued tails).
+    #[cfg(test)]
     pub fn process(&mut self, buffer: &mut [u8]) -> bool {
+        self.process_with_settings(buffer, true, 1.0)
+    }
+
+    pub fn process_with_settings(&mut self, buffer: &mut [u8], enabled: bool, gain: f32) -> bool {
         let Some(format) = self.format else {
             return true;
         };
         let mut silent = true;
+        for channel in &mut self.channels {
+            channel.model.set_enabled(enabled);
+        }
         for frame in buffer.chunks_exact_mut(self.frame_bytes) {
             for (sample, channel) in frame
                 .chunks_exact_mut(format.bytes())
                 .zip(&mut self.channels)
             {
-                let output = channel.process_sample(format.decode(sample) as f32);
+                let output = channel.process_sample(format.decode(sample) as f32) * gain;
                 format.encode(sample, f64::from(output));
                 silent &= output == 0.0;
             }

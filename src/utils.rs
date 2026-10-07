@@ -14,7 +14,7 @@ use winreg::{
     RegKey,
     enums::{
         HKEY_CLASSES_ROOT, HKEY_CURRENT_CONFIG, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, HKEY_USERS,
-        KEY_READ, KEY_SET_VALUE,
+        KEY_READ, KEY_SET_VALUE, KEY_WOW64_64KEY,
     },
     types::{FromRegValue, ToRegValue},
 };
@@ -46,7 +46,7 @@ where
     T: FromRegValue,
 {
     let (root, path, name) = split_reg_path(full_path)?;
-    let subkey = root.open_subkey_with_flags(path, KEY_READ)?;
+    let subkey = root.open_subkey_with_flags(path, KEY_READ | KEY_WOW64_64KEY)?;
     let value: T = subkey.get_value(name)?;
     Ok(value)
 }
@@ -70,14 +70,14 @@ where
     T: ToRegValue,
 {
     let (root, path, name) = split_reg_path(full_path)?;
-    let (subkey, _) = root.create_subkey_with_flags(path, KEY_SET_VALUE)?;
+    let (subkey, _) = root.create_subkey_with_flags(path, KEY_SET_VALUE | KEY_WOW64_64KEY)?;
     subkey.set_value(name, value)?;
     Ok(())
 }
 
 pub fn reg_delete_value(full_path: &str) -> anyhow::Result<()> {
     let (root, path, name) = split_reg_path(full_path)?;
-    let subkey = root.open_subkey_with_flags(path, KEY_SET_VALUE)?;
+    let subkey = root.open_subkey_with_flags(path, KEY_SET_VALUE | KEY_WOW64_64KEY)?;
     if let Err(e) = subkey.delete_value(name) {
         if e.kind() == std::io::ErrorKind::NotFound {
             return Ok(());

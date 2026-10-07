@@ -101,11 +101,44 @@ fn process_and_reset_do_not_allocate_or_free_memory() {
         ALLOCATIONS.set(0);
         TRACK.set(true);
         dsp.process(&mut buffer);
+        dsp.process_with_settings(&mut buffer, false, 0.5);
+        dsp.process_with_settings(&mut buffer, true, 1.0);
         dsp.reset();
         buffer.copy_from_slice(&input);
         dsp.process(&mut buffer);
         TRACK.set(false);
         assert_eq!(ALLOCATIONS.get(), 0, "rate={rate}: real-time heap activity");
+    }
+}
+
+#[test]
+fn disabled_denoising_preserves_delay_and_gain_scales_output() {
+    let mut unity = processor(16_000.0, 1);
+    let mut attenuated = processor(16_000.0, 1);
+    let input = voice(16_000.0, 4096, 1);
+    let mut a = input.clone();
+    let mut b = input.clone();
+    unity.process_with_settings(&mut a, false, 1.0);
+    attenuated.process_with_settings(&mut b, false, 0.5);
+    let delay = (unity.latency_hns() as f64 * 16_000.0 / 10_000_000.0).round() as usize;
+    for (i, (a, b)) in a
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.as_chunks::<4>().0.iter())
+        .enumerate()
+    {
+        let a = f32::from_le_bytes(*a);
+        let b = f32::from_le_bytes(*b);
+        assert_eq!(b, a * 0.5);
+        if i >= delay {
+            let expected = f32::from_le_bytes(
+                input[(i - delay) * 4..(i - delay + 1) * 4]
+                    .try_into()
+                    .unwrap(),
+            );
+            assert!((a - expected).abs() < 2e-6);
+        }
     }
 }
 

@@ -441,6 +441,7 @@ impl DpBlock {
 }
 
 pub(super) struct Gtcrn {
+    enabled: bool,
     kernels: Kernels,
     encoder: [Conv; 2],
     blocks: [GtBlock; 6],
@@ -452,6 +453,7 @@ pub(super) struct Gtcrn {
 impl Gtcrn {
     pub(super) fn new() -> Self {
         Self {
+            enabled: true,
             kernels: Kernels::new(),
             encoder: [
                 Conv::new(weights::ENCODER[0], 9, 16, false, 1, false),
@@ -554,6 +556,17 @@ impl Gtcrn {
 }
 
 impl StreamingModel for Gtcrn {
+    fn set_enabled(&mut self, enabled: bool) {
+        if self.enabled != enabled {
+            for block in &mut self.blocks {
+                block.reset();
+            }
+            for block in &mut self.dual_path {
+                block.state.fill(0.0);
+            }
+            self.enabled = enabled;
+        }
+    }
     fn sample_rate(&self) -> u32 {
         16_000
     }
@@ -576,7 +589,9 @@ impl StreamingModel for Gtcrn {
 
     fn process(&mut self, input: &[f32], output: &mut [f32]) {
         let mut spectrum = self.stft.analyze(input);
-        self.enhance(&mut spectrum);
+        if self.enabled {
+            self.enhance(&mut spectrum);
+        }
         self.stft.synthesize(&spectrum, output);
     }
 }

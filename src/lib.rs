@@ -4,7 +4,9 @@
 //! [`dsp`].
 
 mod com;
+mod config;
 mod dsp;
 mod etw;
+mod settings;
 
 pub use com::{DllCanUnloadNow, DllGetClassObject};
