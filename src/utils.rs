@@ -70,20 +70,6 @@ where
     Ok(value)
 }
 
-pub fn reg_get_optional_value<T: FromRegValue>(full_path: &str) -> anyhow::Result<Option<T>> {
-    match reg_get_value(full_path) {
-        Ok(value) => Ok(Some(value)),
-        Err(error)
-            if error
-                .downcast_ref::<std::io::Error>()
-                .is_some_and(|cause| cause.kind() == std::io::ErrorKind::NotFound) =>
-        {
-            Ok(None)
-        }
-        Err(error) => Err(error),
-    }
-}
-
 pub fn reg_set_value<T>(full_path: &str, value: &T) -> anyhow::Result<()>
 where
     T: ToRegValue,
@@ -128,19 +114,6 @@ pub fn reg_delete_key(full_path: &str) -> anyhow::Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
     }
-}
-
-pub fn reg_delete_value(full_path: &str) -> anyhow::Result<()> {
-    let (root, path, name) = split_reg_path(full_path)?;
-    let subkey = root.open_subkey_with_flags(path, KEY_SET_VALUE | KEY_WOW64_64KEY)?;
-    if let Err(e) = subkey.delete_value(name) {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            return Ok(());
-        } else {
-            return Err(e.into());
-        }
-    }
-    Ok(())
 }
 
 struct LocalAllocation(*mut core::ffi::c_void);

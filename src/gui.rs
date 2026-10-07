@@ -28,6 +28,7 @@ struct Microphone {
 enum JobResult {
     Microphones(anyhow::Result<(Vec<Microphone>, usize)>),
     Registration(anyhow::Result<()>),
+    Uninstallation(anyhow::Result<()>),
 }
 
 struct VoiceBoxApp {
@@ -141,7 +142,14 @@ impl VoiceBoxApp {
                     }
                 }
             }
-            JobResult::Microphones(Err(error)) | JobResult::Registration(Err(error)) => {
+            JobResult::Uninstallation(Ok(())) => {
+                self.status =
+                    "已卸载 VoiceBox APO，并恢复所有备份的原有 APO。请重新打开语音或录音应用。"
+                        .into();
+            }
+            JobResult::Microphones(Err(error))
+            | JobResult::Registration(Err(error))
+            | JobResult::Uninstallation(Err(error)) => {
                 self.status = format!("操作失败：{error:#}");
                 self.failed = true;
             }
@@ -214,12 +222,27 @@ impl eframe::App for VoiceBoxApp {
                                 move || JobResult::Registration(apo_reg::ensure_device_reg(&guid)),
                             );
                         }
+                        if ui
+                            .add_enabled(
+                                !self.microphones.is_empty() && self.job.is_none(),
+                                egui::Button::new("卸载 VoiceBox APO"),
+                            )
+                            .clicked()
+                        {
+                            let guid = self.microphones[self.selected].guid.clone();
+                            self.begin_job(
+                                ui.ctx(),
+                                "正在卸载 VoiceBox APO，请完成管理员授权…",
+                                move || JobResult::Uninstallation(apo_reg::uninstall_device(&guid)),
+                            );
+                        }
                         if ui.button("刷新麦克风").clicked() && self.job.is_none() {
                             self.refresh_microphones(ui.ctx());
                         }
                     });
                 });
                 ui.small("注册时可能请求管理员权限，并短暂重启音频服务。");
+                ui.small("注册后仅保留 VoiceBox APO；卸载时恢复原有全部 APO。");
             });
 
             ui.add_space(10.0);

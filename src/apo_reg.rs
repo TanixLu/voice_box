@@ -1,3 +1,4 @@
+use anyhow::Context;
 use is_elevated::is_elevated;
 use restart_manager::{RestartSession, ShutdownOptions};
 use tracing::info;
@@ -10,13 +11,16 @@ use windows::Win32::Media::KernelStreaming::{
     AUDIO_SIGNALPROCESSINGMODE_FAR_FIELD_SPEECH, AUDIO_SIGNALPROCESSINGMODE_MEDIA,
     AUDIO_SIGNALPROCESSINGMODE_SPEECH,
 };
-
-use crate::utils::{
-    LOG_ENABLE_STR, reg_delete_key, reg_delete_value, reg_get_optional_value, reg_get_value,
-    reg_set_value,
+use winreg::{
+    RegKey, RegValue,
+    enums::{HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_READ, KEY_SET_VALUE, KEY_WOW64_64KEY},
+    transaction::Transaction,
 };
 
+use crate::utils::{LOG_ENABLE_STR, reg_delete_key, reg_get_value, reg_set_value};
+
 const ELEVATED_REG_STR: &str = "--elevated-reg";
+const ELEVATED_UNREG_STR: &str = "--elevated-unreg";
 
 const VOICE_BOX_GUID: &str = "{AE672075-B244-4417-B5A5-FBD45B7F0268}";
 
@@ -80,6 +84,28 @@ const COMMON_U32_REG_PAIRS: [(&str, u32); 10] = [
 // that guarantee because the endpoint instance is shared by all modes.
 const SFX_GUID: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5";
 const SFX_PROCESSING_MODES: &str = "{d3993a3f-99c2-4402-b5ec-a92a0367664b},5";
+// Clear every APO attachment except our SFX: legacy LFX/GFX, ordinary,
+// keyword-detector and offload slots, including composite REG_MULTI_SZ lists.
+// Association/UI/metadata properties are not APO attachments and stay intact.
+const CLEARED_FX_PROPERTIES: [&str; 17] = [
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},1",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},2",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},6",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},7",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},8",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},9",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},10",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},11",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},12",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},13",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},14",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},15",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},16",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},17",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},18",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},19",
+    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},20",
+];
 
 fn processing_modes() -> Vec<String> {
     [
@@ -102,16 +128,25 @@ fn device_fx_property_reg_path(device_guid: &str, property: &str) -> String {
     )
 }
 
-fn device_fx_property_backup_reg_path(device_guid: &str, property: &str) -> String {
-    format!(r"HKLM\SOFTWARE\VoiceBox\FxPropertyBackup\{device_guid}\{property}")
-}
-
 const APO_DLL: &[u8] = include_bytes!("../target/voice_box.dll");
 
 const APO_DLL_PATH: &str = r"C:\Windows\System32\voice_box.dll";
 const AUDIO_SERVICE_NAME: &str = "AudioSrv";
 
 fn need_reg(device_guid: &str) -> bool {
+    let root = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let fx_path = format!(
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{device_guid}\FxProperties"
+    );
+    let Ok(fx) = root.open_subkey_with_flags(fx_path, KEY_READ | KEY_WOW64_64KEY) else {
+        return true;
+    };
+    for property in CLEARED_FX_PROPERTIES {
+        match fx.get_raw_value(property) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            _ => return true,
+        }
+    }
     if !crate::config_reg::ready() {
         return true;
     }
@@ -156,7 +191,7 @@ fn need_reg(device_guid: &str) -> bool {
     false
 }
 
-fn elevated_reg(device_guid: &str) -> anyhow::Result<()> {
+fn elevated_reg(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
     anyhow::ensure!(
         is_elevated(),
         "Elevated operation requested but not running as administrator"
@@ -178,7 +213,11 @@ fn elevated_reg(device_guid: &str) -> anyhow::Result<()> {
     info!("Audio service shutdown successfully");
 
     // Always restart the service, including when a registry or DLL write fails.
-    let registration = elevated_reg_inner(device_guid);
+    let registration = if uninstall {
+        elevated_unreg_inner(device_guid)
+    } else {
+        elevated_reg_inner(device_guid)
+    };
 
     let completion = pending.restart();
     let outcome = completion.outcome().clone();
@@ -195,7 +234,7 @@ fn elevated_reg(device_guid: &str) -> anyhow::Result<()> {
 }
 
 fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
-    crate::config_reg::initialize()?;
+    crate::config_reg::initialize().context("初始化 VoiceBox 配置注册表失败")?;
     // The previous backup location is no longer used; do not migrate it.
     anyhow::ensure!(
         device_guid.len() == 38
@@ -235,63 +274,118 @@ fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
         }
     }
 
-    // 更新设备FxProperties
-    let device_fx_reg_path = device_fx_property_reg_path(device_guid, SFX_GUID);
-    let maybe_old_fx_guid: Option<String> = reg_get_optional_value(&device_fx_reg_path)?;
-    if maybe_old_fx_guid.as_deref() != Some(VOICE_BOX_GUID) {
-        if let Some(old_fx_guid) = maybe_old_fx_guid
-            && !old_fx_guid.is_empty()
-        {
-            reg_set_value(
-                &device_fx_property_backup_reg_path(device_guid, SFX_GUID),
-                &old_fx_guid,
-            )?;
-            info!(
-                "Backed up old SFX GUID {} for device {}",
-                old_fx_guid, device_guid
-            );
-        }
-        reg_set_value(&device_fx_reg_path, &VOICE_BOX_GUID)?;
-        info!(
-            "Updated device {} SFX GUID to {}",
-            device_guid, VOICE_BOX_GUID
-        );
-    }
-
-    let modes_path = device_fx_property_reg_path(device_guid, SFX_PROCESSING_MODES);
-    let modes = processing_modes();
-    if reg_get_optional_value::<Vec<String>>(&modes_path)?.as_ref() != Some(&modes) {
-        let backup_path = device_fx_property_backup_reg_path(device_guid, SFX_PROCESSING_MODES);
-        let marker_path = format!("{backup_path}__present");
-        if reg_get_optional_value::<u32>(&marker_path)?.is_none() {
-            let old_modes = reg_get_optional_value::<Vec<String>>(&modes_path)?;
-            if let Some(ref old_modes) = old_modes {
-                reg_set_value(&backup_path, old_modes)?;
-            }
-            reg_set_value(&marker_path, &u32::from(old_modes.is_some()))?;
-        }
-        reg_set_value(&modes_path, &modes)?;
-        info!(
-            "Updated SFX processing modes for device {} (RAW excluded)",
-            device_guid
-        );
-    }
-
-    let device_disable_apo_reg_path = device_fx_property_reg_path(device_guid, DISABLE_APO_GUID);
-    if reg_get_value::<u32>(&device_disable_apo_reg_path).is_ok() {
-        reg_delete_value(&device_disable_apo_reg_path)?;
-        info!(
-            "Removed device {} DisableProtectedAudioDG property",
-            device_guid
-        );
-    }
-
-    Ok(())
+    update_device_effects(device_guid, false)
 }
 
+fn optional_raw(key: &RegKey, name: &str) -> std::io::Result<Option<RegValue<'static>>> {
+    match key.get_raw_value(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn delete_optional(key: &RegKey, name: &str) -> std::io::Result<()> {
+    match key.delete_value(name) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
+fn elevated_unreg_inner(device_guid: &str) -> anyhow::Result<()> {
+    update_device_effects(device_guid, true)
+}
+
+fn update_device_effects(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
+    let transaction = Transaction::new().context("创建 APO 注册事务失败")?;
+    let root = RegKey::predef(HKEY_LOCAL_MACHINE);
+    // MMDevices permits setting values but can deny creating subkeys, even to
+    // administrators. KEY_WRITE includes KEY_CREATE_SUB_KEY, which we do not need.
+    let flags = KEY_QUERY_VALUE | KEY_SET_VALUE | KEY_WOW64_64KEY;
+    let fx = root.open_subkey_transacted_with_flags(
+        format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{device_guid}\FxProperties"),
+        &transaction, flags,
+    ).with_context(|| format!("打开麦克风 {device_guid} 的 FxProperties 失败"))?;
+    let (backup, _) = root
+        .create_subkey_transacted_with_flags(
+            format!(r"SOFTWARE\VoiceBox\FxPropertyBackup\{device_guid}"),
+            &transaction,
+            flags,
+        )
+        .with_context(|| format!("打开麦克风 {device_guid} 的 APO 备份注册表失败"))?;
+    let owns_sfx = fx.get_value::<String, _>(SFX_GUID).ok().as_deref() == Some(VOICE_BOX_GUID);
+    if uninstall && !owns_sfx {
+        return Ok(());
+    }
+    let properties = [SFX_GUID, SFX_PROCESSING_MODES, DISABLE_APO_GUID]
+        .into_iter()
+        .chain(CLEARED_FX_PROPERTIES);
+    for property in properties {
+        let marker = format!("{property}__present");
+        let present = if optional_raw(&backup, &marker)?.is_some() {
+            Some(backup.get_value::<u32, _>(&marker)?)
+        } else {
+            None
+        };
+        let saved = optional_raw(&backup, property)?;
+        if uninstall {
+            // Older registrations had no absence marker for SFX, and no MFX/EFX backup.
+            if present.is_none()
+                && saved.is_none()
+                && property != SFX_GUID
+                && property != SFX_PROCESSING_MODES
+            {
+                continue;
+            }
+            anyhow::ensure!(
+                present != Some(1) || saved.is_some(),
+                "Missing effect backup: {property}"
+            );
+            if let Some(value) = saved {
+                fx.set_raw_value(property, &value)?;
+            } else {
+                delete_optional(&fx, property)?;
+            }
+            delete_optional(&backup, property)?;
+            delete_optional(&backup, &marker)?;
+        } else {
+            if present.is_none() {
+                // Preserve existing backups when updating an already attached VoiceBox.
+                let previous = if saved.is_some() {
+                    saved
+                } else if owns_sfx && property == SFX_GUID {
+                    None
+                } else {
+                    optional_raw(&fx, property)?
+                };
+                if let Some(value) = &previous {
+                    backup.set_raw_value(property, value)?;
+                }
+                backup.set_value(&marker, &u32::from(previous.is_some()))?;
+            }
+            if property == SFX_GUID {
+                fx.set_value(property, &VOICE_BOX_GUID)?;
+            } else if property == SFX_PROCESSING_MODES {
+                fx.set_value(property, &processing_modes())?;
+            } else {
+                delete_optional(&fx, property)?;
+            }
+        }
+    }
+    // Backups and all endpoint changes commit together; failures leave both untouched.
+    transaction.commit().context("提交 APO 注册事务失败")?;
+    info!(
+        "{} VoiceBox device effects for {device_guid}",
+        if uninstall { "Restored" } else { "Registered" }
+    );
+    Ok(())
+}
 pub fn maybe_elevated_reg() -> anyhow::Result<bool> {
     let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(String::as_str) == Some(ELEVATED_REG_STR) {
+    if matches!(
+        args.get(1).map(String::as_str),
+        Some(ELEVATED_REG_STR | ELEVATED_UNREG_STR)
+    ) {
         info!("Running elevated registration operation");
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
         anyhow::ensure!(
@@ -301,7 +395,13 @@ pub fn maybe_elevated_reg() -> anyhow::Result<bool> {
         let device_guid = args.get(2).ok_or_else(|| {
             anyhow::anyhow!("Missing device GUID argument for elevated registration operation")
         })?;
-        elevated_reg(device_guid)?;
+        // Validate before interpolating a device identifier into registry paths.
+        let guid = device_guid.trim_matches(['{', '}']);
+        anyhow::ensure!(
+            device_guid.len() == 38 && windows::core::GUID::try_from(guid).is_ok(),
+            "Invalid device GUID"
+        );
+        elevated_reg(device_guid, args[1] == ELEVATED_UNREG_STR)?;
         Ok(true)
     } else {
         info!("Running VoiceBox");
@@ -311,27 +411,45 @@ pub fn maybe_elevated_reg() -> anyhow::Result<bool> {
 
 pub fn ensure_device_reg(device_guid: &str) -> anyhow::Result<()> {
     if need_reg(device_guid) {
-        if is_elevated() {
-            elevated_reg(device_guid)?;
+        device_operation(device_guid, false)?;
+    }
+    Ok(())
+}
+
+pub fn uninstall_device(device_guid: &str) -> anyhow::Result<()> {
+    device_operation(device_guid, true)
+}
+
+fn device_operation(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        device_guid.len() == 38
+            && windows::core::GUID::try_from(device_guid.trim_matches(['{', '}'])).is_ok(),
+        "Invalid device GUID"
+    );
+    if is_elevated() {
+        elevated_reg(device_guid, uninstall)?;
+    } else {
+        let log_enable_arg = if std::env::var_os(LOG_ENABLE_STR).is_some() {
+            LOG_ENABLE_STR
         } else {
-            let log_enable_arg = if std::env::var_os(LOG_ENABLE_STR).is_some() {
-                LOG_ENABLE_STR
+            ""
+        };
+        let status = runas::Command::new(std::env::current_exe()?)
+            .arg(if uninstall {
+                ELEVATED_UNREG_STR
             } else {
-                ""
-            };
-            let status = runas::Command::new(std::env::current_exe()?)
-                .arg(ELEVATED_REG_STR)
-                .arg(device_guid)
-                .arg(log_enable_arg)
-                .gui(false)
-                .show(false)
-                .status()?;
-            anyhow::ensure!(
-                status.success(),
-                "Failed to execute elevated operation: {:?}",
-                status
-            );
-        }
+                ELEVATED_REG_STR
+            })
+            .arg(device_guid)
+            .arg(log_enable_arg)
+            .gui(false)
+            .show(false)
+            .status()?;
+        anyhow::ensure!(
+            status.success(),
+            "Failed to execute elevated operation: {:?}",
+            status
+        );
     }
     Ok(())
 }
