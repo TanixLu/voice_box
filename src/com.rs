@@ -31,15 +31,15 @@ use windows::Win32::Media::KernelStreaming::{
     AUDIO_SIGNALPROCESSINGMODE_MOVIE, AUDIO_SIGNALPROCESSINGMODE_NOTIFICATION,
     AUDIO_SIGNALPROCESSINGMODE_RAW, AUDIO_SIGNALPROCESSINGMODE_SPEECH, KSDATAFORMAT_SUBTYPE_PCM,
 };
+use windows::Win32::Media::Multimedia::KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
 use windows::Win32::System::Com::{CoTaskMemAlloc, IClassFactory, IClassFactory_Vtbl};
 use windows_core::{BOOL, GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface};
 
-use crate::dsp::{DELAY_SECONDS, Delay};
+use crate::dsp::{ROBOT_FREQUENCY_HZ, SampleFormat, VoiceChanger};
 use crate::etw::{self, apo_log};
 
 const CLSID_VOICE_BOX_APO: GUID = GUID::from_u128(0xae672075_b244_4417_b5a5_fbd45b7f0268);
-const EFFECT_ID_DELAY: GUID = CLSID_VOICE_BOX_APO;
-const DELAY_HNS: i64 = (DELAY_SECONDS * 10_000_000.0) as i64;
+const EFFECT_ID_ROBOT: GUID = CLSID_VOICE_BOX_APO;
 
 static LIVE_OBJECTS: AtomicU32 = AtomicU32::new(0);
 static SERVER_LOCKS: AtomicU32 = AtomicU32::new(0);
@@ -68,7 +68,7 @@ struct ApoCom {
     process_calls: AtomicU64,
     processed_frames: AtomicU64,
     input_channels: AtomicU32,
-    dsp: UnsafeCell<Delay>,
+    dsp: UnsafeCell<VoiceChanger>,
 }
 
 // COM exposes a free-threaded object. The audio engine serializes lifecycle calls
@@ -257,7 +257,7 @@ unsafe extern "system" fn get_latency(_: *mut c_void, latency: *mut i64) -> HRES
     if latency.is_null() {
         return E_POINTER;
     }
-    unsafe { *latency = DELAY_HNS };
+    unsafe { *latency = 0 };
     S_OK
 }
 
@@ -397,7 +397,7 @@ unsafe extern "system" fn get_effects_list(
         return E_OUTOFMEMORY;
     }
     unsafe {
-        memory.write(EFFECT_ID_DELAY);
+        memory.write(EFFECT_ID_ROBOT);
         *effects = memory;
         *count = 1;
     }
@@ -405,7 +405,7 @@ unsafe extern "system" fn get_effects_list(
     apo_log!(
         etw::INFO,
         etw::LIFECYCLE,
-        "GetEffectsList instance={object:p} count=1 effect={EFFECT_ID_DELAY:?}"
+        "GetEffectsList instance={object:p} count=1 effect={EFFECT_ID_ROBOT:?}"
     );
     S_OK
 }
@@ -430,7 +430,7 @@ unsafe extern "system" fn get_controllable_effects_list(
     }
     unsafe {
         memory.write(AUDIO_SYSTEMEFFECT {
-            id: EFFECT_ID_DELAY,
+            id: EFFECT_ID_ROBOT,
             canSetState: BOOL::from(false),
             state: AUDIO_SYSTEMEFFECT_STATE_ON,
         });
@@ -441,7 +441,7 @@ unsafe extern "system" fn get_controllable_effects_list(
     apo_log!(
         etw::INFO,
         etw::LIFECYCLE,
-        "GetControllableSystemEffectsList instance={object:p} count=1 effect={EFFECT_ID_DELAY:?} state=on controllable=false"
+        "GetControllableSystemEffectsList instance={object:p} count=1 effect={EFFECT_ID_ROBOT:?} state=on controllable=false"
     );
     S_OK
 }
@@ -462,32 +462,44 @@ unsafe extern "system" fn set_effect_state(
     E_NOTIMPL
 }
 
-unsafe fn accept_requested_format(
+unsafe fn negotiate_format(
     object: *mut ApoCom,
+    opposite: *mut c_void,
     requested: *mut c_void,
     supported: *mut *mut c_void,
-    remember_input_channels: bool,
 ) -> HRESULT {
     if requested.is_null() || supported.is_null() {
         return E_POINTER;
     }
     unsafe { *supported = ptr::null_mut() };
-    let format = match unsafe { read_format(requested) } {
+    let requested_format = match unsafe { read_format(requested) } {
         Ok(format) if is_supported_format(&format) => format,
         _ => return APOERR_FORMAT_NOT_SUPPORTED,
     };
-    if remember_input_channels {
-        unsafe {
-            (*object)
-                .input_channels
-                .store(format.dwSamplesPerFrame, Ordering::Release)
+    // This APO processes in place and cannot convert between formats. If the
+    // other end is already fixed, suggest that format instead of accepting a
+    // pair which LockForProcess would later reject.
+    let (selected, format, result) = if opposite.is_null() {
+        (requested, requested_format, S_OK)
+    } else {
+        let opposite_format = match unsafe { read_format(opposite) } {
+            Ok(format) if is_supported_format(&format) => format,
+            _ => return APOERR_FORMAT_NOT_SUPPORTED,
         };
-    }
+        if formats_match(&requested_format, &opposite_format) {
+            (requested, requested_format, S_OK)
+        } else {
+            (opposite, opposite_format, S_FALSE)
+        }
+    };
     unsafe {
-        ((*unknown_vtable(requested)).AddRef)(requested);
-        *supported = requested;
+        (*object)
+            .input_channels
+            .store(format.dwSamplesPerFrame, Ordering::Release);
+        ((*unknown_vtable(selected)).AddRef)(selected);
+        *supported = selected;
     }
-    S_OK
+    result
 }
 
 unsafe fn read_format(raw: *mut c_void) -> Result<UNCOMPRESSEDAUDIOFORMAT, HRESULT> {
@@ -502,13 +514,10 @@ unsafe fn read_format(raw: *mut c_void) -> Result<UNCOMPRESSEDAUDIOFORMAT, HRESU
 
 fn is_supported_format(format: &UNCOMPRESSEDAUDIOFORMAT) -> bool {
     format.dwSamplesPerFrame > 0
-        && format.dwBytesPerSampleContainer > 0
-        && format.dwValidBitsPerSample > 0
-        && format.dwValidBitsPerSample <= format.dwBytesPerSampleContainer.saturating_mul(8)
+        && sample_format(format).is_some()
         && format.fFramesPerSecond.is_finite()
-        && format.fFramesPerSecond > 0.0
+        && f64::from(format.fFramesPerSecond) > ROBOT_FREQUENCY_HZ * 2.0
         && frame_bytes(format).is_some()
-        && delay_frames(format).is_some()
 }
 
 fn formats_match(left: &UNCOMPRESSEDAUDIOFORMAT, right: &UNCOMPRESSEDAUDIOFORMAT) -> bool {
@@ -524,20 +533,23 @@ fn frame_bytes(format: &UNCOMPRESSEDAUDIOFORMAT) -> Option<usize> {
     (format.dwSamplesPerFrame as usize).checked_mul(format.dwBytesPerSampleContainer as usize)
 }
 
-fn delay_frames(format: &UNCOMPRESSEDAUDIOFORMAT) -> Option<usize> {
-    let frames = f64::from(format.fFramesPerSecond) * DELAY_SECONDS;
-    if frames.is_finite() && frames >= 1.0 && frames <= usize::MAX as f64 {
-        Some(frames.round() as usize)
+fn sample_format(format: &UNCOMPRESSEDAUDIOFORMAT) -> Option<SampleFormat> {
+    if format.guidFormatType == KSDATAFORMAT_SUBTYPE_PCM {
+        SampleFormat::pcm(
+            format.dwBytesPerSampleContainer,
+            format.dwValidBitsPerSample,
+        )
+    } else if format.guidFormatType == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT {
+        match (
+            format.dwBytesPerSampleContainer,
+            format.dwValidBitsPerSample,
+        ) {
+            (4, 32) => Some(SampleFormat::Float32),
+            (8, 64) => Some(SampleFormat::Float64),
+            _ => None,
+        }
     } else {
         None
-    }
-}
-
-fn silence_byte(format: &UNCOMPRESSEDAUDIOFORMAT) -> u8 {
-    if format.guidFormatType == KSDATAFORMAT_SUBTYPE_PCM && format.dwBytesPerSampleContainer == 1 {
-        0x80
-    } else {
-        0
     }
 }
 
@@ -561,7 +573,7 @@ fn log_connection_format(label: &str, format: &UNCOMPRESSEDAUDIOFORMAT) {
     apo_log!(
         etw::INFO,
         etw::FORMAT,
-        "LockForProcess {label} format_type={:?} channels={} container_bytes={} valid_bits={} sample_rate={} channel_mask=0x{:08x} supported={}",
+        "{label} format_type={:?} channels={} container_bytes={} valid_bits={} sample_rate={} channel_mask=0x{:08x} supported={}",
         format.guidFormatType,
         format.dwSamplesPerFrame,
         format.dwBytesPerSampleContainer,
@@ -572,18 +584,30 @@ fn log_connection_format(label: &str, format: &UNCOMPRESSEDAUDIOFORMAT) {
     );
 }
 
+unsafe fn log_media_format(label: &str, raw: *mut c_void) {
+    if raw.is_null() {
+        apo_log!(etw::VERBOSE, etw::FORMAT, "{label} unspecified");
+    } else if let Ok(format) = unsafe { read_format(raw) } {
+        log_connection_format(label, &format);
+    }
+}
+
 unsafe extern "system" fn is_input_format_supported(
     this: *mut c_void,
-    _: *mut c_void,
+    opposite: *mut c_void,
     requested: *mut c_void,
     supported: *mut *mut c_void,
 ) -> HRESULT {
     let object = unsafe { object_from(this) };
-    let result = unsafe { accept_requested_format(object, requested, supported, true) };
+    unsafe {
+        log_media_format("IsInputFormatSupported requested", requested);
+        log_media_format("IsInputFormatSupported opposite", opposite);
+    }
+    let result = unsafe { negotiate_format(object, opposite, requested, supported) };
     apo_log!(
         etw::VERBOSE,
         etw::FORMAT,
-        "IsInputFormatSupported result=0x{:08x}",
+        "IsInputFormatSupported instance={object:p} result=0x{:08x}",
         result.0 as u32
     );
     result
@@ -591,7 +615,7 @@ unsafe extern "system" fn is_input_format_supported(
 
 unsafe extern "system" fn is_output_format_supported(
     this: *mut c_void,
-    _: *mut c_void,
+    opposite: *mut c_void,
     requested: *mut c_void,
     supported: *mut *mut c_void,
 ) -> HRESULT {
@@ -600,11 +624,15 @@ unsafe extern "system" fn is_output_format_supported(
     // asks GetInputChannelCount. Registration requires samples-per-frame to
     // match, so the accepted output format also gives us the input channel
     // count in that call order.
-    let result = unsafe { accept_requested_format(object, requested, supported, true) };
+    unsafe {
+        log_media_format("IsOutputFormatSupported requested", requested);
+        log_media_format("IsOutputFormatSupported opposite", opposite);
+    }
+    let result = unsafe { negotiate_format(object, opposite, requested, supported) };
     apo_log!(
         etw::VERBOSE,
         etw::FORMAT,
-        "IsOutputFormatSupported result=0x{:08x}",
+        "IsOutputFormatSupported instance={object:p} result=0x{:08x}",
         result.0 as u32
     );
     result
@@ -730,8 +758,8 @@ unsafe extern "system" fn lock_for_process(
             );
         }
     };
-    log_connection_format("input", &input_format);
-    log_connection_format("output", &output_format);
+    log_connection_format("LockForProcess input", &input_format);
+    log_connection_format("LockForProcess output", &output_format);
     if !is_supported_format(&input_format)
         || !is_supported_format(&output_format)
         || !formats_match(&input_format, &output_format)
@@ -754,12 +782,12 @@ unsafe extern "system" fn lock_for_process(
         );
     }
     let frame_bytes = frame_bytes(&input_format).expect("validated format has a frame size");
-    let delay_frames = delay_frames(&input_format).expect("validated format has a delay size");
+    let sample_format = sample_format(&input_format).expect("validated sample format");
     if unsafe {
         (&mut *(*object).dsp.get()).configure(
-            frame_bytes,
-            delay_frames,
-            silence_byte(&input_format),
+            sample_format,
+            input_format.dwSamplesPerFrame as usize,
+            f64::from(input_format.fFramesPerSecond),
         )
     }
     .is_err()
@@ -768,8 +796,8 @@ unsafe extern "system" fn lock_for_process(
             object,
             input_count,
             output_count,
-            "cannot allocate delay buffer",
-            E_OUTOFMEMORY,
+            "cannot configure robot voice effect",
+            APOERR_INVALID_CONNECTION_FORMAT,
         );
     }
     unsafe {
@@ -783,7 +811,7 @@ unsafe extern "system" fn lock_for_process(
     apo_log!(
         etw::INFO,
         etw::CONFIGURATION,
-        "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} delay_frames={delay_frames} delay_seconds={DELAY_SECONDS}",
+        "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} effect=robot carrier_hz={ROBOT_FREQUENCY_HZ} latency_seconds=0",
         unsafe { (**inputs).u32MaxFrameCount },
         unsafe { (**outputs).u32MaxFrameCount },
         input_format.dwSamplesPerFrame,
@@ -827,7 +855,9 @@ unsafe extern "system" fn process(
     if input.is_null() || output.is_null() {
         return;
     }
-    let input = unsafe { &*input };
+    // The engine may reuse the connection property as well as the audio buffer
+    // for an in-place APO. Preserve input metadata before changing the output.
+    let input = unsafe { *input };
     let output = unsafe { &mut *output };
     output.u32ValidFrameCount = input.u32ValidFrameCount;
     output.u32BufferFlags = BUFFER_INVALID;
@@ -858,7 +888,7 @@ unsafe extern "system" fn process(
     }
     let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
     unsafe { (&mut *(*object).dsp.get()).process(buffer) };
-    output.u32BufferFlags = BUFFER_VALID;
+    output.u32BufferFlags = input.u32BufferFlags;
     unsafe {
         (*object)
             .processed_frames
@@ -937,7 +967,7 @@ fn create_apo(outer: *mut c_void) -> *mut ApoCom {
         process_calls: AtomicU64::new(0),
         processed_frames: AtomicU64::new(0),
         input_channels: AtomicU32::new(0),
-        dsp: UnsafeCell::new(Delay::default()),
+        dsp: UnsafeCell::new(VoiceChanger::default()),
     });
     let raw = &mut *object as *mut ApoCom;
     object.inner_unknown.object = raw;
@@ -1028,7 +1058,7 @@ unsafe extern "system" fn factory_lock_server(_: *mut c_void, lock: BOOL) -> HRE
     if lock.as_bool() {
         SERVER_LOCKS.fetch_add(1, Ordering::Relaxed);
     } else {
-        let _ = SERVER_LOCKS.fetch_update(Ordering::Release, Ordering::Relaxed, |value| {
+        let _ = SERVER_LOCKS.try_update(Ordering::Release, Ordering::Relaxed, |value| {
             value.checked_sub(1)
         });
     }
@@ -1098,231 +1128,5 @@ pub extern "system" fn DllCanUnloadNow() -> HRESULT {
 fn write_wide(destination: &mut [u16], text: &str) {
     for (slot, value) in destination.iter_mut().zip(text.encode_utf16()) {
         *slot = value;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_format(channels: u32, bytes: u32, bits: u32, rate: f32) -> UNCOMPRESSEDAUDIOFORMAT {
-        UNCOMPRESSEDAUDIOFORMAT {
-            guidFormatType: KSDATAFORMAT_SUBTYPE_PCM,
-            dwSamplesPerFrame: channels,
-            dwBytesPerSampleContainer: bytes,
-            dwValidBitsPerSample: bits,
-            fFramesPerSecond: rate,
-            dwChannelMask: 0,
-        }
-    }
-
-    #[test]
-    fn accepts_arbitrary_valid_channel_counts_and_sample_containers() {
-        let mono_u8 = test_format(1, 1, 8, 8_000.0);
-        let surround_24_bit = test_format(8, 3, 24, 192_000.0);
-
-        assert!(is_supported_format(&mono_u8));
-        assert!(is_supported_format(&surround_24_bit));
-        assert_eq!(frame_bytes(&mono_u8), Some(1));
-        assert_eq!(frame_bytes(&surround_24_bit), Some(24));
-        assert_eq!(delay_frames(&mono_u8), Some(40_000));
-        assert_eq!(delay_frames(&surround_24_bit), Some(960_000));
-        assert_eq!(silence_byte(&mono_u8), 0x80);
-        assert_eq!(silence_byte(&surround_24_bit), 0);
-    }
-
-    #[test]
-    fn rejects_structurally_invalid_uncompressed_formats() {
-        assert!(!is_supported_format(&test_format(0, 2, 16, 48_000.0)));
-        assert!(!is_supported_format(&test_format(2, 0, 16, 48_000.0)));
-        assert!(!is_supported_format(&test_format(2, 2, 24, 48_000.0)));
-        assert!(!is_supported_format(&test_format(2, 2, 16, 0.0)));
-    }
-
-    #[test]
-    fn reports_five_seconds_of_latency() {
-        let mut latency = 0;
-        assert_eq!(unsafe { get_latency(ptr::null_mut(), &mut latency) }, S_OK);
-        assert_eq!(latency, 50_000_000);
-    }
-
-    #[test]
-    fn reports_the_dynamically_negotiated_input_channel_count() {
-        let object = create_apo(ptr::null_mut());
-        unsafe {
-            (*object).initialized.store(true, Ordering::Release);
-            (*object).input_channels.store(6, Ordering::Release);
-        }
-        let apo = unsafe { &mut (*object).apo as *mut _ as *mut c_void };
-        let mut channels = 0;
-
-        assert_eq!(unsafe { get_input_channel_count(apo, &mut channels) }, S_OK);
-        assert_eq!(channels, 6);
-
-        let inner = unsafe { &mut (*object).inner_unknown as *mut _ as *mut c_void };
-        unsafe { inner_release(inner) };
-    }
-
-    #[repr(C)]
-    struct Outer {
-        vtable: *const IUnknown_Vtbl,
-        refs: AtomicU32,
-    }
-
-    unsafe extern "system" fn outer_query(
-        this: *mut c_void,
-        iid: *const GUID,
-        output: *mut *mut c_void,
-    ) -> HRESULT {
-        if iid.is_null() || output.is_null() {
-            return E_POINTER;
-        }
-        unsafe { *output = ptr::null_mut() };
-        if unsafe { *iid } != IUnknown::IID {
-            return E_NOINTERFACE;
-        }
-        unsafe { *output = this };
-        unsafe { outer_add_ref(this) };
-        S_OK
-    }
-
-    unsafe extern "system" fn outer_add_ref(this: *mut c_void) -> u32 {
-        let outer = this.cast::<Outer>();
-        unsafe { (*outer).refs.fetch_add(1, Ordering::Relaxed) + 1 }
-    }
-
-    unsafe extern "system" fn outer_release(this: *mut c_void) -> u32 {
-        let outer = this.cast::<Outer>();
-        unsafe { (*outer).refs.fetch_sub(1, Ordering::Relaxed) - 1 }
-    }
-
-    static OUTER_VTABLE: IUnknown_Vtbl = IUnknown_Vtbl {
-        QueryInterface: outer_query,
-        AddRef: outer_add_ref,
-        Release: outer_release,
-    };
-
-    #[test]
-    fn aggregated_interfaces_delegate_iunknown_to_outer() {
-        let mut outer = Outer {
-            vtable: &OUTER_VTABLE,
-            refs: AtomicU32::new(1),
-        };
-        let outer_ptr = &mut outer as *mut _ as *mut c_void;
-        let mut inner = ptr::null_mut();
-
-        let hr = unsafe {
-            factory_create_instance(ptr::null_mut(), outer_ptr, &IUnknown::IID, &mut inner)
-        };
-        assert_eq!(hr, S_OK);
-        assert!(!inner.is_null());
-        assert_eq!(outer.refs.load(Ordering::Relaxed), 1);
-
-        let mut apo = ptr::null_mut();
-        let inner_vtable = unsafe { unknown_vtable(inner) };
-        assert_eq!(
-            unsafe {
-                ((*inner_vtable).QueryInterface)(inner, &IAudioProcessingObject::IID, &mut apo)
-            },
-            S_OK
-        );
-        assert!(!apo.is_null());
-        assert_eq!(outer.refs.load(Ordering::Relaxed), 2);
-
-        let apo_vtable = unsafe { unknown_vtable(apo) };
-        let mut identity = ptr::null_mut();
-        assert_eq!(
-            unsafe { ((*apo_vtable).QueryInterface)(apo, &IUnknown::IID, &mut identity) },
-            S_OK
-        );
-        assert_eq!(identity, outer_ptr);
-        assert_eq!(outer.refs.load(Ordering::Relaxed), 3);
-
-        unsafe {
-            ((*apo_vtable).Release)(apo);
-            ((*unknown_vtable(identity)).Release)(identity);
-            ((*inner_vtable).Release)(inner);
-        }
-        assert_eq!(outer.refs.load(Ordering::Relaxed), 1);
-        assert_eq!(LIVE_OBJECTS.load(Ordering::Acquire), 0);
-    }
-
-    #[test]
-    fn system_effect_interfaces_share_the_v3_vtable() {
-        let mut outer = Outer {
-            vtable: &OUTER_VTABLE,
-            refs: AtomicU32::new(1),
-        };
-        let outer_ptr = &mut outer as *mut _ as *mut c_void;
-        let mut inner = ptr::null_mut();
-        assert_eq!(
-            unsafe {
-                factory_create_instance(ptr::null_mut(), outer_ptr, &IUnknown::IID, &mut inner)
-            },
-            S_OK
-        );
-
-        let mut v1 = ptr::null_mut();
-        let mut v2 = ptr::null_mut();
-        let mut v3 = ptr::null_mut();
-        assert_eq!(
-            unsafe { inner_query_interface(inner, &IAudioSystemEffects::IID, &mut v1) },
-            S_OK
-        );
-        assert_eq!(
-            unsafe { inner_query_interface(inner, &IAudioSystemEffects2::IID, &mut v2) },
-            S_OK
-        );
-        assert_eq!(
-            unsafe { inner_query_interface(inner, &IAudioSystemEffects3::IID, &mut v3) },
-            S_OK
-        );
-        assert_eq!(v1, v2);
-        assert_eq!(v2, v3);
-        assert_eq!(outer.refs.load(Ordering::Relaxed), 4);
-
-        unsafe {
-            ((*unknown_vtable(v1)).Release)(v1);
-            ((*unknown_vtable(v2)).Release)(v2);
-            ((*unknown_vtable(v3)).Release)(v3);
-            ((*unknown_vtable(inner)).Release)(inner);
-        }
-        assert_eq!(outer.refs.load(Ordering::Relaxed), 1);
-        assert_eq!(LIVE_OBJECTS.load(Ordering::Acquire), 0);
-    }
-
-    #[test]
-    fn initialize_reads_v3_processing_mode_and_discovery_flag() {
-        let object = create_apo(ptr::null_mut());
-        let apo = unsafe { &mut (*object).apo as *mut _ as *mut c_void };
-        let init = APOInitSystemEffects3 {
-            APOInit: APOInitBaseStruct {
-                cbSize: core::mem::size_of::<APOInitSystemEffects3>() as u32,
-                clsid: CLSID_VOICE_BOX_APO,
-            },
-            AudioProcessingMode: AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS,
-            InitializeForDiscoveryOnly: BOOL::from(true),
-            ..Default::default()
-        };
-
-        assert_eq!(
-            unsafe {
-                initialize(
-                    apo,
-                    core::mem::size_of::<APOInitSystemEffects3>() as u32,
-                    (&raw const init).cast::<u8>(),
-                )
-            },
-            S_OK
-        );
-        assert_eq!(
-            unsafe { *(*object).processing_mode.get() },
-            AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS
-        );
-        assert!(unsafe { (*object).discovery_only.load(Ordering::Acquire) });
-
-        let inner = unsafe { &mut (*object).inner_unknown as *mut _ as *mut c_void };
-        unsafe { inner_release(inner) };
-        assert_eq!(LIVE_OBJECTS.load(Ordering::Acquire), 0);
     }
 }

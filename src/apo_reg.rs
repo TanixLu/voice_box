@@ -69,11 +69,14 @@ const COMMON_U32_REG_PAIRS: [(&str, u32); 10] = [
 ];
 
 const EFFECT_CLSID: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d}";
-const SFX_GUID: &str = constcat::concat!(EFFECT_CLSID, ",5");
+// const SFX_GUID: &str = constcat::concat!(EFFECT_CLSID, ",5");
 // const MFX_GUID: &str = constcat::concat!(EFFECT_CLSID, ",6");
-// const EFX_GUID: &str = constcat::concat!(EFFECT_CLSID, ",7");
+const EFX_GUID: &str = constcat::concat!(EFFECT_CLSID, ",7");
 // const LFX_GUID: &str = constcat::concat!(EFFECT_CLSID, ",1");
 // const GFX_GUID: &str = constcat::concat!(EFFECT_CLSID, ",2");
+
+const FX_GUID: &str = EFX_GUID;
+const FX_NAME: &str = "EFX";
 
 const DISABLE_APO_GUID: &str = "{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5";
 
@@ -110,7 +113,7 @@ fn need_reg(device_guid: &str) -> bool {
         }
     }
     // 检测设备FxProperties是否需要更新
-    if reg_get_value::<String>(&device_fx_property_reg_path(device_guid, SFX_GUID))
+    if reg_get_value::<String>(&device_fx_property_reg_path(device_guid, FX_GUID))
         .ok()
         .as_deref()
         != Some(VOICE_BOX_GUID)
@@ -182,25 +185,25 @@ fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
     }
 
     // 更新设备FxProperties
-    let device_sfx_reg_path = device_fx_property_reg_path(device_guid, SFX_GUID);
-    let maybe_old_sfx_guid: Option<String> = reg_get_value(&device_sfx_reg_path).ok();
-    if maybe_old_sfx_guid.as_deref() != Some(VOICE_BOX_GUID) {
-        if let Some(old_sfx_guid) = maybe_old_sfx_guid {
-            if !old_sfx_guid.is_empty() {
+    let device_fx_reg_path = device_fx_property_reg_path(device_guid, FX_GUID);
+    let maybe_old_fx_guid: Option<String> = reg_get_value(&device_fx_reg_path).ok();
+    if maybe_old_fx_guid.as_deref() != Some(VOICE_BOX_GUID) {
+        if let Some(old_fx_guid) = maybe_old_fx_guid {
+            if !old_fx_guid.is_empty() {
                 reg_set_value(
-                    &device_fx_property_backup_reg_path(device_guid, SFX_GUID),
-                    &old_sfx_guid,
+                    &device_fx_property_backup_reg_path(device_guid, FX_GUID),
+                    &old_fx_guid,
                 )?;
                 info!(
-                    "Backed up old SFX GUID {} for device {}",
-                    old_sfx_guid, device_guid
+                    "Backed up old {} GUID {} for device {}",
+                    FX_NAME, old_fx_guid, device_guid
                 );
             }
         }
-        reg_set_value(&device_sfx_reg_path, &VOICE_BOX_GUID)?;
+        reg_set_value(&device_fx_reg_path, &VOICE_BOX_GUID)?;
         info!(
-            "Updated device {} SFX GUID to {}",
-            device_guid, VOICE_BOX_GUID
+            "Updated device {} {} GUID to {}",
+            device_guid, FX_NAME, VOICE_BOX_GUID
         );
     }
 

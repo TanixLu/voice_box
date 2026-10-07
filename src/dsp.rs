@@ -1,110 +1,135 @@
 //! Real-time audio processing, independent of COM and Windows.
 
-/// The fixed delay introduced by VoiceBox.
-pub const DELAY_SECONDS: f64 = 5.0;
+/// A fully wet ring modulator makes speech sound conspicuously robotic.
+pub const ROBOT_FREQUENCY_HZ: f64 = 80.0;
 
-/// A format-agnostic, allocation-free-at-runtime delay line.
-///
-/// Audio frames are stored as opaque bytes. This lets the processor preserve
-/// every sample representation and channel layout without converting it.
-#[derive(Default)]
-pub struct Delay {
-    buffer: Vec<u8>,
-    cursor: usize,
-    frame_bytes: usize,
-    silence_byte: u8,
+#[derive(Clone, Copy)]
+pub enum SampleFormat {
+    Pcm { bytes: u8, valid_bits: u8 },
+    Float32,
+    Float64,
 }
 
-impl Delay {
-    /// Allocate and initialize the delay line. This must be called off the
-    /// real-time thread, before [`process`](Self::process).
+impl SampleFormat {
+    pub fn pcm(bytes: u32, valid_bits: u32) -> Option<Self> {
+        if (1..=4).contains(&bytes) && valid_bits > 0 && valid_bits <= bytes * 8 {
+            Some(Self::Pcm {
+                bytes: bytes as u8,
+                valid_bits: valid_bits as u8,
+            })
+        } else {
+            None
+        }
+    }
+
+    fn bytes(self) -> usize {
+        match self {
+            Self::Pcm { bytes, .. } => bytes as usize,
+            Self::Float32 => 4,
+            Self::Float64 => 8,
+        }
+    }
+
+    fn modulate(self, sample: &mut [u8], carrier: f64) {
+        match self {
+            Self::Float32 => {
+                let input = f32::from_le_bytes(sample.try_into().unwrap());
+                let output = if input.is_finite() {
+                    input * carrier as f32
+                } else {
+                    0.0
+                };
+                sample.copy_from_slice(&output.to_le_bytes());
+            }
+            Self::Float64 => {
+                let input = f64::from_le_bytes(sample.try_into().unwrap());
+                let output = if input.is_finite() {
+                    input * carrier
+                } else {
+                    0.0
+                };
+                sample.copy_from_slice(&output.to_le_bytes());
+            }
+            Self::Pcm { bytes, valid_bits } => {
+                let padding = bytes * 8 - valid_bits;
+                let input = if bytes == 1 {
+                    i32::from(sample[0]) - 128
+                } else {
+                    let mut encoded = [0; 4];
+                    encoded[..bytes as usize].copy_from_slice(sample);
+                    let extension = (4 - bytes) * 8;
+                    (i32::from_le_bytes(encoded) << extension) >> extension
+                } >> padding;
+                let limit = (1_i64 << (valid_bits - 1)) as f64;
+                let output = (f64::from(input) * carrier)
+                    .round()
+                    .clamp(-limit, limit - 1.0) as i32;
+                let output = output << padding;
+                if bytes == 1 {
+                    sample[0] = (output + 128) as u8;
+                } else {
+                    sample.copy_from_slice(&output.to_le_bytes()[..bytes as usize]);
+                }
+            }
+        }
+    }
+}
+
+/// In-place robot voice with no audio buffering or runtime allocation.
+#[derive(Default)]
+pub struct VoiceChanger {
+    format: Option<SampleFormat>,
+    frame_bytes: usize,
+    phase: f64,
+    phase_step: f64,
+}
+
+impl VoiceChanger {
     pub fn configure(
         &mut self,
-        frame_bytes: usize,
-        delay_frames: usize,
-        silence_byte: u8,
+        format: SampleFormat,
+        channels: usize,
+        sample_rate: f64,
     ) -> Result<(), ()> {
-        let buffer_bytes = frame_bytes.checked_mul(delay_frames).ok_or(())?;
-        if frame_bytes == 0 || buffer_bytes == 0 {
+        let frame_bytes = channels.checked_mul(format.bytes()).ok_or(())?;
+        if frame_bytes == 0 || !sample_rate.is_finite() || sample_rate <= ROBOT_FREQUENCY_HZ * 2.0 {
             return Err(());
         }
-
-        let mut buffer = Vec::new();
-        buffer.try_reserve_exact(buffer_bytes).map_err(|_| ())?;
-        buffer.resize(buffer_bytes, silence_byte);
-
-        self.buffer = buffer;
-        self.cursor = 0;
+        self.format = Some(format);
         self.frame_bytes = frame_bytes;
-        self.silence_byte = silence_byte;
+        self.phase_step = ROBOT_FREQUENCY_HZ / sample_rate;
+        self.reset();
         Ok(())
     }
 
-    /// Restore the configured delay line to five seconds of silence.
     pub fn reset(&mut self) {
-        self.buffer.fill(self.silence_byte);
-        self.cursor = 0;
+        self.phase = 0.0;
     }
 
     pub fn silence_byte(&self) -> u8 {
-        self.silence_byte
+        if matches!(self.format, Some(SampleFormat::Pcm { bytes: 1, .. })) {
+            128
+        } else {
+            0
+        }
     }
 
     pub fn frame_bytes(&self) -> usize {
         self.frame_bytes
     }
 
-    /// Replace each byte with the byte received exactly one delay-line length
-    /// earlier. Complete frames stay aligned because configuration and callers
-    /// always supply frame-sized buffers.
-    #[inline]
     pub fn process(&mut self, buffer: &mut [u8]) {
-        if self.buffer.is_empty() || self.frame_bytes == 0 {
-            return;
-        }
-
-        for byte in buffer {
-            core::mem::swap(byte, &mut self.buffer[self.cursor]);
-            self.cursor += 1;
-            if self.cursor == self.buffer.len() {
-                self.cursor = 0;
+        let Some(format) = self.format else { return };
+        for frame in buffer.chunks_exact_mut(self.frame_bytes) {
+            // All channels share a carrier; phase continues across APO buffers.
+            let carrier = (core::f64::consts::TAU * self.phase).cos();
+            for sample in frame.chunks_exact_mut(format.bytes()) {
+                format.modulate(sample, carrier);
+            }
+            self.phase += self.phase_step;
+            if self.phase >= 1.0 {
+                self.phase -= 1.0;
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn delays_arbitrary_frames_without_changing_their_bytes() {
-        let mut delay = Delay::default();
-        delay.configure(3, 2, 0).unwrap();
-
-        let mut first = [1, 2, 3, 4, 5, 6];
-        delay.process(&mut first);
-        assert_eq!(first, [0; 6]);
-
-        let mut second = [7, 8, 9];
-        delay.process(&mut second);
-        assert_eq!(second, [1, 2, 3]);
-
-        let mut third = [10, 11, 12];
-        delay.process(&mut third);
-        assert_eq!(third, [4, 5, 6]);
-    }
-
-    #[test]
-    fn reset_restores_silence_and_position() {
-        let mut delay = Delay::default();
-        delay.configure(1, 2, 0x80).unwrap();
-        let mut samples = [1, 2];
-        delay.process(&mut samples);
-
-        delay.reset();
-        let mut sample = [3];
-        delay.process(&mut sample);
-        assert_eq!(sample, [0x80]);
     }
 }

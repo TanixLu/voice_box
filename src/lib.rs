@@ -1,4 +1,4 @@
-//! VoiceBox SFX APO: a format-agnostic five-second microphone delay.
+//! VoiceBox APO: an immediate, conspicuous robot voice effect.
 //!
 //! Windows/COM plumbing lives in [`com`]; the real-time algorithm lives in
 //! [`dsp`].
