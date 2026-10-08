@@ -38,6 +38,7 @@ struct VoiceBoxApp {
     saved: Settings,
     config_ready: bool,
     job: Option<mpsc::Receiver<JobResult>>,
+    close_enabled: bool,
     status: String,
     failed: bool,
 }
@@ -53,6 +54,7 @@ impl VoiceBoxApp {
             saved: settings,
             config_ready: config_reg::ready(),
             job: None,
+            close_enabled: true,
             status: String::new(),
             failed: false,
         };
@@ -306,7 +308,23 @@ impl eframe::App for VoiceBoxApp {
                     ui.label(&self.status);
                 }
             });
+            if self.job.is_some() {
+                ui.small("操作完成前暂时无法关闭窗口。");
+            }
         });
+
+        // Apply after drawing so a job started by a button click disables the
+        // native close button in the same frame. Every completion path restores it.
+        let close_enabled = self.job.is_none();
+        if self.close_enabled != close_enabled {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::EnableButtons {
+                    close: close_enabled,
+                    minimized: true,
+                    maximize: true,
+                });
+            self.close_enabled = close_enabled;
+        }
     }
 }
 
