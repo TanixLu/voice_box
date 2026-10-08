@@ -241,8 +241,6 @@ impl eframe::App for VoiceBoxApp {
                         }
                     });
                 });
-                ui.small("注册时可能请求管理员权限，并短暂重启音频服务。");
-                ui.small("VoiceBox 会追加到现有音效列表；卸载时仅移除 VoiceBox。");
             });
 
             ui.add_space(10.0);
@@ -294,7 +292,6 @@ impl eframe::App for VoiceBoxApp {
                         }
                     });
                 });
-                ui.small("配置对所有使用 VoiceBox APO 的麦克风生效。");
             });
 
             ui.add_space(10.0);
