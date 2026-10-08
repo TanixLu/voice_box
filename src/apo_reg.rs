@@ -97,10 +97,6 @@ fn default_processing_modes() -> Vec<String> {
 
 const DISABLE_APO_GUID: &str = "{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5";
 
-fn contains_guid(values: &[String], guid: &str) -> bool {
-    values.iter().any(|value| value.eq_ignore_ascii_case(guid))
-}
-
 const APO_DLL: &[u8] = include_bytes!("../target/voice_box.dll");
 
 const APO_DLL_PATH: &str = r"C:\Windows\System32\voice_box.dll";
@@ -136,7 +132,15 @@ fn need_reg(device_guid: &str) -> bool {
     // 检测设备FxProperties是否需要更新
     if !fx
         .get_value::<Vec<String>, _>(COMPOSITE_MFX_GUID)
-        .is_ok_and(|effects| contains_guid(&effects, VOICE_BOX_GUID))
+        .is_ok_and(|effects| {
+            effects
+                .first()
+                .is_some_and(|effect| effect.eq_ignore_ascii_case(VOICE_BOX_GUID))
+                && !effects
+                    .iter()
+                    .skip(1)
+                    .any(|effect| effect.eq_ignore_ascii_case(VOICE_BOX_GUID))
+        })
     {
         return true;
     }
@@ -300,10 +304,9 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
             }
         }
     } else {
-        if !contains_guid(&effects, VOICE_BOX_GUID) {
-            effects.push(VOICE_BOX_GUID.into());
-            fx.set_value(COMPOSITE_MFX_GUID, &effects)?;
-        }
+        effects.retain(|effect| !effect.eq_ignore_ascii_case(VOICE_BOX_GUID));
+        effects.insert(0, VOICE_BOX_GUID.into());
+        fx.set_value(COMPOSITE_MFX_GUID, &effects)?;
         let modes: Vec<String> = optional_value(fx, MFX_PROCESSING_MODES)
             .context("读取 MFX 处理模式失败")?
             .unwrap_or_default();
