@@ -588,7 +588,7 @@ fn install_chinese_font(ctx: &egui::Context) {
     let windows = std::env::var_os("WINDIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "C:\\Windows".into());
-    for file in ["msyh.ttc", "simhei.ttf", "simsun.ttc"] {
+    for file in ["msyh.ttc", "simsun.ttc"] {
         if let Ok(data) = std::fs::read(windows.join("Fonts").join(file)) {
             let mut fonts = FontDefinitions::default();
             fonts
