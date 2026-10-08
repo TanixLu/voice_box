@@ -9,7 +9,7 @@ use windows::Win32::Media::Audio::Apo::{
 use windows::Win32::Media::KernelStreaming::{
     AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS, AUDIO_SIGNALPROCESSINGMODE_DEFAULT,
     AUDIO_SIGNALPROCESSINGMODE_FAR_FIELD_SPEECH, AUDIO_SIGNALPROCESSINGMODE_MEDIA,
-    AUDIO_SIGNALPROCESSINGMODE_SPEECH,
+    AUDIO_SIGNALPROCESSINGMODE_RAW, AUDIO_SIGNALPROCESSINGMODE_SPEECH,
 };
 use winreg::{
     RegKey,
@@ -81,9 +81,8 @@ const COMMON_U32_REG_PAIRS: [(&str, u32); 10] = [
     (APO_REG_FLAGS, VOICE_BOX_APO_FLAGS),
 ];
 
-// Append VoiceBox to the composite SFX list without replacing other APOs.
-const COMPOSITE_SFX_GUID: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},13";
-const SFX_PROCESSING_MODES: &str = "{d3993a3f-99c2-4402-b5ec-a92a0367664b},5";
+const COMPOSITE_MFX_GUID: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},14";
+const MFX_PROCESSING_MODES: &str = "{d3993a3f-99c2-4402-b5ec-a92a0367664b},6";
 
 fn processing_modes() -> Vec<String> {
     [
@@ -92,6 +91,7 @@ fn processing_modes() -> Vec<String> {
         AUDIO_SIGNALPROCESSINGMODE_SPEECH,
         AUDIO_SIGNALPROCESSINGMODE_MEDIA,
         AUDIO_SIGNALPROCESSINGMODE_FAR_FIELD_SPEECH,
+        AUDIO_SIGNALPROCESSINGMODE_RAW,
     ]
     .into_iter()
     .map(|mode| format!("{{{mode:?}}}"))
@@ -138,13 +138,13 @@ fn need_reg(device_guid: &str) -> bool {
     }
     // 检测设备FxProperties是否需要更新
     if !fx
-        .get_value::<Vec<String>, _>(COMPOSITE_SFX_GUID)
+        .get_value::<Vec<String>, _>(COMPOSITE_MFX_GUID)
         .is_ok_and(|effects| contains_guid(&effects, VOICE_BOX_GUID))
     {
         return true;
     }
     if !fx
-        .get_value::<Vec<String>, _>(SFX_PROCESSING_MODES)
+        .get_value::<Vec<String>, _>(MFX_PROCESSING_MODES)
         .is_ok_and(|modes| {
             processing_modes()
                 .iter()
@@ -293,34 +293,33 @@ fn update_device_effects(device_guid: &str, uninstall: bool) -> anyhow::Result<(
 fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
     // Only an absent value means an empty list. Refuse to overwrite invalid types
     // or unreadable values, since they may contain another APO's configuration.
-    let mut effects: Vec<String> = optional_value(fx, COMPOSITE_SFX_GUID)
-        .context("读取 Composite SFX APO 列表失败")?
+    let mut effects: Vec<String> = optional_value(fx, COMPOSITE_MFX_GUID)
+        .context("读取 Composite MFX APO 列表失败")?
         .unwrap_or_default();
     if uninstall {
         let count = effects.len();
         effects.retain(|effect| !effect.eq_ignore_ascii_case(VOICE_BOX_GUID));
         if effects.len() != count {
             if effects.is_empty() {
-                delete_optional(fx, COMPOSITE_SFX_GUID)?;
+                delete_optional(fx, COMPOSITE_MFX_GUID)?;
             } else {
-                fx.set_value(COMPOSITE_SFX_GUID, &effects)?;
+                fx.set_value(COMPOSITE_MFX_GUID, &effects)?;
             }
         }
     } else {
         if !contains_guid(&effects, VOICE_BOX_GUID) {
             effects.push(VOICE_BOX_GUID.into());
-            fx.set_value(COMPOSITE_SFX_GUID, &effects)?;
+            fx.set_value(COMPOSITE_MFX_GUID, &effects)?;
         }
-        let mut modes: Vec<String> = optional_value(fx, SFX_PROCESSING_MODES)
-            .context("读取 SFX 处理模式失败")?
+        let mut modes: Vec<String> = optional_value(fx, MFX_PROCESSING_MODES)
+            .context("读取 MFX 处理模式失败")?
             .unwrap_or_default();
         for mode in processing_modes() {
             if !contains_guid(&modes, &mode) {
                 modes.push(mode);
             }
         }
-        fx.set_value(SFX_PROCESSING_MODES, &modes)?;
-        // Preserve the existing registration behavior of enabling system effects.
+        fx.set_value(MFX_PROCESSING_MODES, &modes)?;
         delete_optional(fx, DISABLE_APO_GUID)?;
     }
     Ok(())
