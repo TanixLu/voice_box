@@ -40,7 +40,7 @@ impl Microphone {
         let status = match self.plugin_status {
             PluginStatus::Installed => "已安装插件",
             PluginStatus::NotInstalled => "未安装插件",
-            PluginStatus::NeedsUpdate => "插件需要更新",
+            PluginStatus::NeedsUpdate => "需要更新修复",
         };
         format!("{} ({status})", self.name)
     }
@@ -502,17 +502,17 @@ impl VoiceBoxApp {
             .map_or(PluginStatus::NotInstalled, |mic| mic.plugin_status);
         let needs_update = status == PluginStatus::NeedsUpdate;
         ui.add_enabled_ui(!self.microphones.is_empty() && self.job.is_none(), |ui| {
-            ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
                         status != PluginStatus::Installed,
                         egui::Button::new(if needs_update {
-                            "更新插件"
+                            "更新修复"
                         } else {
                             "安装插件"
                         }),
                     )
-                    .on_hover_text("安装或更新所选麦克风的VoiceBox插件")
+                    .on_hover_text("安装或更新修复所选麦克风的VoiceBox插件")
                     .clicked()
                     && self.job.is_none()
                 {
@@ -526,23 +526,25 @@ impl VoiceBoxApp {
                     self.begin_job(
                         ui.ctx(),
                         if needs_update {
-                            "正在更新插件，请完成管理员授权…"
+                            "正在更新修复插件，请完成管理员授权…"
                         } else {
                             "正在安装插件，请完成管理员授权…"
                         },
                         move || plugin_operation(guid, guids, false),
                     );
                 }
-                if ui
-                    .add_enabled(
-                        status != PluginStatus::NotInstalled,
-                        egui::Button::new("卸载插件"),
-                    )
-                    .clicked()
-                    && self.job.is_none()
-                {
-                    self.confirm_uninstall = true;
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_enabled(
+                            status != PluginStatus::NotInstalled,
+                            egui::Button::new("卸载插件"),
+                        )
+                        .clicked()
+                        && self.job.is_none()
+                    {
+                        self.confirm_uninstall = true;
+                    }
+                });
             });
         });
         ui.add_enabled_ui(self.job.is_none(), |ui| {
