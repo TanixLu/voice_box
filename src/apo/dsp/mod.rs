@@ -209,7 +209,7 @@ pub struct AudioProcessor {
 }
 
 impl AudioProcessor {
-    pub fn configure(
+    pub fn prepare(
         &mut self,
         format: SampleFormat,
         channels: usize,

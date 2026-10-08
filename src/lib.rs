@@ -1,12 +1,8 @@
 //! VoiceBox APO: streaming GTCRN microphone speech enhancement.
 //!
-//! Windows/COM plumbing lives in [`com`]; the real-time algorithm lives in
-//! [`dsp`].
+//! APO implementation lives in [`apo`]; shared data formats live in [`shared`].
 
-mod com;
-mod config;
-mod dsp;
-mod etw;
-mod settings;
+mod apo;
+mod shared;
 
-pub use com::{DllCanUnloadNow, DllGetClassObject};
+pub use apo::{DllCanUnloadNow, DllGetClassObject};

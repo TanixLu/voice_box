@@ -1,5 +1,8 @@
 // GTCRN DNS3 tensor offsets; model provenance: assets/gtcrn/README.md.
-const BYTES: &[u8] = include_bytes!("../../assets/gtcrn/dns3.f32");
+const BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/gtcrn/dns3.f32"
+));
 static DATA: [f32; 48825] = decode();
 const fn decode() -> [f32; 48825] {
     let mut out = [0.0; 48825];

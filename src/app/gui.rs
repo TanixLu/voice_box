@@ -3,10 +3,12 @@ use std::sync::{Arc, mpsc};
 use egui::{FontData, FontDefinitions, FontFamily};
 use wasapi::{DeviceEnumerator, Direction};
 
-use crate::{
-    apo_reg,
-    apo_reg::PluginStatus,
-    config_reg,
+use super::{
+    settings_writer,
+    setup::{self, PluginStatus},
+};
+use crate::shared::{
+    paths,
     settings::{MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB, Settings},
 };
 
@@ -15,12 +17,14 @@ pub fn run() -> anyhow::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([560.0, 620.0])
             .with_min_inner_size([380.0, 340.0]),
+        persist_window: true,
+        persistence_path: Some(paths::data_dir()?.join(super::UI_STATE_FILE)),
         ..Default::default()
     };
     eframe::run_native(
         "VoiceBox",
         options,
-        Box::new(|cc| Ok(Box::new(VoiceBoxApp::new(&cc.egui_ctx)))),
+        Box::new(|cc| Ok(Box::new(VoiceBoxApp::new(cc)))),
     )
     .map_err(|error| anyhow::anyhow!("无法打开 VoiceBox 窗口：{error}"))
 }
@@ -44,13 +48,38 @@ impl Microphone {
 
 enum JobResult {
     Microphones(anyhow::Result<(Vec<Microphone>, usize)>),
-    Registration(anyhow::Result<()>),
-    Uninstallation(anyhow::Result<()>),
+    Plugin {
+        result: anyhow::Result<()>,
+        statuses: Vec<(String, PluginStatus)>,
+        settings: Option<std::io::Result<Settings>>,
+    },
+    Saved {
+        settings: Settings,
+        result: anyhow::Result<()>,
+    },
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct UiPreferences {
+    selected_microphone: Option<String>,
+    zoom_factor: f32,
+}
+
+impl Default for UiPreferences {
+    fn default() -> Self {
+        Self {
+            selected_microphone: None,
+            zoom_factor: 1.0,
+        }
+    }
 }
 
 struct VoiceBoxApp {
     microphones: Vec<Microphone>,
     selected: usize,
+    preferred_guid: Option<String>,
+    zoom_factor: f32,
     settings: Settings,
     saved: Settings,
     job: Option<mpsc::Receiver<JobResult>>,
@@ -61,13 +90,23 @@ struct VoiceBoxApp {
 }
 
 impl VoiceBoxApp {
-    fn new(ctx: &egui::Context) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let ctx = &cc.egui_ctx;
+        let preferences: UiPreferences = cc
+            .storage
+            .and_then(|storage| eframe::get_value(storage, "voice_box.ui"))
+            .unwrap_or_default();
+        if preferences.zoom_factor.is_finite() && preferences.zoom_factor > 0.0 {
+            ctx.set_zoom_factor(preferences.zoom_factor);
+        }
         install_chinese_font(ctx);
-        configure_style(ctx);
+        apply_style(ctx);
         let settings = Settings::try_load().unwrap_or_default();
         let mut app = Self {
             microphones: Vec::new(),
             selected: 0,
+            preferred_guid: preferences.selected_microphone,
+            zoom_factor: ctx.zoom_factor(),
             settings,
             saved: settings,
             job: None,
@@ -96,6 +135,24 @@ impl VoiceBoxApp {
             .name("VoiceBoxOperation".into())
             .spawn(move || {
                 let result = operation();
+                match &result {
+                    JobResult::Microphones(Err(error))
+                    | JobResult::Plugin {
+                        result: Err(error), ..
+                    }
+                    | JobResult::Saved {
+                        result: Err(error), ..
+                    } => {
+                        tracing::error!("Background operation failed: {error:#}");
+                    }
+                    JobResult::Plugin {
+                        settings: Some(Err(error)),
+                        ..
+                    } => {
+                        tracing::error!(%error, "Cannot read settings after plugin installation");
+                    }
+                    _ => {}
+                }
                 let _ = sender.send(result);
                 ctx.request_repaint();
             })
@@ -128,76 +185,83 @@ impl VoiceBoxApp {
             }
         };
         self.job = None;
-        // A helper may partially succeed before reporting an error. Read the
-        // association again instead of inferring installation from its exit code.
-        if matches!(
-            &result,
-            JobResult::Registration(_) | JobResult::Uninstallation(_)
-        ) {
-            for microphone in &mut self.microphones {
-                microphone.plugin_status = apo_reg::device_plugin_status(&microphone.guid);
-            }
-        }
         match result {
             JobResult::Microphones(Ok((microphones, selected))) => {
                 let selected = self
-                    .microphones
-                    .get(self.selected)
-                    .and_then(|previous| {
+                    .preferred_guid
+                    .as_ref()
+                    .and_then(|guid| {
                         microphones
                             .iter()
-                            .position(|microphone| microphone.guid == previous.guid)
+                            .position(|microphone| microphone.guid.eq_ignore_ascii_case(guid))
                     })
                     .unwrap_or(selected);
                 self.microphones = microphones;
                 self.selected = selected;
+                if self.preferred_guid.is_none() {
+                    self.preferred_guid =
+                        self.microphones.get(selected).map(|mic| mic.guid.clone());
+                }
                 self.status.clear();
             }
-            JobResult::Registration(Ok(())) => {
-                let unsaved = self.settings != self.saved;
-                match Settings::try_load() {
-                    Ok(settings) => {
-                        self.saved = settings;
-                        if !unsaved {
-                            self.settings = settings;
-                        }
-                        self.status.clear();
+            JobResult::Plugin {
+                result,
+                statuses,
+                settings,
+            } => {
+                for (guid, status) in statuses {
+                    if let Some(mic) = self.microphones.iter_mut().find(|mic| mic.guid == guid) {
+                        mic.plugin_status = status;
                     }
-                    Err(error) => {
-                        self.status = format!("APO 已注册，但配置读取失败：{error}");
-                        self.failed = true;
+                }
+                self.status.clear();
+                if let Err(error) = result {
+                    self.status = format!("操作失败：{error:#}");
+                    self.failed = true;
+                } else if let Some(settings) = settings {
+                    match settings {
+                        Ok(settings) => {
+                            if self.settings == self.saved {
+                                self.settings = settings;
+                            }
+                            self.saved = settings;
+                        }
+                        Err(error) => {
+                            self.status = format!("APO 已注册，但配置读取失败：{error}");
+                            self.failed = true;
+                        }
                     }
                 }
             }
-            JobResult::Uninstallation(Ok(())) => {
+            JobResult::Saved {
+                settings,
+                result: Ok(()),
+            } => {
+                self.saved = settings;
                 self.status.clear();
             }
             JobResult::Microphones(Err(error))
-            | JobResult::Registration(Err(error))
-            | JobResult::Uninstallation(Err(error)) => {
+            | JobResult::Saved {
+                result: Err(error), ..
+            } => {
                 self.status = format!("操作失败：{error:#}");
                 self.failed = true;
             }
         }
     }
 
-    fn save_settings(&mut self) {
-        match config_reg::save(self.settings) {
-            Ok(()) => {
-                self.saved = self.settings;
-                self.status.clear();
-                self.failed = false;
-            }
-            Err(error) => {
-                self.status = format!("保存失败：{error:#}");
-                self.failed = true;
-            }
-        }
+    fn save_settings(&mut self, ctx: &egui::Context) {
+        let settings = self.settings;
+        self.begin_job(ctx, "正在保存设置…", move || JobResult::Saved {
+            settings,
+            result: settings_writer::save(settings),
+        });
     }
 }
 
 impl VoiceBoxApp {
     fn show(&mut self, ui: &mut egui::Ui) {
+        self.zoom_factor = ui.ctx().zoom_factor();
         self.poll_job();
         let busy = self.job.is_some();
         // Also repaint if the worker exits unexpectedly without sending a result.
@@ -288,6 +352,7 @@ impl VoiceBoxApp {
                             .min_size(egui::vec2(ui.available_width(), 30.0));
                             if ui.add(row).clicked() {
                                 self.selected = index;
+                                self.preferred_guid = Some(microphone.guid.clone());
                             }
                         }
                     })
@@ -297,6 +362,10 @@ impl VoiceBoxApp {
             .inner;
         if self.selected != previous {
             self.confirm_uninstall = false;
+            self.preferred_guid = self
+                .microphones
+                .get(self.selected)
+                .map(|mic| mic.guid.clone());
         }
         if self.microphones.is_empty() {
             hint(ui, "连接麦克风后，点击刷新重新查找。");
@@ -396,7 +465,7 @@ impl VoiceBoxApp {
                 .add_enabled(self.job.is_none(), egui::Button::new("保存设置"))
                 .clicked()
             {
-                self.save_settings();
+                self.save_settings(ui.ctx());
             }
             if ui
                 .add_enabled(
@@ -449,6 +518,11 @@ impl VoiceBoxApp {
                 {
                     self.confirm_uninstall = false;
                     let guid = self.microphones[self.selected].guid.clone();
+                    let guids = self
+                        .microphones
+                        .iter()
+                        .map(|mic| mic.guid.clone())
+                        .collect();
                     self.begin_job(
                         ui.ctx(),
                         if needs_update {
@@ -456,7 +530,7 @@ impl VoiceBoxApp {
                         } else {
                             "正在安装插件，请完成管理员授权…"
                         },
-                        move || JobResult::Registration(apo_reg::ensure_device_reg(&guid)),
+                        move || plugin_operation(guid, guids, false),
                     );
                 }
                 if ui
@@ -485,10 +559,15 @@ impl VoiceBoxApp {
                     if ui.button("确认卸载").clicked() && self.job.is_none() {
                         self.confirm_uninstall = false;
                         let guid = self.microphones[self.selected].guid.clone();
+                        let guids = self
+                            .microphones
+                            .iter()
+                            .map(|mic| mic.guid.clone())
+                            .collect();
                         self.begin_job(
                             ui.ctx(),
                             "正在卸载插件，请完成管理员授权…",
-                            move || JobResult::Uninstallation(apo_reg::uninstall_device(&guid)),
+                            move || plugin_operation(guid, guids, true),
                         );
                     }
                     if ui.button("取消").clicked() {
@@ -501,8 +580,42 @@ impl VoiceBoxApp {
 }
 
 impl eframe::App for VoiceBoxApp {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(
+            storage,
+            "voice_box.ui",
+            &UiPreferences {
+                selected_microphone: self.preferred_guid.clone(),
+                zoom_factor: self.zoom_factor,
+            },
+        );
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
+    }
+}
+
+fn plugin_operation(guid: String, guids: Vec<String>, uninstall: bool) -> JobResult {
+    let result = if uninstall {
+        setup::uninstall_device(&guid)
+    } else {
+        setup::ensure_device_reg(&guid)
+    };
+    // Recheck even after failure: the helper can have partially succeeded. All
+    // DLL, registry, ACL and settings reads stay in the background worker.
+    let statuses = guids
+        .into_iter()
+        .map(|guid| {
+            let status = setup::device_plugin_status(&guid);
+            (guid, status)
+        })
+        .collect();
+    let settings = (!uninstall && result.is_ok()).then(Settings::try_load);
+    JobResult::Plugin {
+        result,
+        statuses,
+        settings,
     }
 }
 
@@ -531,7 +644,7 @@ fn warning(ui: &mut egui::Ui, text: &str) {
     );
 }
 
-fn configure_style(ctx: &egui::Context) {
+fn apply_style(ctx: &egui::Context) {
     ctx.all_styles_mut(|style| {
         style.spacing.item_spacing = egui::vec2(10.0, 8.0);
         style.spacing.button_padding = egui::vec2(12.0, 6.0);
@@ -577,7 +690,7 @@ fn microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
             } else {
                 name
             },
-            plugin_status: apo_reg::device_plugin_status(&guid),
+            plugin_status: setup::device_plugin_status(&guid),
             guid,
         });
     }

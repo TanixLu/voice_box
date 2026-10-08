@@ -1,11 +1,8 @@
+use crate::shared::plugin;
 use anyhow::Context;
 use is_elevated::is_elevated;
 use restart_manager::{RestartSession, ShutdownOptions};
 use tracing::info;
-use windows::Win32::Media::Audio::Apo::{
-    APO_FLAG_BITSPERSAMPLE_MUST_MATCH, APO_FLAG_FRAMESPERSECOND_MUST_MATCH, APO_FLAG_INPLACE,
-    APO_FLAG_SAMPLESPERFRAME_MUST_MATCH,
-};
 use windows::Win32::Media::KernelStreaming::{
     AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS, AUDIO_SIGNALPROCESSINGMODE_DEFAULT,
     AUDIO_SIGNALPROCESSINGMODE_RAW, AUDIO_SIGNALPROCESSINGMODE_SPEECH,
@@ -17,68 +14,76 @@ use winreg::{
     types::FromRegValue,
 };
 
-use crate::utils::{LOG_ENABLE_STR, reg_get_value, reg_set_value};
+use super::{
+    logging,
+    registry::{reg_get_value, reg_set_value},
+    settings_writer,
+};
 
 const ELEVATED_REG_STR: &str = "--elevated-reg";
 const ELEVATED_UNREG_STR: &str = "--elevated-unreg";
-
-const VOICE_BOX_GUID: &str = "{AE672075-B244-4417-B5A5-FBD45B7F0268}";
+const ELEVATED_DATA_STR: &str = "--initialize-data";
 
 const DISABLE_PROTECTED_AUDIO_DG_REG_PATH: &str =
     r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio\DisableProtectedAudioDG";
 
-const COM_REG_BASE: &str = constcat::concat!(r"HKCR\CLSID\", VOICE_BOX_GUID, r"\");
-const COM_REG_INPROC: &str = constcat::concat!(COM_REG_BASE, r"InprocServer32\");
-const COM_REG_THREADING_MODEL: &str = constcat::concat!(COM_REG_INPROC, r"ThreadingModel");
+fn plugin_guid() -> String {
+    format!("{{{:?}}}", plugin::CLSID)
+}
 
-const APO_REG_BASE: &str = constcat::concat!(
-    r"HKCR\AudioEngine\AudioProcessingObjects\",
-    VOICE_BOX_GUID,
-    r"\"
-);
-const APO_REG_FRIENDLY_NAME: &str = constcat::concat!(APO_REG_BASE, r"FriendlyName");
-const APO_REG_COPYRIGHT: &str = constcat::concat!(APO_REG_BASE, r"Copyright");
-const APO_REG_INTERFACE: &str = constcat::concat!(APO_REG_BASE, r"APOInterface0");
-const APO_REG_MAJOR_VERSION: &str = constcat::concat!(APO_REG_BASE, r"MajorVersion");
-const APO_REG_MINOR_VERSION: &str = constcat::concat!(APO_REG_BASE, r"MinorVersion");
-const APO_REG_NUM_APO_INTERFACES: &str = constcat::concat!(APO_REG_BASE, r"NumAPOInterfaces");
-const APO_REG_MIN_INPUT_CONNECTIONS: &str = constcat::concat!(APO_REG_BASE, r"MinInputConnections");
-const APO_REG_MAX_INPUT_CONNECTIONS: &str = constcat::concat!(APO_REG_BASE, r"MaxInputConnections");
-const APO_REG_MIN_OUTPUT_CONNECTIONS: &str =
-    constcat::concat!(APO_REG_BASE, r"MinOutputConnections");
-const APO_REG_MAX_OUTPUT_CONNECTIONS: &str =
-    constcat::concat!(APO_REG_BASE, r"MaxOutputConnections");
-const APO_REG_MAX_INSTANCES: &str = constcat::concat!(APO_REG_BASE, r"MaxInstances");
-const APO_REG_FLAGS: &str = constcat::concat!(APO_REG_BASE, r"Flags");
+fn common_string_reg_pairs() -> [(String, String); 6] {
+    let guid = plugin_guid();
+    let com = format!(r"HKCR\CLSID\{guid}\");
+    let apo = format!(r"HKCR\AudioEngine\AudioProcessingObjects\{guid}\");
+    let properties = plugin::registration_properties();
+    [
+        (com.clone(), plugin::NAME.into()),
+        (format!(r"{com}InprocServer32\"), APO_DLL_PATH.into()),
+        (
+            format!(r"{com}InprocServer32\ThreadingModel"),
+            "Both".into(),
+        ),
+        (format!("{apo}FriendlyName"), plugin::NAME.into()),
+        (format!("{apo}Copyright"), plugin::COPYRIGHT.into()),
+        (
+            format!("{apo}APOInterface0"),
+            format!("{{{:?}}}", properties.iidAPOInterfaceList[0]),
+        ),
+    ]
+}
 
-const APO_INTERFACE_IID: &str = "{FD7F2B29-24D0-4B5C-B177-592C39F9CA10}";
-
-const COMMON_STRING_REG_PAIRS: [(&str, &str); 6] = [
-    (COM_REG_BASE, "VoiceBox APO"),
-    (COM_REG_INPROC, APO_DLL_PATH),
-    (COM_REG_THREADING_MODEL, "Both"),
-    (APO_REG_FRIENDLY_NAME, "VoiceBox APO"),
-    (APO_REG_COPYRIGHT, "Copyright (C) 2026 Tanix"),
-    (APO_REG_INTERFACE, APO_INTERFACE_IID),
-];
-
-const VOICE_BOX_APO_FLAGS: u32 = (APO_FLAG_INPLACE.0
-    | APO_FLAG_SAMPLESPERFRAME_MUST_MATCH.0
-    | APO_FLAG_FRAMESPERSECOND_MUST_MATCH.0
-    | APO_FLAG_BITSPERSAMPLE_MUST_MATCH.0) as u32;
-
-const COMMON_U32_REG_PAIRS: [(&str, u32); 10] = [
-    (DISABLE_PROTECTED_AUDIO_DG_REG_PATH, 1),
-    (APO_REG_MAJOR_VERSION, 1),
-    (APO_REG_MINOR_VERSION, 0),
-    (APO_REG_NUM_APO_INTERFACES, 1),
-    (APO_REG_MIN_INPUT_CONNECTIONS, 1),
-    (APO_REG_MAX_INPUT_CONNECTIONS, 1),
-    (APO_REG_MIN_OUTPUT_CONNECTIONS, 1),
-    (APO_REG_MAX_OUTPUT_CONNECTIONS, 1),
-    (APO_REG_MAX_INSTANCES, u32::MAX),
-    (APO_REG_FLAGS, VOICE_BOX_APO_FLAGS),
-];
+fn common_u32_reg_pairs() -> [(String, u32); 10] {
+    let guid = plugin_guid();
+    let apo = format!(r"HKCR\AudioEngine\AudioProcessingObjects\{guid}\");
+    let properties = plugin::registration_properties();
+    [
+        (DISABLE_PROTECTED_AUDIO_DG_REG_PATH.into(), 1),
+        (format!("{apo}MajorVersion"), properties.u32MajorVersion),
+        (format!("{apo}MinorVersion"), properties.u32MinorVersion),
+        (
+            format!("{apo}NumAPOInterfaces"),
+            properties.u32NumAPOInterfaces,
+        ),
+        (
+            format!("{apo}MinInputConnections"),
+            properties.u32MinInputConnections,
+        ),
+        (
+            format!("{apo}MaxInputConnections"),
+            properties.u32MaxInputConnections,
+        ),
+        (
+            format!("{apo}MinOutputConnections"),
+            properties.u32MinOutputConnections,
+        ),
+        (
+            format!("{apo}MaxOutputConnections"),
+            properties.u32MaxOutputConnections,
+        ),
+        (format!("{apo}MaxInstances"), properties.u32MaxInstances),
+        (format!("{apo}Flags"), properties.Flags.0 as u32),
+    ]
+}
 
 const COMPOSITE_MFX_GUID: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},14";
 const MFX_PROCESSING_MODES: &str = "{d3993a3f-99c2-4402-b5ec-a92a0367664b},6";
@@ -97,7 +102,7 @@ fn default_processing_modes() -> Vec<String> {
 
 const DISABLE_APO_GUID: &str = "{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5";
 
-const APO_DLL: &[u8] = include_bytes!("../target/voice_box.dll");
+const APO_DLL: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/target/voice_box.dll"));
 
 const APO_DLL_PATH: &str = r"C:\Windows\System32\voice_box.dll";
 const AUDIO_SERVICE_NAME: &str = "AudioSrv";
@@ -109,9 +114,10 @@ pub enum PluginStatus {
     Installed,
 }
 
-// The GUI and installer must use this same complete readiness check. An endpoint
+// The GUI and setup helper must use this same complete readiness check. An endpoint
 // association alone does not mean the bundled DLL and registration are current.
 pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
+    let plugin_guid = plugin_guid();
     let root = RegKey::predef(HKEY_LOCAL_MACHINE);
     let fx_path = format!(
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{device_guid}\FxProperties"
@@ -124,11 +130,11 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
         .unwrap_or_default();
     if !effects
         .iter()
-        .any(|effect| effect.eq_ignore_ascii_case(VOICE_BOX_GUID))
+        .any(|effect| effect.eq_ignore_ascii_case(&plugin_guid))
     {
         return PluginStatus::NotInstalled;
     }
-    if !crate::config_reg::ready() {
+    if !settings_writer::ready() {
         return PluginStatus::NeedsUpdate;
     }
     // 检测dll是否需要更新
@@ -137,24 +143,24 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     }
 
     // 检测注册表是否需要更新
-    for (reg_path, expected_value) in COMMON_STRING_REG_PAIRS {
-        if reg_get_value::<String>(reg_path).ok().as_deref() != Some(expected_value) {
+    for (reg_path, expected_value) in common_string_reg_pairs() {
+        if reg_get_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str()) {
             return PluginStatus::NeedsUpdate;
         }
     }
-    for (reg_path, expected_value) in COMMON_U32_REG_PAIRS {
-        if reg_get_value::<u32>(reg_path).ok() != Some(expected_value) {
+    for (reg_path, expected_value) in common_u32_reg_pairs() {
+        if reg_get_value::<u32>(&reg_path).ok() != Some(expected_value) {
             return PluginStatus::NeedsUpdate;
         }
     }
     // 检测设备FxProperties是否需要更新
     if !(effects
         .first()
-        .is_some_and(|effect| effect.eq_ignore_ascii_case(VOICE_BOX_GUID))
+        .is_some_and(|effect| effect.eq_ignore_ascii_case(&plugin_guid))
         && !effects
             .iter()
             .skip(1)
-            .any(|effect| effect.eq_ignore_ascii_case(VOICE_BOX_GUID)))
+            .any(|effect| effect.eq_ignore_ascii_case(&plugin_guid)))
     {
         return PluginStatus::NeedsUpdate;
     }
@@ -217,7 +223,7 @@ fn elevated_reg(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
 }
 
 fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
-    crate::config_reg::initialize().context("初始化 VoiceBox 配置注册表失败")?;
+    settings_writer::initialize().context("初始化 VoiceBox 数据目录失败")?;
     anyhow::ensure!(
         device_guid.len() == 38
             && device_guid.starts_with('{')
@@ -242,15 +248,15 @@ fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
     }
 
     // 更新注册表
-    for (reg_path, expected_value) in COMMON_STRING_REG_PAIRS {
-        if reg_get_value::<String>(reg_path).ok().as_deref() != Some(expected_value) {
-            reg_set_value(reg_path, &expected_value)?;
+    for (reg_path, expected_value) in common_string_reg_pairs() {
+        if reg_get_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str()) {
+            reg_set_value(&reg_path, &expected_value)?;
             info!("Updated registry key {} to {}", reg_path, expected_value);
         }
     }
-    for (reg_path, expected_value) in COMMON_U32_REG_PAIRS {
-        if reg_get_value::<u32>(reg_path).ok() != Some(expected_value) {
-            reg_set_value(reg_path, &expected_value)?;
+    for (reg_path, expected_value) in common_u32_reg_pairs() {
+        if reg_get_value::<u32>(&reg_path).ok() != Some(expected_value) {
+            reg_set_value(&reg_path, &expected_value)?;
             info!("Updated registry key {} to {}", reg_path, expected_value);
         }
     }
@@ -302,14 +308,15 @@ fn update_device_effects(device_guid: &str, uninstall: bool) -> anyhow::Result<(
 }
 
 fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
+    let plugin_guid = plugin_guid();
     // Only an absent value means an empty list. Refuse to overwrite invalid types
-    // or unreadable values, since they may contain another APO's configuration.
+    // or unreadable values, since they may contain another APO's settings.
     let mut effects: Vec<String> = optional_value(fx, COMPOSITE_MFX_GUID)
         .context("读取 Composite MFX APO 列表失败")?
         .unwrap_or_default();
     if uninstall {
         let count = effects.len();
-        effects.retain(|effect| !effect.eq_ignore_ascii_case(VOICE_BOX_GUID));
+        effects.retain(|effect| !effect.eq_ignore_ascii_case(&plugin_guid));
         if effects.len() != count {
             if effects.is_empty() {
                 delete_optional(fx, COMPOSITE_MFX_GUID)?;
@@ -318,8 +325,8 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
             }
         }
     } else {
-        effects.retain(|effect| !effect.eq_ignore_ascii_case(VOICE_BOX_GUID));
-        effects.insert(0, VOICE_BOX_GUID.into());
+        effects.retain(|effect| !effect.eq_ignore_ascii_case(&plugin_guid));
+        effects.insert(0, plugin_guid);
         fx.set_value(COMPOSITE_MFX_GUID, &effects)?;
         let modes: Vec<String> = optional_value(fx, MFX_PROCESSING_MODES)
             .context("读取 MFX 处理模式失败")?
@@ -331,18 +338,22 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
     }
     Ok(())
 }
-pub fn maybe_elevated_reg() -> anyhow::Result<bool> {
+pub fn maybe_elevated_setup() -> anyhow::Result<bool> {
     let args: Vec<String> = std::env::args().collect();
     if matches!(
         args.get(1).map(String::as_str),
-        Some(ELEVATED_REG_STR | ELEVATED_UNREG_STR)
+        Some(ELEVATED_REG_STR | ELEVATED_UNREG_STR | ELEVATED_DATA_STR)
     ) {
-        info!("Running elevated registration operation");
-        unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
         anyhow::ensure!(
             is_elevated(),
             "Elevated operation requested but not running as administrator"
         );
+        settings_writer::initialize()?;
+        logging::init(true)?;
+        info!("Running elevated operation: {}", args[1]);
+        if args[1] == ELEVATED_DATA_STR {
+            return Ok(true);
+        }
         let device_guid = args.get(2).ok_or_else(|| {
             anyhow::anyhow!("Missing device GUID argument for elevated registration operation")
         })?;
@@ -355,8 +366,36 @@ pub fn maybe_elevated_reg() -> anyhow::Result<bool> {
         elevated_reg(device_guid, args[1] == ELEVATED_UNREG_STR)?;
         Ok(true)
     } else {
-        info!("Running VoiceBox");
         Ok(false)
+    }
+}
+
+pub fn ensure_data_ready() -> anyhow::Result<()> {
+    match settings_writer::initialize() {
+        Ok(()) => Ok(()),
+        Err(error)
+            if !is_elevated()
+                && error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+                        || cause
+                            .downcast_ref::<windows::core::Error>()
+                            .is_some_and(|error| {
+                                error.code() == windows::Win32::Foundation::E_ACCESSDENIED
+                            })
+                }) =>
+        {
+            let status = runas::Command::new(std::env::current_exe()?)
+                .arg(ELEVATED_DATA_STR)
+                .gui(false)
+                .show(false)
+                .status()?;
+            anyhow::ensure!(status.success(), "初始化 VoiceBox 数据目录的管理员操作失败");
+            anyhow::ensure!(settings_writer::ready(), "VoiceBox 数据目录权限检查未通过");
+            Ok(())
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -384,11 +423,6 @@ fn device_operation(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
     if is_elevated() {
         elevated_reg(device_guid, uninstall)?;
     } else {
-        let log_enable_arg = if std::env::var_os(LOG_ENABLE_STR).is_some() {
-            LOG_ENABLE_STR
-        } else {
-            ""
-        };
         let status = runas::Command::new(std::env::current_exe()?)
             .arg(if uninstall {
                 ELEVATED_UNREG_STR
@@ -396,7 +430,6 @@ fn device_operation(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
                 ELEVATED_REG_STR
             })
             .arg(device_guid)
-            .arg(log_enable_arg)
             .gui(false)
             .show(false)
             .status()?;

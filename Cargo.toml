@@ -12,9 +12,11 @@ panic = "abort"
 
 [dependencies]
 egui = { version = "0.36", default-features = false, features = ["default_fonts"] }
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow"] }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "persistence"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 anyhow = "1.0.104"
-constcat = "0.6.1"
+atomic-write-file = "0.3.1"
 is_elevated = "0.1.2"
 realfft = "3.5"
 rustfft = "6.4"
@@ -24,7 +26,6 @@ restart-manager = "0.1.0"
 runas = "1.2.0"
 single-instance = "0.3.3"
 tracing = "0.1.44"
-tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
 wasapi = "0.24.0"
 winreg = { version = "0.56.0", features = ["transactions"] }
@@ -32,6 +33,7 @@ windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Apo",
     "Win32_Media_Multimedia",

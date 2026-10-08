@@ -1,5 +1,6 @@
 //! ETW diagnostics for non-real-time APO paths.
 
+use crate::shared::utils::wide_null;
 use core::fmt;
 use std::sync::atomic::{AtomicI64, Ordering};
 use windows::Win32::System::Diagnostics::Etw::{
@@ -13,7 +14,7 @@ pub const INFO: u8 = 4;
 pub const VERBOSE: u8 = 5;
 pub const LIFECYCLE: u64 = 1 << 0;
 pub const FORMAT: u64 = 1 << 1;
-pub const CONFIGURATION: u64 = 1 << 2;
+pub const SETTINGS: u64 = 1 << 2;
 
 const PROVIDER: GUID = GUID::from_u128(0xd75e13f3_18c2_45f2_9397_9a6641423354);
 static REGISTRATION: AtomicI64 = AtomicI64::new(0);
@@ -50,16 +51,13 @@ pub fn log(level: u8, keyword: u64, arguments: fmt::Arguments<'_>) {
     if handle.0 == 0 || !unsafe { EventProviderEnabled(handle, level, keyword) } {
         return;
     }
-    let message: Vec<u16> = format!("VoiceBox APO: {arguments}")
-        .encode_utf16()
-        .chain(core::iter::once(0))
-        .collect();
+    let message = wide_null(format!("VoiceBox APO: {arguments}"));
     unsafe { EventWriteString(handle, level, keyword, PCWSTR(message.as_ptr())) };
 }
 
 macro_rules! apo_log {
     ($level:expr, $keyword:expr, $($arg:tt)*) => {
-        $crate::etw::log($level, $keyword, format_args!($($arg)*))
+        $crate::apo::etw::log($level, $keyword, format_args!($($arg)*))
     };
 }
 

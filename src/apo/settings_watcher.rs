@@ -1,31 +1,33 @@
-//! Registry notifications and effect events stay off the real-time thread.
-use crate::settings::{PATH, Settings};
+//! Settings file notifications and effect events stay off the real-time thread.
+use super::etw;
+use crate::shared::{
+    paths,
+    settings::{MIN_GAIN_MILLIDB, Settings},
+    utils::wide_null,
+};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
 };
 use std::thread::JoinHandle;
 use windows::Win32::{
-    Foundation::{CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE, WAIT_OBJECT_0},
-    System::{
-        Registry::{
-            HKEY, REG_NOTIFY_CHANGE_LAST_SET, REG_NOTIFY_CHANGE_SECURITY,
-            REG_NOTIFY_THREAD_AGNOSTIC, RegNotifyChangeKeyValue,
-        },
-        Threading::{
-            CreateEventW, GetCurrentProcess, INFINITE, ResetEvent, SetEvent,
-            WaitForMultipleObjects, WaitForSingleObject,
-        },
+    Foundation::{
+        CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    },
+    Storage::FileSystem::{
+        FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE, FILE_NOTIFY_CHANGE_SECURITY,
+        FILE_NOTIFY_CHANGE_SIZE, FindCloseChangeNotification, FindFirstChangeNotificationW,
+        FindNextChangeNotification,
+    },
+    System::Threading::{
+        CreateEventW, GetCurrentProcess, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
     },
 };
-use winreg::{
-    RegKey,
-    enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY},
-};
+use windows::core::PCWSTR;
 
 pub struct RtParams {
     bits: AtomicU64,
-    // Only configuration and COM discovery touch this mutex. RT loads bits alone.
+    // Only settings updates and COM discovery touch this mutex. RT loads bits alone.
     effects: Mutex<[Option<Event>; 2]>,
 }
 impl Default for RtParams {
@@ -38,7 +40,7 @@ impl Default for RtParams {
 }
 impl RtParams {
     pub(crate) fn store(&self, settings: Settings) {
-        let gain = if settings.gain_millidb == crate::settings::MIN_GAIN_MILLIDB {
+        let gain = if settings.gain_millidb == MIN_GAIN_MILLIDB {
             0.0
         } else {
             10.0_f32.powf(settings.gain_millidb as f32 / 20_000.0)
@@ -112,25 +114,24 @@ impl Drop for Event {
     }
 }
 
-pub struct ConfigWorker {
+pub struct SettingsWatcher {
     stop: Arc<Event>,
     thread: Option<JoinHandle<()>>,
 }
-impl ConfigWorker {
+impl SettingsWatcher {
     pub fn start(params: Arc<RtParams>) -> windows::core::Result<Self> {
         if let Ok(settings) = Settings::try_load() {
             params.store(settings);
         }
         let stop = Arc::new(Event(unsafe { CreateEventW(None, true, false, None)? }));
-        let changed = Event(unsafe { CreateEventW(None, false, false, None)? });
         let worker_stop = Arc::clone(&stop);
         let thread = std::thread::Builder::new()
-            .name("VoiceBoxConfig".into())
-            .spawn(move || watch(&worker_stop, &changed, &params))
+            .name("VoiceBoxSettings".into())
+            .spawn(move || watch(&worker_stop, &params))
             .map_err(|error| {
                 windows::core::Error::new(
                     windows::Win32::Foundation::E_FAIL,
-                    format!("Cannot start configuration watcher: {error}"),
+                    format!("Cannot start settings watcher: {error}"),
                 )
             })?;
         Ok(Self {
@@ -139,7 +140,7 @@ impl ConfigWorker {
         })
     }
 }
-impl Drop for ConfigWorker {
+impl Drop for SettingsWatcher {
     fn drop(&mut self) {
         unsafe {
             let _ = SetEvent(self.stop.handle());
@@ -150,61 +151,79 @@ impl Drop for ConfigWorker {
     }
 }
 
-fn arm(key: &RegKey, changed: &Event) -> anyhow::Result<()> {
-    unsafe {
-        RegNotifyChangeKeyValue(
-            HKEY(key.raw_handle().cast()),
-            false,
-            REG_NOTIFY_CHANGE_LAST_SET | REG_NOTIFY_CHANGE_SECURITY | REG_NOTIFY_THREAD_AGNOSTIC,
-            Some(changed.handle()),
-            true,
-        )
-        .ok()?;
+struct DirectoryWatch(HANDLE);
+impl DirectoryWatch {
+    fn open() -> anyhow::Result<Self> {
+        let path = wide_null(paths::data_dir()?);
+        let handle = unsafe {
+            FindFirstChangeNotificationW(
+                PCWSTR(path.as_ptr()),
+                false,
+                FILE_NOTIFY_CHANGE_FILE_NAME
+                    | FILE_NOTIFY_CHANGE_LAST_WRITE
+                    | FILE_NOTIFY_CHANGE_SIZE
+                    | FILE_NOTIFY_CHANGE_SECURITY,
+            )?
+        };
+        Ok(Self(handle))
     }
-    Ok(())
+    fn rearm(&self) -> anyhow::Result<()> {
+        unsafe {
+            FindNextChangeNotification(self.0)?;
+        }
+        Ok(())
+    }
+}
+impl Drop for DirectoryWatch {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = FindCloseChangeNotification(self.0);
+        }
+    }
 }
 
-fn open_watch(changed: &Event) -> anyhow::Result<(RegKey, Settings)> {
-    // Closing an old key can signal its event; discard that stale notification.
-    unsafe {
-        ResetEvent(changed.handle())?;
+fn report_fault(faulted: &mut bool, error: &anyhow::Error) {
+    if !*faulted {
+        etw::apo_log!(
+            etw::WARNING,
+            etw::SETTINGS,
+            "Settings file watcher will retry; retaining last valid settings: {error:#}"
+        );
+        *faulted = true;
     }
-    let key = RegKey::predef(HKEY_LOCAL_MACHINE)
-        .open_subkey_with_flags(PATH, KEY_READ | KEY_WOW64_64KEY)?;
-    arm(&key, changed)?;
-    // Arm first so a commit during this read also produces a later notification.
-    let settings = Settings::read(&key)?;
-    Ok((key, settings))
 }
 
-fn watch(stop: &Event, changed: &Event, params: &RtParams) {
-    let events = [stop.handle(), changed.handle()];
-    let mut key = None;
-    let mut retry_ms = 250u32;
+fn reload(params: &RtParams, faulted: &mut bool) {
+    match Settings::try_load() {
+        Ok(settings) => {
+            params.store(settings);
+            if *faulted {
+                etw::apo_log!(etw::INFO, etw::SETTINGS, "Settings file watcher recovered");
+                *faulted = false;
+            }
+        }
+        Err(error) => report_fault(faulted, &error.into()),
+    }
+}
+
+fn watch(stop: &Event, params: &RtParams) {
+    let mut watch: Option<DirectoryWatch> = None;
+    let mut retry_ms = 250;
     let mut faulted = false;
     loop {
-        if key.is_none() {
-            if unsafe { WaitForSingleObject(stop.handle(), 0) } == WAIT_OBJECT_0 {
-                break;
-            }
-            match open_watch(changed) {
-                Ok((opened, settings)) => {
-                    params.store(settings);
-                    key = Some(opened);
+        if unsafe { WaitForSingleObject(stop.handle(), 0) } == WAIT_OBJECT_0 {
+            break;
+        }
+        if watch.is_none() {
+            match DirectoryWatch::open() {
+                Ok(opened) => {
+                    // Subscribe before reading so a concurrent replacement is not lost.
+                    watch = Some(opened);
+                    reload(params, &mut faulted);
                     retry_ms = 250;
-                    if faulted {
-                        crate::etw::apo_log!(
-                            crate::etw::INFO,
-                            crate::etw::CONFIGURATION,
-                            "Configuration watcher recovered"
-                        );
-                        faulted = false;
-                    }
                 }
                 Err(error) => {
                     report_fault(&mut faulted, &error);
-                    // Only failed subscriptions retry. Normal operation waits indefinitely.
-                    // Ignore cancelled registry events here to avoid a busy retry loop.
                     if unsafe { WaitForSingleObject(stop.handle(), retry_ms) } == WAIT_OBJECT_0 {
                         break;
                     }
@@ -213,41 +232,43 @@ fn watch(stop: &Event, changed: &Event, params: &RtParams) {
                 }
             }
         }
-        let result = unsafe { WaitForMultipleObjects(&events, false, INFINITE) };
+        let current = watch.as_ref().expect("directory subscription exists");
+        let events = [stop.handle(), current.0];
+        // Directory notifications handle writes and atomic replacements. A slow
+        // health check also recovers if the whole directory is deleted/recreated.
+        let timeout = if faulted { retry_ms } else { 30_000 };
+        let result = unsafe { WaitForMultipleObjects(&events, false, timeout) };
         if result == WAIT_OBJECT_0 {
             break;
         }
         if result.0 == WAIT_OBJECT_0.0 + 1 {
-            let current = key.as_ref().expect("subscription exists while waiting");
-            // Each completed notification has exactly one replacement subscription.
-            match arm(current, changed).and_then(|_| Ok(Settings::read(current)?)) {
-                Ok(settings) => params.store(settings),
-                Err(error) => {
-                    report_fault(&mut faulted, &error);
-                    key = None; // closes and cancels any outstanding notification
-                }
+            // Rearm before loading so another save during the read is observed.
+            if let Err(error) = current.rearm() {
+                report_fault(&mut faulted, &error);
+                watch = None;
+                continue;
+            }
+            reload(params, &mut faulted);
+        } else if result == WAIT_TIMEOUT {
+            if faulted {
+                reload(params, &mut faulted);
+            } else {
+                watch = None;
             }
         } else {
             report_fault(
                 &mut faulted,
-                &anyhow::anyhow!("Registry wait failed: {result:?}"),
+                &anyhow::anyhow!("Settings directory wait failed: {result:?}"),
             );
-            key = None;
+            watch = None;
             if unsafe { WaitForSingleObject(stop.handle(), retry_ms) } == WAIT_OBJECT_0 {
                 break;
             }
-            retry_ms = (retry_ms * 2).min(5_000);
         }
-    }
-}
-
-fn report_fault(faulted: &mut bool, error: &anyhow::Error) {
-    if !*faulted {
-        crate::etw::apo_log!(
-            crate::etw::WARNING,
-            crate::etw::CONFIGURATION,
-            "Configuration watcher will retry; retaining last valid settings: {error:#}"
-        );
-        *faulted = true;
+        retry_ms = if faulted {
+            (retry_ms * 2).min(5_000)
+        } else {
+            250
+        };
     }
 }

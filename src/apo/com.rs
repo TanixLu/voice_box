@@ -13,11 +13,9 @@ use windows::Win32::Foundation::{
     E_OUTOFMEMORY, E_POINTER, HANDLE, S_FALSE, S_OK,
 };
 use windows::Win32::Media::Audio::Apo::{
-    APO_CONNECTION_DESCRIPTOR, APO_CONNECTION_PROPERTY, APO_FLAG,
-    APO_FLAG_BITSPERSAMPLE_MUST_MATCH, APO_FLAG_FRAMESPERSECOND_MUST_MATCH, APO_FLAG_INPLACE,
-    APO_FLAG_SAMPLESPERFRAME_MUST_MATCH, APO_REG_PROPERTIES, APOERR_ALREADY_INITIALIZED,
-    APOERR_ALREADY_UNLOCKED, APOERR_APO_LOCKED, APOERR_FORMAT_NOT_SUPPORTED,
-    APOERR_INVALID_APO_CLSID, APOERR_INVALID_CONNECTION_FORMAT,
+    APO_CONNECTION_DESCRIPTOR, APO_CONNECTION_PROPERTY, APO_REG_PROPERTIES,
+    APOERR_ALREADY_INITIALIZED, APOERR_ALREADY_UNLOCKED, APOERR_APO_LOCKED,
+    APOERR_FORMAT_NOT_SUPPORTED, APOERR_INVALID_APO_CLSID, APOERR_INVALID_CONNECTION_FORMAT,
     APOERR_INVALID_OUTPUT_MAXFRAMECOUNT, APOERR_NOT_INITIALIZED, APOERR_NUM_CONNECTIONS_INVALID,
     APOInitBaseStruct, APOInitSystemEffects, APOInitSystemEffects2, APOInitSystemEffects3,
     AUDIO_SYSTEMEFFECT, AUDIO_SYSTEMEFFECT_STATE_OFF, AUDIO_SYSTEMEFFECT_STATE_ON, BUFFER_INVALID,
@@ -41,12 +39,12 @@ use windows::Win32::System::Com::{
 };
 use windows_core::{BOOL, GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface};
 
-use crate::dsp::{
+use super::dsp::{
     AudioProcessor, MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, ModelKind, SampleFormat,
 };
-use crate::etw::{self, apo_log};
+use super::etw::{self, apo_log};
+use crate::shared::plugin;
 
-const CLSID_VOICE_BOX_APO: GUID = GUID::from_u128(0xae672075_b244_4417_b5a5_fbd45b7f0268);
 const EFFECT_ID_DENOISE: GUID = AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION;
 
 static LIVE_OBJECTS: AtomicU32 = AtomicU32::new(0);
@@ -62,18 +60,18 @@ struct InterfaceHeader<V> {
 /// A single carrier supports normal activation and COM aggregation.
 #[repr(C)]
 struct ApoCom {
-    params: Arc<crate::config::RtParams>,
-    config_worker: Option<crate::config::ConfigWorker>,
+    params: Arc<super::settings_watcher::RtParams>,
+    settings_watcher: Option<super::settings_watcher::SettingsWatcher>,
     inner_unknown: InterfaceHeader<IUnknown_Vtbl>,
     apo: InterfaceHeader<IAudioProcessingObject_Vtbl>,
-    configuration: InterfaceHeader<IAudioProcessingObjectConfiguration_Vtbl>,
+    process_control: InterfaceHeader<IAudioProcessingObjectConfiguration_Vtbl>,
     realtime: InterfaceHeader<IAudioProcessingObjectRT_Vtbl>,
     system_effects: InterfaceHeader<IAudioSystemEffects3_Vtbl>,
     controlling_unknown: *mut c_void,
     inner_refs: AtomicU32,
     initialized: AtomicBool,
     locked: AtomicBool,
-    configuration_guard: Mutex<()>,
+    control_guard: Mutex<()>,
     dsp_in_use: AtomicBool,
     reset_requested: AtomicBool,
     effect_enabled: AtomicBool,
@@ -87,7 +85,7 @@ struct ApoCom {
     dsp: UnsafeCell<AudioProcessor>,
 }
 
-// Non-real-time configuration is serialized. Access to UnsafeCell is exclusive
+// Non-real-time control operations are serialized. Access to UnsafeCell is exclusive
 // through DspAccess, which never waits on the processing thread. Reset only posts
 // a request that the next processing pass consumes while it owns the DSP.
 unsafe impl Sync for ApoCom {}
@@ -189,7 +187,7 @@ unsafe extern "system" fn inner_query_interface(
         )
     } else if iid == IAudioProcessingObjectConfiguration::IID {
         (
-            unsafe { ptr::addr_of_mut!((*object).configuration).cast::<c_void>() },
+            unsafe { ptr::addr_of_mut!((*object).process_control).cast::<c_void>() },
             false,
             "IAudioProcessingObjectConfiguration",
         )
@@ -310,26 +308,7 @@ unsafe extern "system" fn get_registration_properties(
         return E_OUTOFMEMORY;
     }
 
-    let mut properties = APO_REG_PROPERTIES {
-        clsid: CLSID_VOICE_BOX_APO,
-        Flags: APO_FLAG(
-            APO_FLAG_INPLACE.0
-                | APO_FLAG_SAMPLESPERFRAME_MUST_MATCH.0
-                | APO_FLAG_FRAMESPERSECOND_MUST_MATCH.0
-                | APO_FLAG_BITSPERSAMPLE_MUST_MATCH.0,
-        ),
-        u32MajorVersion: 1,
-        u32MinInputConnections: 1,
-        u32MaxInputConnections: 1,
-        u32MinOutputConnections: 1,
-        u32MaxOutputConnections: 1,
-        u32MaxInstances: u32::MAX,
-        u32NumAPOInterfaces: 1,
-        iidAPOInterfaceList: [IAudioProcessingObject::IID],
-        ..Default::default()
-    };
-    write_wide(&mut properties.szFriendlyName, "VoiceBox APO");
-    write_wide(&mut properties.szCopyrightInfo, "Copyright (C) 2026 Tanix");
+    let properties = plugin::registration_properties();
 
     unsafe {
         memory.write(properties);
@@ -340,16 +319,15 @@ unsafe extern "system" fn get_registration_properties(
 
 unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *const u8) -> HRESULT {
     let object = unsafe { object_from(this) };
-    let _configuration = unsafe { (*object).configuration_guard.lock() }
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _control =
+        unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
     if unsafe { (*object).initialized.load(Ordering::Acquire) } {
         return APOERR_ALREADY_INITIALIZED;
     }
     if data.is_null() || (size as usize) < core::mem::size_of::<APOInitBaseStruct>() {
         return E_INVALIDARG;
     }
-    if unsafe { ptr::read_unaligned(data.cast::<APOInitBaseStruct>()) }.clsid != CLSID_VOICE_BOX_APO
-    {
+    if unsafe { ptr::read_unaligned(data.cast::<APOInitBaseStruct>()) }.clsid != plugin::CLSID {
         return APOERR_INVALID_APO_CLSID;
     }
 
@@ -383,13 +361,13 @@ unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *const 
         if mode != AUDIO_SIGNALPROCESSINGMODE_RAW {
             // Discovery objects also expose live effect lists and change events.
             // They watch settings but still cannot allocate/process a DSP graph.
-            match crate::config::ConfigWorker::start(Arc::clone(&(*object).params)) {
-                Ok(worker) => (*object).config_worker = Some(worker),
+            match super::settings_watcher::SettingsWatcher::start(Arc::clone(&(*object).params)) {
+                Ok(worker) => (*object).settings_watcher = Some(worker),
                 Err(error) => {
                     apo_log!(
                         etw::WARNING,
-                        etw::CONFIGURATION,
-                        "Configuration watcher failed: {error}"
+                        etw::SETTINGS,
+                        "Settings watcher failed: {error}"
                     );
                 }
             }
@@ -588,7 +566,7 @@ unsafe fn negotiate_format(
     // AddRef may invoke an external COM object, so do not hold our mutex there.
     unsafe { ((*unknown_vtable(selected)).AddRef)(selected) };
     {
-        let _configuration = unsafe { (*object).configuration_guard.lock() }
+        let _control = unsafe { (*object).control_guard.lock() }
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if !unsafe { (*object).locked.load(Ordering::Acquire) } {
             unsafe {
@@ -664,7 +642,7 @@ fn log_lock_failure(
 ) -> HRESULT {
     apo_log!(
         etw::ERROR,
-        etw::CONFIGURATION,
+        etw::SETTINGS,
         "LockForProcess failed instance={object:p} inputs={input_count} outputs={output_count} reason={reason} result=0x{:08x}",
         result.0 as u32
     );
@@ -874,8 +852,8 @@ unsafe extern "system" fn lock_for_process(
             APOERR_INVALID_CONNECTION_FORMAT,
         );
     }
-    let _configuration = unsafe { (*object).configuration_guard.lock() }
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _control =
+        unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
     if unsafe { (*object).discovery_only.load(Ordering::Acquire) } {
         return log_lock_failure(
             object,
@@ -935,7 +913,7 @@ unsafe extern "system" fn lock_for_process(
         );
     };
     if unsafe {
-        (&mut *(*object).dsp.get()).configure(
+        (&mut *(*object).dsp.get()).prepare(
             sample_format,
             input_format.dwSamplesPerFrame as usize,
             f64::from(input_format.fFramesPerSecond),
@@ -951,7 +929,7 @@ unsafe extern "system" fn lock_for_process(
             object,
             input_count,
             output_count,
-            "cannot configure speech enhancement model",
+            "cannot prepare speech enhancement model",
             APOERR_INVALID_CONNECTION_FORMAT,
         );
     }
@@ -975,7 +953,7 @@ unsafe extern "system" fn lock_for_process(
     }
     apo_log!(
         etw::INFO,
-        etw::CONFIGURATION,
+        etw::SETTINGS,
         "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} effect=gtcrn latency_hns={}",
         unsafe { (**inputs).u32MaxFrameCount },
         unsafe { (**outputs).u32MaxFrameCount },
@@ -987,14 +965,14 @@ unsafe extern "system" fn lock_for_process(
 
 unsafe extern "system" fn unlock_for_process(this: *mut c_void) -> HRESULT {
     let object = unsafe { object_from(this) };
-    let _configuration = unsafe { (*object).configuration_guard.lock() }
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _control =
+        unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
     if !unsafe { (*object).locked.swap(false, Ordering::AcqRel) } {
         return APOERR_ALREADY_UNLOCKED;
     }
     apo_log!(
         etw::INFO,
-        etw::CONFIGURATION,
+        etw::SETTINGS,
         "UnlockForProcess completed instance={object:p} process_calls={} processed_frames={}",
         unsafe { (*object).process_calls.load(Ordering::Relaxed) },
         unsafe { (*object).processed_frames.load(Ordering::Relaxed) }
@@ -1099,7 +1077,7 @@ static APO_VTABLE: IAudioProcessingObject_Vtbl = IAudioProcessingObject_Vtbl {
     GetInputChannelCount: get_input_channel_count,
 };
 
-static CONFIGURATION_VTABLE: IAudioProcessingObjectConfiguration_Vtbl =
+static CONTROL_VTABLE: IAudioProcessingObjectConfiguration_Vtbl =
     IAudioProcessingObjectConfiguration_Vtbl {
         base__: DELEGATING_UNKNOWN,
         LockForProcess: lock_for_process,
@@ -1131,8 +1109,8 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
     }
     unsafe {
         raw.write(ApoCom {
-            params: Arc::new(crate::config::RtParams::default()),
-            config_worker: None,
+            params: Arc::new(super::settings_watcher::RtParams::default()),
+            settings_watcher: None,
             inner_unknown: InterfaceHeader {
                 vtable: &INNER_UNKNOWN,
                 object: ptr::null_mut(),
@@ -1141,8 +1119,8 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
                 vtable: &APO_VTABLE,
                 object: ptr::null_mut(),
             },
-            configuration: InterfaceHeader {
-                vtable: &CONFIGURATION_VTABLE,
+            process_control: InterfaceHeader {
+                vtable: &CONTROL_VTABLE,
                 object: ptr::null_mut(),
             },
             realtime: InterfaceHeader {
@@ -1157,7 +1135,7 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
             inner_refs: AtomicU32::new(1),
             initialized: AtomicBool::new(false),
             locked: AtomicBool::new(false),
-            configuration_guard: Mutex::new(()),
+            control_guard: Mutex::new(()),
             dsp_in_use: AtomicBool::new(false),
             reset_requested: AtomicBool::new(false),
             effect_enabled: AtomicBool::new(true),
@@ -1174,7 +1152,7 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
     let object = unsafe { &mut *raw };
     object.inner_unknown.object = raw;
     object.apo.object = raw;
-    object.configuration.object = raw;
+    object.process_control.object = raw;
     object.realtime.object = raw;
     object.system_effects.object = raw;
     object.controlling_unknown = if outer.is_null() {
@@ -1299,7 +1277,7 @@ pub unsafe extern "system" fn DllGetClassObject(
         return E_POINTER;
     }
     unsafe { *output = ptr::null_mut() };
-    if unsafe { *clsid } != CLSID_VOICE_BOX_APO {
+    if unsafe { *clsid } != plugin::CLSID {
         return CLASS_E_CLASSNOTAVAILABLE;
     }
     let result =
@@ -1327,11 +1305,5 @@ pub extern "system" fn DllCanUnloadNow() -> HRESULT {
         S_OK
     } else {
         S_FALSE
-    }
-}
-
-fn write_wide(destination: &mut [u16], text: &str) {
-    for (slot, value) in destination.iter_mut().zip(text.encode_utf16()) {
-        *slot = value;
     }
 }
