@@ -12,9 +12,10 @@ use windows::Win32::Media::KernelStreaming::{
     AUDIO_SIGNALPROCESSINGMODE_SPEECH,
 };
 use winreg::{
-    RegKey, RegValue,
+    RegKey,
     enums::{HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_READ, KEY_SET_VALUE, KEY_WOW64_64KEY},
     transaction::Transaction,
+    types::FromRegValue,
 };
 
 use crate::utils::{LOG_ENABLE_STR, reg_get_value, reg_set_value};
@@ -80,32 +81,9 @@ const COMMON_U32_REG_PAIRS: [(&str, u32); 10] = [
     (APO_REG_FLAGS, VOICE_BOX_APO_FLAGS),
 ];
 
-// Stream effects are omitted from RAW streams. Endpoint effects cannot provide
-// that guarantee because the endpoint instance is shared by all modes.
-const SFX_GUID: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5";
+// Append VoiceBox to the composite SFX list without replacing other APOs.
+const COMPOSITE_SFX_GUID: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},13";
 const SFX_PROCESSING_MODES: &str = "{d3993a3f-99c2-4402-b5ec-a92a0367664b},5";
-// Clear every APO attachment except our SFX: legacy LFX/GFX, ordinary,
-// keyword-detector and offload slots, including composite REG_MULTI_SZ lists.
-// Association/UI/metadata properties are not APO attachments and stay intact.
-const CLEARED_FX_PROPERTIES: [&str; 17] = [
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},1",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},2",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},6",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},7",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},8",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},9",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},10",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},11",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},12",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},13",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},14",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},15",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},16",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},17",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},18",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},19",
-    "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},20",
-];
 
 fn processing_modes() -> Vec<String> {
     [
@@ -122,10 +100,8 @@ fn processing_modes() -> Vec<String> {
 
 const DISABLE_APO_GUID: &str = "{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5";
 
-fn device_fx_property_reg_path(device_guid: &str, property: &str) -> String {
-    format!(
-        r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{device_guid}\FxProperties\{property}"
-    )
+fn contains_guid(values: &[String], guid: &str) -> bool {
+    values.iter().any(|value| value.eq_ignore_ascii_case(guid))
 }
 
 const APO_DLL: &[u8] = include_bytes!("../target/voice_box.dll");
@@ -141,12 +117,6 @@ fn need_reg(device_guid: &str) -> bool {
     let Ok(fx) = root.open_subkey_with_flags(fx_path, KEY_READ | KEY_WOW64_64KEY) else {
         return true;
     };
-    for property in CLEARED_FX_PROPERTIES {
-        match fx.get_raw_value(property) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            _ => return true,
-        }
-    }
     if !crate::config_reg::ready() {
         return true;
     }
@@ -167,24 +137,26 @@ fn need_reg(device_guid: &str) -> bool {
         }
     }
     // 检测设备FxProperties是否需要更新
-    if reg_get_value::<String>(&device_fx_property_reg_path(device_guid, SFX_GUID))
-        .ok()
-        .as_deref()
-        != Some(VOICE_BOX_GUID)
+    if !fx
+        .get_value::<Vec<String>, _>(COMPOSITE_SFX_GUID)
+        .is_ok_and(|effects| contains_guid(&effects, VOICE_BOX_GUID))
     {
         return true;
     }
-    if reg_get_value::<Vec<String>>(&device_fx_property_reg_path(
-        device_guid,
-        SFX_PROCESSING_MODES,
-    ))
-    .ok()
-    .as_ref()
-        != Some(&processing_modes())
+    if !fx
+        .get_value::<Vec<String>, _>(SFX_PROCESSING_MODES)
+        .is_ok_and(|modes| {
+            processing_modes()
+                .iter()
+                .all(|mode| contains_guid(&modes, mode))
+        })
     {
         return true;
     }
-    if reg_get_value::<u32>(&device_fx_property_reg_path(device_guid, DISABLE_APO_GUID)).is_ok() {
+    if fx
+        .get_value::<u32, _>(DISABLE_APO_GUID)
+        .is_ok_and(|value| value != 0)
+    {
         return true;
     }
 
@@ -275,8 +247,8 @@ fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
     update_device_effects(device_guid, false)
 }
 
-fn optional_raw(key: &RegKey, name: &str) -> std::io::Result<Option<RegValue<'static>>> {
-    match key.get_raw_value(name) {
+fn optional_value<T: FromRegValue>(key: &RegKey, name: &str) -> std::io::Result<Option<T>> {
+    match key.get_value(name) {
         Ok(value) => Ok(Some(value)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
@@ -304,65 +276,53 @@ fn update_device_effects(device_guid: &str, uninstall: bool) -> anyhow::Result<(
         format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{device_guid}\FxProperties"),
         &transaction, flags,
     ).with_context(|| format!("打开麦克风 {device_guid} 的 FxProperties 失败"))?;
-    let (backup, _) = root
-        .create_subkey_transacted_with_flags(
-            format!(r"SOFTWARE\VoiceBox\FxPropertyBackup\{device_guid}"),
-            &transaction,
-            flags,
-        )
-        .with_context(|| format!("打开麦克风 {device_guid} 的 APO 备份注册表失败"))?;
-    let owns_sfx = fx.get_value::<String, _>(SFX_GUID).ok().as_deref() == Some(VOICE_BOX_GUID);
-    if uninstall && !owns_sfx {
-        return Ok(());
-    }
-    let properties = [SFX_GUID, SFX_PROCESSING_MODES, DISABLE_APO_GUID]
-        .into_iter()
-        .chain(CLEARED_FX_PROPERTIES);
-    for property in properties {
-        let marker = format!("{property}__present");
-        let present = if optional_raw(&backup, &marker)?.is_some() {
-            Some(backup.get_value::<u32, _>(&marker)?)
-        } else {
-            None
-        };
-        let saved = optional_raw(&backup, property)?;
-        if uninstall {
-            anyhow::ensure!(
-                matches!(present, Some(0 | 1)) && (present == Some(1)) == saved.is_some(),
-                "Missing or invalid effect backup: {property}"
-            );
-            if let Some(value) = saved {
-                fx.set_raw_value(property, &value)?;
-            } else {
-                delete_optional(&fx, property)?;
-            }
-            delete_optional(&backup, property)?;
-            delete_optional(&backup, &marker)?;
-        } else {
-            if present.is_none() {
-                let previous = optional_raw(&fx, property)?;
-                if let Some(value) = &previous {
-                    backup.set_raw_value(property, value)?;
-                } else {
-                    delete_optional(&backup, property)?;
-                }
-                backup.set_value(&marker, &u32::from(previous.is_some()))?;
-            }
-            if property == SFX_GUID {
-                fx.set_value(property, &VOICE_BOX_GUID)?;
-            } else if property == SFX_PROCESSING_MODES {
-                fx.set_value(property, &processing_modes())?;
-            } else {
-                delete_optional(&fx, property)?;
-            }
-        }
-    }
-    // Backups and all endpoint changes commit together; failures leave both untouched.
+    update_fx_properties(&fx, uninstall)?;
+    // All endpoint changes commit together; failures leave them untouched.
     transaction.commit().context("提交 APO 注册事务失败")?;
     info!(
         "{} VoiceBox device effects for {device_guid}",
-        if uninstall { "Restored" } else { "Registered" }
+        if uninstall {
+            "Unregistered"
+        } else {
+            "Registered"
+        }
     );
+    Ok(())
+}
+
+fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
+    // Only an absent value means an empty list. Refuse to overwrite invalid types
+    // or unreadable values, since they may contain another APO's configuration.
+    let mut effects: Vec<String> = optional_value(fx, COMPOSITE_SFX_GUID)
+        .context("读取 Composite SFX APO 列表失败")?
+        .unwrap_or_default();
+    if uninstall {
+        let count = effects.len();
+        effects.retain(|effect| !effect.eq_ignore_ascii_case(VOICE_BOX_GUID));
+        if effects.len() != count {
+            if effects.is_empty() {
+                delete_optional(fx, COMPOSITE_SFX_GUID)?;
+            } else {
+                fx.set_value(COMPOSITE_SFX_GUID, &effects)?;
+            }
+        }
+    } else {
+        if !contains_guid(&effects, VOICE_BOX_GUID) {
+            effects.push(VOICE_BOX_GUID.into());
+            fx.set_value(COMPOSITE_SFX_GUID, &effects)?;
+        }
+        let mut modes: Vec<String> = optional_value(fx, SFX_PROCESSING_MODES)
+            .context("读取 SFX 处理模式失败")?
+            .unwrap_or_default();
+        for mode in processing_modes() {
+            if !contains_guid(&modes, &mode) {
+                modes.push(mode);
+            }
+        }
+        fx.set_value(SFX_PROCESSING_MODES, &modes)?;
+        // Preserve the existing registration behavior of enabling system effects.
+        delete_optional(fx, DISABLE_APO_GUID)?;
+    }
     Ok(())
 }
 pub fn maybe_elevated_reg() -> anyhow::Result<bool> {

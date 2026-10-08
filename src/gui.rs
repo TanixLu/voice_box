@@ -143,9 +143,7 @@ impl VoiceBoxApp {
                 }
             }
             JobResult::Uninstallation(Ok(())) => {
-                self.status =
-                    "已卸载 VoiceBox APO，并恢复所有备份的原有 APO。请重新打开语音或录音应用。"
-                        .into();
+                self.status = "已卸载 VoiceBox APO。请重新打开语音或录音应用。".into();
             }
             JobResult::Microphones(Err(error))
             | JobResult::Registration(Err(error))
@@ -242,7 +240,7 @@ impl eframe::App for VoiceBoxApp {
                     });
                 });
                 ui.small("注册时可能请求管理员权限，并短暂重启音频服务。");
-                ui.small("注册后仅保留 VoiceBox APO；卸载时恢复原有全部 APO。");
+                ui.small("VoiceBox 会追加到现有音效列表；卸载时仅移除 VoiceBox。");
             });
 
             ui.add_space(10.0);
