@@ -1047,11 +1047,12 @@ unsafe extern "system" fn process(
     if unsafe { (*object).effect_enabled.load(Ordering::Acquire) } {
         let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
         let (enabled, gain) = unsafe { (*object).params.load() };
-        let silent =
-            unsafe { (&mut *(*object).dsp.get()).process_with_settings(buffer, enabled, gain) };
-        // Muting produces actual silence, including any buffered speech. Other
-        // silent input packets can still yield valid audio while the model drains.
-        output_flags = if silent { BUFFER_SILENT } else { BUFFER_VALID };
+        unsafe { (&mut *(*object).dsp.get()).process_with_settings(buffer, enabled, gain) };
+        // The DSP materializes every frame, including startup padding and mute.
+        // Keep these packets valid even when all samples are zero: legacy capture
+        // clients can stop recording when initial packets are BUFFER_SILENT.
+        // Silent input can also yield audio while the model's buffers drain.
+        output_flags = BUFFER_VALID;
     }
     output.u32ValidFrameCount = input.u32ValidFrameCount;
     output.u32BufferFlags = output_flags;
