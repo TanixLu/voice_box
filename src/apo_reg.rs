@@ -17,7 +17,7 @@ use winreg::{
     transaction::Transaction,
 };
 
-use crate::utils::{LOG_ENABLE_STR, reg_delete_key, reg_get_value, reg_set_value};
+use crate::utils::{LOG_ENABLE_STR, reg_get_value, reg_set_value};
 
 const ELEVATED_REG_STR: &str = "--elevated-reg";
 const ELEVATED_UNREG_STR: &str = "--elevated-unreg";
@@ -235,7 +235,6 @@ fn elevated_reg(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
 
 fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
     crate::config_reg::initialize().context("初始化 VoiceBox 配置注册表失败")?;
-    // The previous backup location is no longer used; do not migrate it.
     anyhow::ensure!(
         device_guid.len() == 38
             && device_guid.starts_with('{')
@@ -253,7 +252,6 @@ fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
                 }),
         "Invalid device GUID"
     );
-    reg_delete_key(&format!(r"HKLM\{}\{device_guid}", crate::settings::ROOT))?;
     // 更新dll
     if std::fs::read(APO_DLL_PATH).ok().as_deref() != Some(APO_DLL) {
         std::fs::write(APO_DLL_PATH, APO_DLL)?;
@@ -329,17 +327,9 @@ fn update_device_effects(device_guid: &str, uninstall: bool) -> anyhow::Result<(
         };
         let saved = optional_raw(&backup, property)?;
         if uninstall {
-            // Older registrations had no absence marker for SFX, and no MFX/EFX backup.
-            if present.is_none()
-                && saved.is_none()
-                && property != SFX_GUID
-                && property != SFX_PROCESSING_MODES
-            {
-                continue;
-            }
             anyhow::ensure!(
-                present != Some(1) || saved.is_some(),
-                "Missing effect backup: {property}"
+                matches!(present, Some(0 | 1)) && (present == Some(1)) == saved.is_some(),
+                "Missing or invalid effect backup: {property}"
             );
             if let Some(value) = saved {
                 fx.set_raw_value(property, &value)?;
@@ -350,16 +340,11 @@ fn update_device_effects(device_guid: &str, uninstall: bool) -> anyhow::Result<(
             delete_optional(&backup, &marker)?;
         } else {
             if present.is_none() {
-                // Preserve existing backups when updating an already attached VoiceBox.
-                let previous = if saved.is_some() {
-                    saved
-                } else if owns_sfx && property == SFX_GUID {
-                    None
-                } else {
-                    optional_raw(&fx, property)?
-                };
+                let previous = optional_raw(&fx, property)?;
                 if let Some(value) = &previous {
                     backup.set_raw_value(property, value)?;
+                } else {
+                    delete_optional(&backup, property)?;
                 }
                 backup.set_value(&marker, &u32::from(previous.is_some()))?;
             }

@@ -99,23 +99,6 @@ pub fn reg_set_existing_values<T: ToRegValue>(
     Ok(())
 }
 
-/// Deletes a registry key and its children in the 64-bit view; missing keys are harmless.
-pub fn reg_delete_key(full_path: &str) -> anyhow::Result<()> {
-    let (parent, name) = full_path
-        .rsplit_once('\\')
-        .filter(|(_, name)| !name.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("Invalid registry key path: {full_path}"))?;
-    let (root, path) = split_reg_key_path(parent)?;
-    let result = root
-        .open_subkey_with_flags(path, KEY_READ | KEY_WRITE | KEY_WOW64_64KEY)
-        .and_then(|key| key.delete_subkey_all(name));
-    match result {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.into()),
-    }
-}
-
 struct LocalAllocation(*mut core::ffi::c_void);
 impl Drop for LocalAllocation {
     fn drop(&mut self) {
