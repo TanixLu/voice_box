@@ -8,7 +8,6 @@ use windows::Win32::Media::Audio::Apo::{
 };
 use windows::Win32::Media::KernelStreaming::{
     AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS, AUDIO_SIGNALPROCESSINGMODE_DEFAULT,
-    AUDIO_SIGNALPROCESSINGMODE_FAR_FIELD_SPEECH, AUDIO_SIGNALPROCESSINGMODE_MEDIA,
     AUDIO_SIGNALPROCESSINGMODE_RAW, AUDIO_SIGNALPROCESSINGMODE_SPEECH,
 };
 use winreg::{
@@ -84,14 +83,12 @@ const COMMON_U32_REG_PAIRS: [(&str, u32); 10] = [
 const COMPOSITE_MFX_GUID: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},14";
 const MFX_PROCESSING_MODES: &str = "{d3993a3f-99c2-4402-b5ec-a92a0367664b},6";
 
-fn processing_modes() -> Vec<String> {
+fn default_processing_modes() -> Vec<String> {
     [
         AUDIO_SIGNALPROCESSINGMODE_DEFAULT,
         AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS,
-        AUDIO_SIGNALPROCESSINGMODE_SPEECH,
-        AUDIO_SIGNALPROCESSINGMODE_MEDIA,
-        AUDIO_SIGNALPROCESSINGMODE_FAR_FIELD_SPEECH,
         AUDIO_SIGNALPROCESSINGMODE_RAW,
+        AUDIO_SIGNALPROCESSINGMODE_SPEECH,
     ]
     .into_iter()
     .map(|mode| format!("{{{mode:?}}}"))
@@ -145,11 +142,7 @@ fn need_reg(device_guid: &str) -> bool {
     }
     if !fx
         .get_value::<Vec<String>, _>(MFX_PROCESSING_MODES)
-        .is_ok_and(|modes| {
-            processing_modes()
-                .iter()
-                .all(|mode| contains_guid(&modes, mode))
-        })
+        .is_ok_and(|modes| !modes.is_empty())
     {
         return true;
     }
@@ -311,15 +304,12 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
             effects.push(VOICE_BOX_GUID.into());
             fx.set_value(COMPOSITE_MFX_GUID, &effects)?;
         }
-        let mut modes: Vec<String> = optional_value(fx, MFX_PROCESSING_MODES)
+        let modes: Vec<String> = optional_value(fx, MFX_PROCESSING_MODES)
             .context("读取 MFX 处理模式失败")?
             .unwrap_or_default();
-        for mode in processing_modes() {
-            if !contains_guid(&modes, &mode) {
-                modes.push(mode);
-            }
+        if modes.is_empty() {
+            fx.set_value(MFX_PROCESSING_MODES, &default_processing_modes())?;
         }
-        fx.set_value(MFX_PROCESSING_MODES, &modes)?;
         delete_optional(fx, DISABLE_APO_GUID)?;
     }
     Ok(())
