@@ -38,7 +38,11 @@ impl Default for RtParams {
 }
 impl RtParams {
     pub(crate) fn store(&self, settings: Settings) {
-        let gain = 10.0_f32.powf(settings.gain_millidb as f32 / 20_000.0);
+        let gain = if settings.gain_millidb == crate::settings::MIN_GAIN_MILLIDB {
+            0.0
+        } else {
+            10.0_f32.powf(settings.gain_millidb as f32 / 20_000.0)
+        };
         let bits = ((settings.enabled as u64) << 32) | gain.to_bits() as u64;
         // Subscription plus its returned snapshot must be serialized with updates.
         let effects = self

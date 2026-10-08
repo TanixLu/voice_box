@@ -1,15 +1,20 @@
 use std::sync::{Arc, mpsc};
 
-use egui::{Color32, FontData, FontDefinitions, FontFamily};
+use egui::{FontData, FontDefinitions, FontFamily};
 use wasapi::{DeviceEnumerator, Direction};
 
-use crate::{apo_reg, config_reg, settings::Settings};
+use crate::{
+    apo_reg,
+    apo_reg::PluginStatus,
+    config_reg,
+    settings::{MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB, Settings},
+};
 
 pub fn run() -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([520.0, 410.0])
-            .with_min_inner_size([440.0, 360.0]),
+            .with_inner_size([560.0, 620.0])
+            .with_min_inner_size([380.0, 340.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -23,6 +28,18 @@ pub fn run() -> anyhow::Result<()> {
 struct Microphone {
     name: String,
     guid: String,
+    plugin_status: PluginStatus,
+}
+
+impl Microphone {
+    fn display_name(&self) -> String {
+        let status = match self.plugin_status {
+            PluginStatus::Installed => "已安装插件",
+            PluginStatus::NotInstalled => "未安装插件",
+            PluginStatus::NeedsUpdate => "插件需要更新",
+        };
+        format!("{} ({status})", self.name)
+    }
 }
 
 enum JobResult {
@@ -36,27 +53,28 @@ struct VoiceBoxApp {
     selected: usize,
     settings: Settings,
     saved: Settings,
-    config_ready: bool,
     job: Option<mpsc::Receiver<JobResult>>,
     close_enabled: bool,
     status: String,
     failed: bool,
+    confirm_uninstall: bool,
 }
 
 impl VoiceBoxApp {
     fn new(ctx: &egui::Context) -> Self {
         install_chinese_font(ctx);
+        configure_style(ctx);
         let settings = Settings::try_load().unwrap_or_default();
         let mut app = Self {
             microphones: Vec::new(),
             selected: 0,
             settings,
             saved: settings,
-            config_ready: config_reg::ready(),
             job: None,
             close_enabled: true,
             status: String::new(),
             failed: false,
+            confirm_uninstall: false,
         };
         app.refresh_microphones(ctx);
         app
@@ -73,6 +91,7 @@ impl VoiceBoxApp {
         self.job = Some(receiver);
         self.status = status.into();
         self.failed = false;
+        ctx.request_repaint();
         if let Err(error) = std::thread::Builder::new()
             .name("VoiceBoxOperation".into())
             .spawn(move || {
@@ -88,6 +107,7 @@ impl VoiceBoxApp {
     }
 
     fn refresh_microphones(&mut self, ctx: &egui::Context) {
+        self.confirm_uninstall = false;
         self.begin_job(ctx, "正在读取麦克风列表…", || {
             JobResult::Microphones(microphones())
         });
@@ -108,6 +128,16 @@ impl VoiceBoxApp {
             }
         };
         self.job = None;
+        // A helper may partially succeed before reporting an error. Read the
+        // association again instead of inferring installation from its exit code.
+        if matches!(
+            &result,
+            JobResult::Registration(_) | JobResult::Uninstallation(_)
+        ) {
+            for microphone in &mut self.microphones {
+                microphone.plugin_status = apo_reg::device_plugin_status(&microphone.guid);
+            }
+        }
         match result {
             JobResult::Microphones(Ok((microphones, selected))) => {
                 let selected = self
@@ -121,14 +151,9 @@ impl VoiceBoxApp {
                     .unwrap_or(selected);
                 self.microphones = microphones;
                 self.selected = selected;
-                self.status = if self.microphones.is_empty() {
-                    "没有找到可用麦克风，请连接后刷新。".into()
-                } else {
-                    "请选择麦克风，然后注册 APO。".into()
-                };
+                self.status.clear();
             }
             JobResult::Registration(Ok(())) => {
-                self.config_ready = config_reg::ready();
                 let unsaved = self.settings != self.saved;
                 match Settings::try_load() {
                     Ok(settings) => {
@@ -136,7 +161,7 @@ impl VoiceBoxApp {
                         if !unsaved {
                             self.settings = settings;
                         }
-                        self.status = "APO 注册完成，可以修改配置。".into();
+                        self.status.clear();
                     }
                     Err(error) => {
                         self.status = format!("APO 已注册，但配置读取失败：{error}");
@@ -145,7 +170,7 @@ impl VoiceBoxApp {
                 }
             }
             JobResult::Uninstallation(Ok(())) => {
-                self.status = "已卸载 VoiceBox APO。请重新打开语音或录音应用。".into();
+                self.status.clear();
             }
             JobResult::Microphones(Err(error))
             | JobResult::Registration(Err(error))
@@ -160,7 +185,7 @@ impl VoiceBoxApp {
         match config_reg::save(self.settings) {
             Ok(()) => {
                 self.saved = self.settings;
-                self.status = "配置已保存，正在使用的 APO 会自动更新。".into();
+                self.status.clear();
                 self.failed = false;
             }
             Err(error) => {
@@ -171,8 +196,8 @@ impl VoiceBoxApp {
     }
 }
 
-impl eframe::App for VoiceBoxApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+impl VoiceBoxApp {
+    fn show(&mut self, ui: &mut egui::Ui) {
         self.poll_job();
         let busy = self.job.is_some();
         // Also repaint if the worker exits unexpectedly without sending a result.
@@ -186,129 +211,31 @@ impl eframe::App for VoiceBoxApp {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("VoiceBox");
-            ui.label("麦克风语音降噪");
-            ui.add_space(12.0);
-
-            ui.group(|ui| {
-                ui.set_min_width(ui.available_width());
-                ui.strong("注册 APO");
-                ui.add_enabled_ui(!busy, |ui| {
-                    egui::ComboBox::from_id_salt("microphone")
-                        .width(360.0)
-                        .selected_text(
-                            self.microphones
-                                .get(self.selected)
-                                .map_or("暂无麦克风", |microphone| microphone.name.as_str()),
-                        )
-                        .show_ui(ui, |ui| {
-                            for (index, microphone) in self.microphones.iter().enumerate() {
-                                ui.selectable_value(&mut self.selected, index, &microphone.name);
-                            }
+        egui::CentralPanel::default()
+            .frame(egui::Frame::central_panel(ui.style()).inner_margin(20))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("settings_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        // Keep the form readable when the window is maximized.
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                            let width = ui.available_width().min(680.0);
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(width, 0.0),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    ui.heading("VoiceBox");
+                                    ui.add_space(6.0);
+                                    section(ui, |ui| {
+                                        self.microphone_ui(ui);
+                                    });
+                                    section(ui, |ui| self.settings_ui(ui));
+                                },
+                            );
                         });
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(
-                                !self.microphones.is_empty(),
-                                egui::Button::new("注册 / 更新 APO"),
-                            )
-                            .clicked()
-                        {
-                            let guid = self.microphones[self.selected].guid.clone();
-                            self.begin_job(
-                                ui.ctx(),
-                                "正在注册 APO，请完成管理员授权…",
-                                move || JobResult::Registration(apo_reg::ensure_device_reg(&guid)),
-                            );
-                        }
-                        if ui
-                            .add_enabled(
-                                !self.microphones.is_empty() && self.job.is_none(),
-                                egui::Button::new("卸载 VoiceBox APO"),
-                            )
-                            .clicked()
-                        {
-                            let guid = self.microphones[self.selected].guid.clone();
-                            self.begin_job(
-                                ui.ctx(),
-                                "正在卸载 VoiceBox APO，请完成管理员授权…",
-                                move || JobResult::Uninstallation(apo_reg::uninstall_device(&guid)),
-                            );
-                        }
-                        if ui.button("刷新麦克风").clicked() && self.job.is_none() {
-                            self.refresh_microphones(ui.ctx());
-                        }
                     });
-                });
             });
-
-            ui.add_space(10.0);
-            ui.group(|ui| {
-                ui.set_min_width(ui.available_width());
-                ui.strong("APO 配置");
-                if !self.config_ready {
-                    ui.label("请先注册 APO，之后修改配置无需管理员权限。");
-                }
-                ui.add_enabled_ui(self.config_ready && !busy, |ui| {
-                    ui.checkbox(&mut self.settings.enabled, "启用 GTCRN 降噪");
-                    let mut gain_db = self.settings.gain_millidb as f64 / 1000.0;
-                    if ui
-                        .add(
-                            egui::Slider::new(&mut gain_db, -60.0..=12.0)
-                                .step_by(0.1)
-                                .fixed_decimals(1)
-                                .suffix(" dB")
-                                .text("输出增益"),
-                        )
-                        .changed()
-                    {
-                        self.settings.gain_millidb = (gain_db * 1000.0).round() as i32;
-                    }
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(self.settings != self.saved, egui::Button::new("保存配置"))
-                            .clicked()
-                        {
-                            self.save_settings();
-                        }
-                        if ui.button("恢复默认").clicked() {
-                            self.settings = Settings::default();
-                            self.save_settings();
-                        }
-                        if ui.button("重新读取").clicked() {
-                            match Settings::try_load() {
-                                Ok(settings) => {
-                                    self.settings = settings;
-                                    self.saved = settings;
-                                    self.status = "已读取当前配置。".into();
-                                    self.failed = false;
-                                }
-                                Err(error) => {
-                                    self.status = format!("读取失败，保留当前配置：{error}");
-                                    self.failed = true;
-                                }
-                            }
-                        }
-                    });
-                });
-            });
-
-            ui.add_space(10.0);
-            ui.horizontal_wrapped(|ui| {
-                if busy {
-                    ui.spinner();
-                }
-                if self.failed {
-                    ui.colored_label(Color32::from_rgb(220, 80, 80), &self.status);
-                } else {
-                    ui.label(&self.status);
-                }
-            });
-            if self.job.is_some() {
-                ui.small("操作完成前暂时无法关闭窗口。");
-            }
-        });
 
         // Apply after drawing so a job started by a button click disables the
         // native close button in the same frame. Every completion path restores it.
@@ -323,6 +250,296 @@ impl eframe::App for VoiceBoxApp {
             self.close_enabled = close_enabled;
         }
     }
+
+    fn microphone_ui(&mut self, ui: &mut egui::Ui) -> egui::Response {
+        ui.horizontal(|ui| {
+            ui.strong("麦克风");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(self.job.is_none(), egui::Button::new("刷新"))
+                    .clicked()
+                {
+                    self.refresh_microphones(ui.ctx());
+                }
+            });
+        });
+        let previous = self.selected;
+        let name = self
+            .microphones
+            .get(self.selected)
+            .map_or_else(|| "暂无可用麦克风".to_owned(), Microphone::display_name);
+        let response = ui
+            .add_enabled_ui(self.job.is_none() && !self.microphones.is_empty(), |ui| {
+                egui::ComboBox::from_id_salt("microphone")
+                    .width(ui.available_width())
+                    .height(240.0)
+                    .wrap()
+                    .selected_text(&name)
+                    .show_ui(ui, |ui| {
+                        // ComboBox popups default to extending their text. Explicitly
+                        // constrain every row, including names with no word breaks.
+                        ui.set_width(ui.available_width());
+                        for (index, microphone) in self.microphones.iter().enumerate() {
+                            let row = egui::Button::selectable(
+                                self.selected == index,
+                                microphone.display_name(),
+                            )
+                            .wrap()
+                            .min_size(egui::vec2(ui.available_width(), 30.0));
+                            if ui.add(row).clicked() {
+                                self.selected = index;
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text(name)
+            })
+            .inner;
+        if self.selected != previous {
+            self.confirm_uninstall = false;
+        }
+        if self.microphones.is_empty() {
+            hint(ui, "连接麦克风后，点击刷新重新查找。");
+        }
+        self.plugin_ui(ui);
+        if self.job.is_some() {
+            ui.horizontal_top(|ui| {
+                ui.spinner();
+                ui.add(egui::Label::new(&self.status).wrap());
+            });
+        } else if self.failed {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(&self.status).color(ui.visuals().error_fg_color),
+                )
+                .wrap(),
+            );
+        }
+        response
+    }
+
+    fn settings_ui(&mut self, ui: &mut egui::Ui) {
+        ui.strong("语音设置");
+        ui.add_enabled_ui(self.job.is_none(), |ui| {
+            ui.checkbox(&mut self.settings.enabled, "启用语音降噪");
+            ui.separator();
+            let mut gain_db = self.settings.gain_millidb as f64 / 1000.0;
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                ui.label("音量调节");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(&mut gain_db)
+                                .range(
+                                    MIN_GAIN_MILLIDB as f64 / 1000.0
+                                        ..=MAX_GAIN_MILLIDB as f64 / 1000.0,
+                                )
+                                .speed(0.1)
+                                .fixed_decimals(1)
+                                .custom_formatter(|value, _| {
+                                    if value <= MIN_GAIN_MILLIDB as f64 / 1000.0 {
+                                        "静音".into()
+                                    } else if value > 0.0 {
+                                        format!("+{value:.1} dB")
+                                    } else {
+                                        format!("{value:.1} dB")
+                                    }
+                                })
+                                .custom_parser(|text| {
+                                    if text.trim() == "静音" {
+                                        Some(MIN_GAIN_MILLIDB as f64 / 1000.0)
+                                    } else {
+                                        text.trim().trim_end_matches("dB").trim().parse().ok()
+                                    }
+                                }),
+                        )
+                        .on_hover_text("拖动调整，或点击数值直接输入。")
+                        .changed();
+                    if ui
+                        .add_enabled(gain_db != 0.0, egui::Button::new("置零"))
+                        .on_hover_text("恢复到 0 dB")
+                        .clicked()
+                    {
+                        gain_db = 0.0;
+                        changed = true;
+                    }
+                });
+            });
+            ui.scope(|ui| {
+                ui.spacing_mut().slider_width = ui.available_width();
+                let slider = ui.add(
+                    egui::Slider::new(
+                        &mut gain_db,
+                        MIN_GAIN_MILLIDB as f64 / 1000.0..=MAX_GAIN_MILLIDB as f64 / 1000.0,
+                    )
+                    .step_by(0.1)
+                    .show_value(false),
+                );
+                changed |= slider.changed();
+                if slider.dragged() && gain_db.abs() <= 0.5 {
+                    gain_db = 0.0;
+                    changed = true;
+                }
+                // Zero lies at the midpoint of this symmetric, linear range.
+                let marker = slider.rect.center_bottom() + egui::vec2(0.0, 2.0);
+                ui.painter()
+                    .circle_filled(marker, 2.0, ui.visuals().weak_text_color());
+            });
+            if changed {
+                self.settings.gain_millidb = (gain_db * 1000.0).round() as i32;
+            }
+            ui.separator();
+        });
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(self.job.is_none(), egui::Button::new("保存设置"))
+                .clicked()
+            {
+                self.save_settings();
+            }
+            if ui
+                .add_enabled(
+                    self.job.is_none() && self.settings != self.saved,
+                    egui::Button::new("撤销修改"),
+                )
+                .clicked()
+            {
+                self.settings = self.saved;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(
+                        self.job.is_none() && self.settings != Settings::default(),
+                        egui::Button::new("恢复默认"),
+                    )
+                    .clicked()
+                {
+                    self.settings = Settings::default();
+                }
+            });
+        });
+        if self.settings != self.saved {
+            warning(ui, "有未保存的更改，点击“保存设置”后生效。");
+        } else {
+            hint(ui, "设置已作用于所有安装VoiceBox插件的麦克风。");
+        }
+    }
+
+    fn plugin_ui(&mut self, ui: &mut egui::Ui) {
+        let status = self
+            .microphones
+            .get(self.selected)
+            .map_or(PluginStatus::NotInstalled, |mic| mic.plugin_status);
+        let needs_update = status == PluginStatus::NeedsUpdate;
+        ui.add_enabled_ui(!self.microphones.is_empty() && self.job.is_none(), |ui| {
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(
+                        status != PluginStatus::Installed,
+                        egui::Button::new(if needs_update {
+                            "更新插件"
+                        } else {
+                            "安装插件"
+                        }),
+                    )
+                    .on_hover_text("安装或更新所选麦克风的VoiceBox插件")
+                    .clicked()
+                    && self.job.is_none()
+                {
+                    self.confirm_uninstall = false;
+                    let guid = self.microphones[self.selected].guid.clone();
+                    self.begin_job(
+                        ui.ctx(),
+                        if needs_update {
+                            "正在更新插件，请完成管理员授权…"
+                        } else {
+                            "正在安装插件，请完成管理员授权…"
+                        },
+                        move || JobResult::Registration(apo_reg::ensure_device_reg(&guid)),
+                    );
+                }
+                if ui
+                    .add_enabled(
+                        status != PluginStatus::NotInstalled,
+                        egui::Button::new("卸载插件"),
+                    )
+                    .clicked()
+                    && self.job.is_none()
+                {
+                    self.confirm_uninstall = true;
+                }
+            });
+        });
+        ui.add_enabled_ui(self.job.is_none(), |ui| {
+            if self.confirm_uninstall {
+                ui.separator();
+                ui.add(
+                    egui::Label::new(format!(
+                        "确认卸载此麦克风的VoiceBox插件？\n{}",
+                        self.microphones[self.selected].name
+                    ))
+                    .wrap(),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("确认卸载").clicked() && self.job.is_none() {
+                        self.confirm_uninstall = false;
+                        let guid = self.microphones[self.selected].guid.clone();
+                        self.begin_job(
+                            ui.ctx(),
+                            "正在卸载插件，请完成管理员授权…",
+                            move || JobResult::Uninstallation(apo_reg::uninstall_device(&guid)),
+                        );
+                    }
+                    if ui.button("取消").clicked() {
+                        self.confirm_uninstall = false;
+                    }
+                });
+            }
+        });
+    }
+}
+
+impl eframe::App for VoiceBoxApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.show(ui);
+    }
+}
+
+fn section(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::group(ui.style())
+        .inner_margin(12)
+        .corner_radius(8)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            contents(ui);
+        });
+}
+
+fn hint(ui: &mut egui::Ui, text: &str) {
+    ui.add(egui::Label::new(egui::RichText::new(text).small().weak()).wrap());
+}
+
+fn warning(ui: &mut egui::Ui, text: &str) {
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(text)
+                .small()
+                .color(ui.visuals().warn_fg_color),
+        )
+        .wrap(),
+    );
+}
+
+fn configure_style(ctx: &egui::Context) {
+    ctx.all_styles_mut(|style| {
+        style.spacing.item_spacing = egui::vec2(10.0, 8.0);
+        style.spacing.button_padding = egui::vec2(12.0, 6.0);
+        style.spacing.interact_size.y = 30.0;
+        style
+            .text_styles
+            .insert(egui::TextStyle::Heading, egui::FontId::proportional(24.0));
+    });
 }
 
 fn microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
@@ -360,6 +577,7 @@ fn microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
             } else {
                 name
             },
+            plugin_status: apo_reg::device_plugin_status(&guid),
             guid,
         });
     }

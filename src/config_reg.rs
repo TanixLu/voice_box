@@ -52,8 +52,9 @@ pub fn initialize() -> anyhow::Result<()> {
 
 pub fn save(settings: Settings) -> anyhow::Result<()> {
     ensure!(
-        (-60_000..=12_000).contains(&settings.gain_millidb),
-        "增益必须介于 -60 和 +12 dB 之间"
+        (crate::settings::MIN_GAIN_MILLIDB..=crate::settings::MAX_GAIN_MILLIDB)
+            .contains(&settings.gain_millidb),
+        "增益必须介于 -60 和 +60 dB 之间"
     );
     reg_set_existing_values(
         &format!(r"HKLM\{PATH}"),

@@ -10,6 +10,8 @@ use winreg::{
 
 pub const ROOT: &str = r"SOFTWARE\VoiceBox";
 pub const PATH: &str = constcat::concat!(ROOT, r"\Settings");
+pub const MIN_GAIN_MILLIDB: i32 = -60_000;
+pub const MAX_GAIN_MILLIDB: i32 = 60_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
@@ -81,7 +83,7 @@ impl Settings {
             *value = u32::from_le_bytes(data.try_into().map_err(|_| invalid())?);
         }
         let gain_millidb = values[1] as i32;
-        if !(-60_000..=12_000).contains(&gain_millidb) {
+        if !(MIN_GAIN_MILLIDB..=MAX_GAIN_MILLIDB).contains(&gain_millidb) {
             return Err(invalid());
         }
         Ok(Self {

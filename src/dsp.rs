@@ -205,6 +205,7 @@ pub struct AudioProcessor {
     frame_bytes: usize,
     channels: Vec<Channel>,
     latency_hns: i64,
+    muted: bool,
 }
 
 impl AudioProcessor {
@@ -242,6 +243,7 @@ impl AudioProcessor {
         self.frame_bytes = frame_bytes;
         self.channels = processors;
         self.latency_hns = latency_hns;
+        self.muted = false;
         Ok(())
     }
 
@@ -268,6 +270,16 @@ impl AudioProcessor {
         let Some(format) = self.format else {
             return true;
         };
+        if gain == 0.0 {
+            buffer.fill(self.silence_byte());
+            // Discard buffered speech so unmuting cannot replay pre-mute audio.
+            if !self.muted {
+                self.reset();
+                self.muted = true;
+            }
+            return true;
+        }
+        self.muted = false;
         let mut silent = true;
         for channel in &mut self.channels {
             channel.model.set_enabled(enabled);

@@ -102,62 +102,76 @@ const APO_DLL: &[u8] = include_bytes!("../target/voice_box.dll");
 const APO_DLL_PATH: &str = r"C:\Windows\System32\voice_box.dll";
 const AUDIO_SERVICE_NAME: &str = "AudioSrv";
 
-fn need_reg(device_guid: &str) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PluginStatus {
+    NotInstalled,
+    NeedsUpdate,
+    Installed,
+}
+
+// The GUI and installer must use this same complete readiness check. An endpoint
+// association alone does not mean the bundled DLL and registration are current.
+pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     let root = RegKey::predef(HKEY_LOCAL_MACHINE);
     let fx_path = format!(
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{device_guid}\FxProperties"
     );
     let Ok(fx) = root.open_subkey_with_flags(fx_path, KEY_READ | KEY_WOW64_64KEY) else {
-        return true;
+        return PluginStatus::NotInstalled;
     };
+    let effects = fx
+        .get_value::<Vec<String>, _>(COMPOSITE_MFX_GUID)
+        .unwrap_or_default();
+    if !effects
+        .iter()
+        .any(|effect| effect.eq_ignore_ascii_case(VOICE_BOX_GUID))
+    {
+        return PluginStatus::NotInstalled;
+    }
     if !crate::config_reg::ready() {
-        return true;
+        return PluginStatus::NeedsUpdate;
     }
     // 检测dll是否需要更新
     if std::fs::read(APO_DLL_PATH).ok().as_deref() != Some(APO_DLL) {
-        return true;
+        return PluginStatus::NeedsUpdate;
     }
 
     // 检测注册表是否需要更新
     for (reg_path, expected_value) in COMMON_STRING_REG_PAIRS {
         if reg_get_value::<String>(reg_path).ok().as_deref() != Some(expected_value) {
-            return true;
+            return PluginStatus::NeedsUpdate;
         }
     }
     for (reg_path, expected_value) in COMMON_U32_REG_PAIRS {
         if reg_get_value::<u32>(reg_path).ok() != Some(expected_value) {
-            return true;
+            return PluginStatus::NeedsUpdate;
         }
     }
     // 检测设备FxProperties是否需要更新
-    if !fx
-        .get_value::<Vec<String>, _>(COMPOSITE_MFX_GUID)
-        .is_ok_and(|effects| {
-            effects
-                .first()
-                .is_some_and(|effect| effect.eq_ignore_ascii_case(VOICE_BOX_GUID))
-                && !effects
-                    .iter()
-                    .skip(1)
-                    .any(|effect| effect.eq_ignore_ascii_case(VOICE_BOX_GUID))
-        })
+    if !(effects
+        .first()
+        .is_some_and(|effect| effect.eq_ignore_ascii_case(VOICE_BOX_GUID))
+        && !effects
+            .iter()
+            .skip(1)
+            .any(|effect| effect.eq_ignore_ascii_case(VOICE_BOX_GUID)))
     {
-        return true;
+        return PluginStatus::NeedsUpdate;
     }
     if !fx
         .get_value::<Vec<String>, _>(MFX_PROCESSING_MODES)
         .is_ok_and(|modes| modes.iter().any(|mode| !mode.is_empty()))
     {
-        return true;
+        return PluginStatus::NeedsUpdate;
     }
     if fx
         .get_value::<u32, _>(DISABLE_APO_GUID)
         .is_ok_and(|value| value != 0)
     {
-        return true;
+        return PluginStatus::NeedsUpdate;
     }
 
-    false
+    PluginStatus::Installed
 }
 
 fn elevated_reg(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
@@ -347,8 +361,12 @@ pub fn maybe_elevated_reg() -> anyhow::Result<bool> {
 }
 
 pub fn ensure_device_reg(device_guid: &str) -> anyhow::Result<()> {
-    if need_reg(device_guid) {
+    if device_plugin_status(device_guid) != PluginStatus::Installed {
         device_operation(device_guid, false)?;
+        anyhow::ensure!(
+            device_plugin_status(device_guid) == PluginStatus::Installed,
+            "安装操作已结束，但插件检查未通过，请刷新后重试"
+        );
     }
     Ok(())
 }

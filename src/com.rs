@@ -1071,10 +1071,9 @@ unsafe extern "system" fn process(
         let (enabled, gain) = unsafe { (*object).params.load() };
         let silent =
             unsafe { (&mut *(*object).dsp.get()).process_with_settings(buffer, enabled, gain) };
-        // Buffered speech must drain even when the next input packet is SILENT.
-        if input.u32BufferFlags == BUFFER_SILENT && !silent {
-            output_flags = BUFFER_VALID;
-        }
+        // Muting produces actual silence, including any buffered speech. Other
+        // silent input packets can still yield valid audio while the model drains.
+        output_flags = if silent { BUFFER_SILENT } else { BUFFER_VALID };
     }
     output.u32ValidFrameCount = input.u32ValidFrameCount;
     output.u32BufferFlags = output_flags;
