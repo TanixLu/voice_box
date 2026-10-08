@@ -142,7 +142,7 @@ fn need_reg(device_guid: &str) -> bool {
     }
     if !fx
         .get_value::<Vec<String>, _>(MFX_PROCESSING_MODES)
-        .is_ok_and(|modes| !modes.is_empty())
+        .is_ok_and(|modes| modes.iter().any(|mode| !mode.is_empty()))
     {
         return true;
     }
@@ -307,7 +307,7 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
         let modes: Vec<String> = optional_value(fx, MFX_PROCESSING_MODES)
             .context("读取 MFX 处理模式失败")?
             .unwrap_or_default();
-        if modes.is_empty() {
+        if modes.iter().all(String::is_empty) {
             fx.set_value(MFX_PROCESSING_MODES, &default_processing_modes())?;
         }
         delete_optional(fx, DISABLE_APO_GUID)?;
