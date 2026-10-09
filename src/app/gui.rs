@@ -9,7 +9,7 @@ use super::{
 };
 use crate::shared::{
     paths,
-    settings::{MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB, Settings},
+    settings::{MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB, ReferenceDevice, Settings},
 };
 
 pub fn run() -> anyhow::Result<()> {
@@ -47,7 +47,7 @@ impl Microphone {
 }
 
 enum JobResult {
-    Microphones(anyhow::Result<(Vec<Microphone>, usize)>),
+    Microphones(anyhow::Result<(Vec<Microphone>, usize, Vec<RenderDevice>)>),
     Plugin {
         result: anyhow::Result<()>,
         statuses: Vec<(String, PluginStatus)>,
@@ -57,6 +57,11 @@ enum JobResult {
         settings: Settings,
         result: anyhow::Result<()>,
     },
+}
+
+struct RenderDevice {
+    id: String,
+    name: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -77,6 +82,7 @@ impl Default for UiPreferences {
 
 struct VoiceBoxApp {
     microphones: Vec<Microphone>,
+    render_devices: Vec<RenderDevice>,
     selected: usize,
     preferred_guid: Option<String>,
     zoom_factor: f32,
@@ -104,11 +110,12 @@ impl VoiceBoxApp {
         let settings = Settings::try_load().unwrap_or_default();
         let mut app = Self {
             microphones: Vec::new(),
+            render_devices: Vec::new(),
             selected: 0,
             preferred_guid: preferences.selected_microphone,
             zoom_factor: ctx.zoom_factor(),
+            saved: settings.clone(),
             settings,
-            saved: settings,
             job: None,
             close_enabled: true,
             status: String::new(),
@@ -186,7 +193,7 @@ impl VoiceBoxApp {
         };
         self.job = None;
         match result {
-            JobResult::Microphones(Ok((microphones, selected))) => {
+            JobResult::Microphones(Ok((microphones, selected, render_devices))) => {
                 let selected = self
                     .preferred_guid
                     .as_ref()
@@ -197,6 +204,7 @@ impl VoiceBoxApp {
                     })
                     .unwrap_or(selected);
                 self.microphones = microphones;
+                self.render_devices = render_devices;
                 self.selected = selected;
                 if self.preferred_guid.is_none() {
                     self.preferred_guid =
@@ -222,7 +230,7 @@ impl VoiceBoxApp {
                     match settings {
                         Ok(settings) => {
                             if self.settings == self.saved {
-                                self.settings = settings;
+                                self.settings = settings.clone();
                             }
                             self.saved = settings;
                         }
@@ -251,10 +259,10 @@ impl VoiceBoxApp {
     }
 
     fn save_settings(&mut self, ctx: &egui::Context) {
-        let settings = self.settings;
+        let settings = self.settings.clone();
         self.begin_job(ctx, "正在保存设置…", move || JobResult::Saved {
+            result: settings_writer::save(settings.clone()),
             settings,
-            result: settings_writer::save(settings),
         });
     }
 }
@@ -391,6 +399,51 @@ impl VoiceBoxApp {
         ui.strong("语音设置");
         ui.add_enabled_ui(self.job.is_none(), |ui| {
             ui.checkbox(&mut self.settings.enabled, "启用语音降噪");
+            ui.checkbox(&mut self.settings.aec_enabled, "启用回声消除")
+                .on_hover_text(
+                    "消除麦克风收到的扬声器声音，减少通话回声。使用耳机时通常可以关闭。",
+                );
+            ui.add_enabled_ui(self.settings.aec_enabled, |ui| {
+                let selected = match &self.settings.reference_device {
+                    ReferenceDevice::DefaultPlayback => "跟随默认播放设备",
+                    ReferenceDevice::DefaultCommunications => "跟随默认通信设备",
+                    ReferenceDevice::Device(id) => self
+                        .render_devices
+                        .iter()
+                        .find(|device| &device.id == id)
+                        .map_or("所选设备未连接", |device| device.name.as_str()),
+                };
+                egui::ComboBox::from_id_salt("aec_output_device")
+                    .selected_text(selected)
+                    .width(ui.available_width())
+                    .height(240.0)
+                    .wrap()
+                    .show_ui(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.selectable_value(
+                            &mut self.settings.reference_device,
+                            ReferenceDevice::DefaultPlayback,
+                            "跟随默认播放设备",
+                        );
+                        ui.selectable_value(
+                            &mut self.settings.reference_device,
+                            ReferenceDevice::DefaultCommunications,
+                            "跟随默认通信设备",
+                        );
+                        for device in &self.render_devices {
+                            let choice = ReferenceDevice::Device(device.id.clone());
+                            let row = egui::Button::selectable(
+                                self.settings.reference_device == choice,
+                                &device.name,
+                            )
+                            .wrap()
+                            .min_size(egui::vec2(ui.available_width(), 30.0));
+                            if ui.add(row).clicked() {
+                                self.settings.reference_device = choice;
+                            }
+                        }
+                    });
+            });
             ui.separator();
             let mut gain_db = self.settings.gain_millidb as f64 / 1000.0;
             let mut changed = false;
@@ -474,7 +527,7 @@ impl VoiceBoxApp {
                 )
                 .clicked()
             {
-                self.settings = self.saved;
+                self.settings = self.saved.clone();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
@@ -657,7 +710,7 @@ fn apply_style(ctx: &egui::Context) {
     });
 }
 
-fn microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
+fn microphones() -> anyhow::Result<(Vec<Microphone>, usize, Vec<RenderDevice>)> {
     wasapi::initialize_mta().ok()?;
     struct ComApartment;
     impl Drop for ComApartment {
@@ -696,7 +749,28 @@ fn microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
             guid,
         });
     }
-    Ok((microphones, selected))
+    let mut render_devices = Vec::new();
+    match enumerator.get_device_collection(&Direction::Render) {
+        Ok(collection) => {
+            for device in &collection {
+                match device.and_then(|device| {
+                    Ok(RenderDevice {
+                        id: device.get_id()?,
+                        name: device.get_friendlyname()?,
+                    })
+                }) {
+                    Ok(device) => render_devices.push(device),
+                    Err(error) => {
+                        tracing::warn!(%error, "Cannot read an output device; keeping microphone list")
+                    }
+                }
+            }
+        }
+        Err(error) => {
+            tracing::warn!(%error, "Cannot enumerate output devices; keeping microphone list")
+        }
+    }
+    Ok((microphones, selected, render_devices))
 }
 
 fn install_chinese_font(ctx: &egui::Context) {

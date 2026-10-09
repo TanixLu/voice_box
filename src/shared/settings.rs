@@ -9,10 +9,21 @@ use std::{
 pub const MIN_GAIN_MILLIDB: i32 = -60_000;
 pub const MAX_GAIN_MILLIDB: i32 = 60_000;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+pub enum ReferenceDevice {
+    #[default]
+    DefaultPlayback,
+    DefaultCommunications,
+    Device(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub enabled: bool,
     pub gain_millidb: i32,
+    pub aec_enabled: bool,
+    pub reference_device: ReferenceDevice,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -21,6 +32,8 @@ struct StoredSettings {
     version: u32,
     enabled: bool,
     gain_millidb: i32,
+    aec_enabled: bool,
+    reference_device: ReferenceDevice,
 }
 
 impl Default for Settings {
@@ -28,19 +41,29 @@ impl Default for Settings {
         Self {
             enabled: true,
             gain_millidb: 0,
+            aec_enabled: false,
+            reference_device: ReferenceDevice::default(),
         }
     }
 }
 
 impl Settings {
-    pub fn validate(self) -> io::Result<Self> {
+    pub fn validate(&self) -> io::Result<()> {
         if !(MIN_GAIN_MILLIDB..=MAX_GAIN_MILLIDB).contains(&self.gain_millidb) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "增益必须介于 -60 和 +60 dB 之间",
             ));
         }
-        Ok(self)
+        if let ReferenceDevice::Device(id) = &self.reference_device
+            && (id.is_empty() || id.len() > 1024 || id.contains('\0'))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "无效的回声参考输出设备",
+            ));
+        }
+        Ok(())
     }
 
     pub fn read(path: &Path) -> io::Result<Self> {
@@ -55,29 +78,38 @@ impl Settings {
                 "VoiceBox 配置文件过大",
             ));
         }
-        let stored: StoredSettings = serde_json::from_slice(&bytes)
+        Self::decode(&bytes)
+    }
+
+    fn decode(bytes: &[u8]) -> io::Result<Self> {
+        let stored: StoredSettings = serde_json::from_slice(bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        if stored.version != 1 {
+        if stored.version != 2 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "不支持的 VoiceBox 配置版本",
             ));
         }
-        Self {
+        let settings = Self {
             enabled: stored.enabled,
             gain_millidb: stored.gain_millidb,
-        }
-        .validate()
+            aec_enabled: stored.aec_enabled,
+            reference_device: stored.reference_device,
+        };
+        settings.validate()?;
+        Ok(settings)
     }
 
     // Written by the GUI; the same schema module is read-only in the APO DLL.
     #[allow(dead_code)]
-    pub fn encode(self) -> io::Result<Vec<u8>> {
+    pub fn encode(&self) -> io::Result<Vec<u8>> {
         self.validate()?;
         let mut bytes = serde_json::to_vec_pretty(&StoredSettings {
-            version: 1,
+            version: 2,
             enabled: self.enabled,
             gain_millidb: self.gain_millidb,
+            aec_enabled: self.aec_enabled,
+            reference_device: self.reference_device.clone(),
         })
         .map_err(io::Error::other)?;
         bytes.push(b'\n');

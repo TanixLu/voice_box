@@ -17,21 +17,20 @@ use windows::Win32::Media::Audio::Apo::{
     APOERR_ALREADY_INITIALIZED, APOERR_ALREADY_UNLOCKED, APOERR_APO_LOCKED,
     APOERR_FORMAT_NOT_SUPPORTED, APOERR_INVALID_APO_CLSID, APOERR_INVALID_CONNECTION_FORMAT,
     APOERR_INVALID_OUTPUT_MAXFRAMECOUNT, APOERR_NOT_INITIALIZED, APOERR_NUM_CONNECTIONS_INVALID,
-    APOInitBaseStruct, APOInitSystemEffects, APOInitSystemEffects2, APOInitSystemEffects3,
-    AUDIO_SYSTEMEFFECT, AUDIO_SYSTEMEFFECT_STATE_OFF, AUDIO_SYSTEMEFFECT_STATE_ON, BUFFER_INVALID,
-    BUFFER_SILENT, BUFFER_VALID, IAudioMediaType, IAudioProcessingObject,
-    IAudioProcessingObject_Vtbl, IAudioProcessingObjectConfiguration,
-    IAudioProcessingObjectConfiguration_Vtbl, IAudioProcessingObjectRT,
-    IAudioProcessingObjectRT_Vtbl, IAudioSystemEffects, IAudioSystemEffects2,
-    IAudioSystemEffects2_Vtbl, IAudioSystemEffects3, IAudioSystemEffects3_Vtbl,
-    UNCOMPRESSEDAUDIOFORMAT,
+    APOInitBaseStruct, APOInitSystemEffects2, APOInitSystemEffects3, AUDIO_SYSTEMEFFECT,
+    AUDIO_SYSTEMEFFECT_STATE_OFF, AUDIO_SYSTEMEFFECT_STATE_ON, BUFFER_INVALID, BUFFER_SILENT,
+    BUFFER_VALID, IAudioMediaType, IAudioProcessingObject, IAudioProcessingObject_Vtbl,
+    IAudioProcessingObjectConfiguration, IAudioProcessingObjectConfiguration_Vtbl,
+    IAudioProcessingObjectRT, IAudioProcessingObjectRT_Vtbl, IAudioSystemEffects,
+    IAudioSystemEffects2, IAudioSystemEffects2_Vtbl, IAudioSystemEffects3,
+    IAudioSystemEffects3_Vtbl, UNCOMPRESSEDAUDIOFORMAT,
 };
 use windows::Win32::Media::KernelStreaming::{
-    AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION, AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS,
-    AUDIO_SIGNALPROCESSINGMODE_DEFAULT, AUDIO_SIGNALPROCESSINGMODE_FAR_FIELD_SPEECH,
-    AUDIO_SIGNALPROCESSINGMODE_MEDIA, AUDIO_SIGNALPROCESSINGMODE_MOVIE,
-    AUDIO_SIGNALPROCESSINGMODE_NOTIFICATION, AUDIO_SIGNALPROCESSINGMODE_RAW,
-    AUDIO_SIGNALPROCESSINGMODE_SPEECH, KSDATAFORMAT_SUBTYPE_PCM,
+    AUDIO_EFFECT_TYPE_ACOUSTIC_ECHO_CANCELLATION, AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION,
+    AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS, AUDIO_SIGNALPROCESSINGMODE_DEFAULT,
+    AUDIO_SIGNALPROCESSINGMODE_FAR_FIELD_SPEECH, AUDIO_SIGNALPROCESSINGMODE_MEDIA,
+    AUDIO_SIGNALPROCESSINGMODE_MOVIE, AUDIO_SIGNALPROCESSINGMODE_NOTIFICATION,
+    AUDIO_SIGNALPROCESSINGMODE_RAW, AUDIO_SIGNALPROCESSINGMODE_SPEECH, KSDATAFORMAT_SUBTYPE_PCM,
 };
 use windows::Win32::Media::Multimedia::KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
 use windows::Win32::System::Com::{
@@ -46,6 +45,7 @@ use super::etw::{self, apo_log};
 use crate::shared::plugin;
 
 const EFFECT_ID_DENOISE: GUID = AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION;
+const EFFECT_ID_AEC: GUID = AUDIO_EFFECT_TYPE_ACOUSTIC_ECHO_CANCELLATION;
 
 static LIVE_OBJECTS: AtomicU32 = AtomicU32::new(0);
 static SERVER_LOCKS: AtomicU32 = AtomicU32::new(0);
@@ -261,7 +261,7 @@ unsafe extern "system" fn inner_release(this: *mut c_void) -> u32 {
             unsafe { (*object).processed_frames.load(Ordering::Relaxed) }
         );
         unsafe { drop(Box::from_raw(object)) };
-        // The object's worker has stopped before DLL unloading becomes possible.
+        // Detached workers retain their own DLL references through final cleanup.
         LIVE_OBJECTS.fetch_sub(1, Ordering::AcqRel);
     }
     refs
@@ -346,8 +346,6 @@ unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *const 
                 init.AudioProcessingMode,
                 init.InitializeForDiscoveryOnly.as_bool(),
             )
-        } else if size as usize == core::mem::size_of::<APOInitSystemEffects>() {
-            (1, AUDIO_SIGNALPROCESSINGMODE_DEFAULT, false)
         } else {
             apo_log!(
                 etw::ERROR,
@@ -361,7 +359,10 @@ unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *const 
         if mode != AUDIO_SIGNALPROCESSINGMODE_RAW {
             // Discovery objects also expose live effect lists and change events.
             // They watch settings but still cannot allocate/process a DSP graph.
-            match super::settings_watcher::SettingsWatcher::start(Arc::clone(&(*object).params)) {
+            match super::settings_watcher::SettingsWatcher::start(
+                Arc::clone(&(*object).params),
+                !discovery_only,
+            ) {
                 Ok(worker) => (*object).settings_watcher = Some(worker),
                 Err(error) => {
                     apo_log!(
@@ -430,33 +431,39 @@ unsafe extern "system" fn get_effects_list(
     // caller's existing subscription. The returned snapshot and subscription
     // are synchronized even if Enabled changes while this call is running.
     let memory = if supports_effect {
-        unsafe { CoTaskMemAlloc(core::mem::size_of::<GUID>()) }.cast::<GUID>()
+        unsafe { CoTaskMemAlloc(2 * core::mem::size_of::<GUID>()) }.cast::<GUID>()
     } else {
         ptr::null_mut()
     };
     if supports_effect && memory.is_null() {
         return E_OUTOFMEMORY;
     }
-    let enabled = match unsafe { (*object).params.subscribe_effects(event, false) } {
+    let (denoise, aec) = match unsafe { (*object).params.subscribe_effects(event, false) } {
         Ok(enabled) => enabled,
         Err(error) => {
             unsafe { CoTaskMemFree(Some(memory.cast())) };
             return error.code();
         }
     };
-    if !supports_effect || !enabled {
+    if !supports_effect || (!denoise && !aec) {
         unsafe { CoTaskMemFree(Some(memory.cast())) };
         return S_OK;
     }
     unsafe {
-        memory.write(EFFECT_ID_DENOISE);
+        let mut length = 0;
+        for (enabled, id) in [(denoise, EFFECT_ID_DENOISE), (aec, EFFECT_ID_AEC)] {
+            if enabled {
+                memory.add(length).write(id);
+                length += 1;
+            }
+        }
         *effects = memory;
-        *count = 1;
+        *count = length as u32;
     }
     apo_log!(
         etw::INFO,
         etw::LIFECYCLE,
-        "GetEffectsList instance={object:p} count=1 effect={EFFECT_ID_DENOISE:?}"
+        "GetEffectsList instance={object:p} denoise={denoise} aec={aec}"
     );
     S_OK
 }
@@ -477,7 +484,7 @@ unsafe extern "system" fn get_controllable_effects_list(
     let object = unsafe { object_from(this) };
     let supports_effect = unsafe { (*object).effect_enabled.load(Ordering::Acquire) };
     let memory = if supports_effect {
-        unsafe { CoTaskMemAlloc(core::mem::size_of::<AUDIO_SYSTEMEFFECT>()) }
+        unsafe { CoTaskMemAlloc(2 * core::mem::size_of::<AUDIO_SYSTEMEFFECT>()) }
             .cast::<AUDIO_SYSTEMEFFECT>()
     } else {
         ptr::null_mut()
@@ -485,7 +492,7 @@ unsafe extern "system" fn get_controllable_effects_list(
     if supports_effect && memory.is_null() {
         return E_OUTOFMEMORY;
     }
-    let enabled = match unsafe { (*object).params.subscribe_effects(event, true) } {
+    let (denoise, aec) = match unsafe { (*object).params.subscribe_effects(event, true) } {
         Ok(enabled) => enabled,
         Err(error) => {
             unsafe { CoTaskMemFree(Some(memory.cast())) };
@@ -495,25 +502,28 @@ unsafe extern "system" fn get_controllable_effects_list(
     if !supports_effect {
         return S_OK;
     }
-    let state = if enabled {
-        AUDIO_SYSTEMEFFECT_STATE_ON
-    } else {
-        AUDIO_SYSTEMEFFECT_STATE_OFF
-    };
     unsafe {
-        memory.write(AUDIO_SYSTEMEFFECT {
-            id: EFFECT_ID_DENOISE,
-            canSetState: BOOL::from(false),
-            state,
-        });
+        for (index, (enabled, id)) in [(denoise, EFFECT_ID_DENOISE), (aec, EFFECT_ID_AEC)]
+            .into_iter()
+            .enumerate()
+        {
+            memory.add(index).write(AUDIO_SYSTEMEFFECT {
+                id,
+                canSetState: BOOL::from(false),
+                state: if enabled {
+                    AUDIO_SYSTEMEFFECT_STATE_ON
+                } else {
+                    AUDIO_SYSTEMEFFECT_STATE_OFF
+                },
+            });
+        }
         *effects = memory;
-        *count = 1;
+        *count = 2;
     }
     apo_log!(
         etw::INFO,
         etw::LIFECYCLE,
-        "GetControllableSystemEffectsList instance={object:p} count=1 effect={EFFECT_ID_DENOISE:?} state={} controllable=false",
-        state.0
+        "GetControllableSystemEffectsList instance={object:p} denoise={denoise} aec={aec} controllable=false"
     );
     S_OK
 }
@@ -1046,8 +1056,20 @@ unsafe extern "system" fn process(
     let mut output_flags = input.u32BufferFlags;
     if unsafe { (*object).effect_enabled.load(Ordering::Acquire) } {
         let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
-        let (enabled, gain) = unsafe { (*object).params.load() };
-        unsafe { (&mut *(*object).dsp.get()).process_with_settings(buffer, enabled, gain) };
+        let params = unsafe { &(*object).params };
+        let (enabled, aec, gain) = params.load();
+        unsafe {
+            (&mut *(*object).dsp.get()).process_with_settings(
+                buffer,
+                enabled,
+                aec,
+                gain,
+                params
+                    .reference
+                    .get()
+                    .map(super::reference::Subscription::reference),
+            )
+        };
         // The DSP materializes every frame, including startup padding and mute.
         // Keep these packets valid even when all samples are zero: legacy capture
         // clients can stop recording when initial packets are BUFFER_SILENT.
@@ -1301,6 +1323,7 @@ pub extern "system" fn DllCanUnloadNow() -> HRESULT {
     if LIVE_OBJECTS.load(Ordering::Acquire) == 0
         && SERVER_LOCKS.load(Ordering::Acquire) == 0
         && FACTORY_REFS.load(Ordering::Acquire) == 1
+        && super::worker::active() == 0
     {
         etw::unregister();
         S_OK

@@ -22,7 +22,7 @@ pub fn initialize() -> anyhow::Result<()> {
     match Settings::read(&path) {
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            save_to(&directory, Settings::default())?;
+            save_to(&directory, &Settings::default())?;
         }
         Err(error) => return Err(error).context("读取 VoiceBox 配置文件失败，保留原文件"),
     }
@@ -31,16 +31,18 @@ pub fn initialize() -> anyhow::Result<()> {
 }
 
 pub fn save(settings: Settings) -> anyhow::Result<()> {
-    save_to(&paths::data_dir()?, settings).context("无法保存 VoiceBox 配置文件")?;
+    save_to(&paths::data_dir()?, &settings).context("无法保存 VoiceBox 配置文件")?;
     tracing::info!(
         enabled = settings.enabled,
         gain_millidb = settings.gain_millidb,
+        aec_enabled = settings.aec_enabled,
+        reference_device = ?settings.reference_device,
         "Saved audio settings"
     );
     Ok(())
 }
 
-fn save_to(directory: &Path, settings: Settings) -> anyhow::Result<()> {
+fn save_to(directory: &Path, settings: &Settings) -> anyhow::Result<()> {
     let bytes = settings.encode()?;
     // The temporary file inherits Everyone Modify from its parent directory.
     // Only commit publishes the fully written file to the APO watcher.

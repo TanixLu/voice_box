@@ -1,4 +1,4 @@
-//! VoiceBox APO: streaming GTCRN microphone speech enhancement.
+//! VoiceBox APO: AEC3 echo cancellation followed by GTCRN speech enhancement.
 //!
 //! APO implementation lives in [`apo`]; shared data formats live in [`shared`].
 

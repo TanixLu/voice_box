@@ -1,13 +1,16 @@
 //! Real-time audio processing, independent of COM and Windows.
 
+mod aec;
 mod gtcrn;
-mod resample;
 mod simd;
 mod spectral;
 mod weights;
 
+use crate::apo::reference_buffer::Reference;
+pub use crate::shared::audio::SampleFormat;
+use crate::shared::resample::Resampler;
+use aec::AecChannel;
 use gtcrn::Gtcrn;
-use resample::Resampler;
 
 // Resource bounds apply during format negotiation, before any model allocation.
 pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
@@ -39,81 +42,9 @@ impl ModelKind {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum SampleFormat {
-    Pcm { bytes: u8, valid_bits: u8 },
-    Float32,
-    Float64,
-}
-
-impl SampleFormat {
-    pub fn pcm(bytes: u32, valid_bits: u32) -> Option<Self> {
-        if (1..=4).contains(&bytes) && valid_bits > 0 && valid_bits <= bytes * 8 {
-            Some(Self::Pcm {
-                bytes: bytes as u8,
-                valid_bits: valid_bits as u8,
-            })
-        } else {
-            None
-        }
-    }
-
-    fn bytes(self) -> usize {
-        match self {
-            Self::Pcm { bytes, .. } => bytes as usize,
-            Self::Float32 => 4,
-            Self::Float64 => 8,
-        }
-    }
-
-    fn decode(self, sample: &[u8]) -> f64 {
-        let value = match self {
-            Self::Float32 => f64::from(f32::from_le_bytes(sample.try_into().unwrap())),
-            Self::Float64 => f64::from_le_bytes(sample.try_into().unwrap()),
-            Self::Pcm { bytes, valid_bits } => {
-                let input = if bytes == 1 {
-                    i32::from(sample[0]) - 128
-                } else {
-                    let mut encoded = [0; 4];
-                    encoded[..bytes as usize].copy_from_slice(sample);
-                    let extension = (4 - bytes) * 8;
-                    (i32::from_le_bytes(encoded) << extension) >> extension
-                } >> (bytes * 8 - valid_bits);
-                f64::from(input) / (1_i64 << (valid_bits - 1)) as f64
-            }
-        };
-        if value.is_finite() {
-            value.clamp(-1.0, 1.0)
-        } else {
-            0.0
-        }
-    }
-
-    fn encode(self, sample: &mut [u8], value: f64) {
-        let value = if value.is_finite() {
-            value.clamp(-1.0, 1.0)
-        } else {
-            0.0
-        };
-        match self {
-            Self::Float32 => sample.copy_from_slice(&(value as f32).to_le_bytes()),
-            Self::Float64 => sample.copy_from_slice(&value.to_le_bytes()),
-            Self::Pcm { bytes, valid_bits } => {
-                let limit = (1_i64 << (valid_bits - 1)) as f64;
-                let output = ((value * limit).round().clamp(-limit, limit - 1.0) as i64)
-                    << (bytes * 8 - valid_bits);
-                if bytes == 1 {
-                    sample[0] = (output + 128) as u8;
-                } else {
-                    sample.copy_from_slice(&(output as i32).to_le_bytes()[..bytes as usize]);
-                }
-            }
-        }
-    }
-}
-
 struct Channel {
     model: Box<dyn StreamingModel>,
+    aec: AecChannel,
     down: Resampler,
     up: Resampler,
     input: Vec<f32>,
@@ -139,6 +70,7 @@ impl Channel {
             + 2;
         let mut channel = Self {
             model,
+            aec: AecChannel::new(),
             down,
             up,
             input: vec![0.0; hop],
@@ -156,6 +88,7 @@ impl Channel {
 
     fn reset(&mut self) {
         self.model.reset();
+        self.aec.reset();
         self.down.reset();
         self.up.reset();
         self.input.fill(0.0);
@@ -167,12 +100,18 @@ impl Channel {
         self.queued = self.prefill;
     }
 
-    fn process_sample(&mut self, input: f32) -> f32 {
+    fn process_sample(
+        &mut self,
+        input: f32,
+        aec_enabled: bool,
+        reference: Option<&Reference>,
+    ) -> f32 {
         self.down.push(input);
         while let Some(sample) = self.down.next() {
             self.input[self.pending] = sample;
             self.pending += 1;
             if self.pending == self.input.len() {
+                self.aec.process(&mut self.input, aec_enabled, reference);
                 self.model.process(&self.input, &mut self.output);
                 self.pending = 0;
                 for &sample in &self.output {
@@ -227,7 +166,7 @@ impl AudioProcessor {
         if let Some(kind) = model {
             let first = kind.create();
             let rate = f64::from(first.sample_rate());
-            let intrinsic = first.latency_samples();
+            let intrinsic = first.latency_samples() + aec::LATENCY_SAMPLES;
             let first = Channel::new(first, sample_rate);
             let delay = first.prefill as f64 / sample_rate
                 + intrinsic as f64 / rate
@@ -266,7 +205,14 @@ impl AudioProcessor {
         self.latency_hns
     }
 
-    pub fn process_with_settings(&mut self, buffer: &mut [u8], enabled: bool, gain: f32) -> bool {
+    pub fn process_with_settings(
+        &mut self,
+        buffer: &mut [u8],
+        enabled: bool,
+        aec_enabled: bool,
+        gain: f32,
+        reference: Option<&Reference>,
+    ) -> bool {
         let Some(format) = self.format else {
             return true;
         };
@@ -280,6 +226,9 @@ impl AudioProcessor {
             return true;
         }
         self.muted = false;
+        if aec_enabled && let Some(reference) = reference {
+            reference.request_capture();
+        }
         let mut silent = true;
         for channel in &mut self.channels {
             channel.model.set_enabled(enabled);
@@ -289,7 +238,9 @@ impl AudioProcessor {
                 .chunks_exact_mut(format.bytes())
                 .zip(&mut self.channels)
             {
-                let output = channel.process_sample(format.decode(sample) as f32) * gain;
+                let output =
+                    channel.process_sample(format.decode(sample) as f32, aec_enabled, reference)
+                        * gain;
                 format.encode(sample, f64::from(output));
                 silent &= output == 0.0;
             }
