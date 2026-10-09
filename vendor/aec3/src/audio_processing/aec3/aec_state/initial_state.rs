@@ -43,10 +43,6 @@ impl InitialState {
         self.transition_triggered = !self.initial_state_active && prev_initial_state;
     }
 
-    pub(super) fn initial_state_active(&self) -> bool {
-        self.initial_state_active
-    }
-
     pub(super) fn transition_triggered(&self) -> bool {
         self.transition_triggered
     }

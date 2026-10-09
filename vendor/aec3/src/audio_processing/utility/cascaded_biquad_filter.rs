@@ -18,15 +18,6 @@ impl BiQuadParam {
             mirror_zero_along_i_axis: false,
         }
     }
-
-    pub const fn with_mirrored_zero(zero_real: f32, pole: Complex32, gain: f32) -> Self {
-        Self {
-            zero: Complex32::new(zero_real, 0.0),
-            pole,
-            gain,
-            mirror_zero_along_i_axis: true,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -71,11 +62,6 @@ impl BiQuad {
         let a = [-2.0 * p_r, p_r * p_r + p_i * p_i];
         Self::new(BiQuadCoefficients { b, a })
     }
-
-    fn reset(&mut self) {
-        self.x = [0.0; 2];
-        self.y = [0.0; 2];
-    }
 }
 
 pub struct CascadedBiQuadFilter {
@@ -83,21 +69,6 @@ pub struct CascadedBiQuadFilter {
 }
 
 impl CascadedBiQuadFilter {
-    pub fn with_coefficients(coefficients: BiQuadCoefficients, num_biquads: usize) -> Self {
-        let mut biquads = Vec::with_capacity(num_biquads);
-        for _ in 0..num_biquads {
-            biquads.push(BiQuad::new(coefficients));
-        }
-        Self { biquads }
-    }
-
-    /// Builds a cascade in which every stage has its own coefficients, unlike
-    /// [`with_coefficients`](Self::with_coefficients) which repeats one stage.
-    pub fn from_coefficients(coefficients: &[BiQuadCoefficients]) -> Self {
-        let biquads = coefficients.iter().map(|c| BiQuad::new(*c)).collect();
-        Self { biquads }
-    }
-
     pub fn from_params(params: &[BiQuadParam]) -> Self {
         let biquads = params.iter().map(|p| BiQuad::from_param(*p)).collect();
         Self { biquads }
@@ -119,12 +90,6 @@ impl CascadedBiQuadFilter {
     pub fn process_in_place(&mut self, data: &mut [f32]) {
         for stage in 0..self.biquads.len() {
             self.apply_biquad_stage_in_place(data, stage);
-        }
-    }
-
-    pub fn reset(&mut self) {
-        for biquad in &mut self.biquads {
-            biquad.reset();
         }
     }
 

@@ -10,12 +10,8 @@ use crate::audio_processing::aec3::nearend_detector::NearendDetector;
 use crate::audio_processing::aec3::render_signal_analyzer::RenderSignalAnalyzer;
 use crate::audio_processing::aec3::subband_nearend_detector::SubbandNearendDetector;
 use crate::audio_processing::aec3::vector_math::VectorMath;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
 
 pub struct SuppressionGain {
-    #[allow(dead_code)]
-    data_dumper: ApmDataDumper,
-    #[allow(dead_code)]
     optimization: Aec3Optimization,
     config: EchoCanceller3Config,
     num_capture_channels: usize,
@@ -40,7 +36,6 @@ impl SuppressionGain {
         num_capture_channels: usize,
     ) -> Self {
         assert!(num_capture_channels > 0);
-        let data_dumper = ApmDataDumper::new_unique();
         let state_change_duration_blocks = config.filter.config_change_duration_blocks as i32;
         assert!(state_change_duration_blocks > 0);
         let nearend_smoothers = (0..num_capture_channels)
@@ -75,7 +70,6 @@ impl SuppressionGain {
         };
 
         Self {
-            data_dumper,
             optimization,
             config,
             num_capture_channels,

@@ -8,7 +8,6 @@ use crate::audio_processing::aec3::fft_data::FftData;
 use crate::audio_processing::aec3::vector_math::VectorMath;
 
 pub struct SuppressionFilter {
-    #[allow(dead_code)]
     optimization: Aec3Optimization,
     sample_rate_hz: i32,
     num_capture_channels: usize,

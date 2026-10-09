@@ -1,5 +1,3 @@
-use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
-
 use super::aec3_common::{FFT_LENGTH_BY_2_PLUS_1, NUM_BLOCKS_PER_SECOND};
 use super::spectrum_buffer::SpectrumBuffer;
 
@@ -11,7 +9,6 @@ const BLOCKS_INITIAL_PHASE: usize = 2 * NUM_BLOCKS_PER_SECOND;
 
 /// Estimates render stationarity for each frequency bin.
 pub struct StationarityEstimator {
-    data_dumper: ApmDataDumper,
     noise: NoiseSpectrum,
     hangovers: [i32; FFT_LENGTH_BY_2_PLUS_1],
     stationarity_flags: [bool; FFT_LENGTH_BY_2_PLUS_1],
@@ -20,7 +17,6 @@ pub struct StationarityEstimator {
 impl StationarityEstimator {
     pub fn new() -> Self {
         let mut estimator = Self {
-            data_dumper: ApmDataDumper::new_unique(),
             noise: NoiseSpectrum::new(),
             hangovers: [0; FFT_LENGTH_BY_2_PLUS_1],
             stationarity_flags: [false; FFT_LENGTH_BY_2_PLUS_1],
@@ -40,16 +36,6 @@ impl StationarityEstimator {
             return;
         }
         self.noise.update(spectrum);
-        self.data_dumper.dump_raw_f32_slice(
-            DiagnosticLevel::DeepDebug,
-            "aec3_stationarity_noise_spectrum",
-            self.noise.spectrum(),
-        );
-        self.data_dumper.dump_raw_f32(
-            DiagnosticLevel::Production,
-            "aec3_stationarity_is_block_stationary",
-            if self.is_block_stationary() { 1.0 } else { 0.0 },
-        );
     }
 
     pub fn update_stationarity_flags(
@@ -114,12 +100,6 @@ impl StationarityEstimator {
         accumulated_power += average_reverb[band];
         let noise = WINDOW_LENGTH as f32 * self.noise.power(band);
         assert!(noise > 0.0);
-        let ratio = accumulated_power / noise;
-        self.data_dumper.dump_raw_f32(
-            DiagnosticLevel::Developer,
-            "aec3_stationarity_long_ratio",
-            ratio,
-        );
         accumulated_power < STATIONARITY_THRESHOLD * noise
     }
 
@@ -168,10 +148,6 @@ impl NoiseSpectrum {
     fn reset(&mut self) {
         self.block_counter = 0;
         self.noise_spectrum.fill(MIN_NOISE_POWER);
-    }
-
-    fn spectrum(&self) -> &[f32] {
-        &self.noise_spectrum
     }
 
     fn power(&self, band: usize) -> f32 {

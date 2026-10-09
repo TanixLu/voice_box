@@ -48,7 +48,6 @@ impl Core {
     }
     fn render(&mut self, block: &Block) {
         self.event = self.render.insert(block);
-        self.delay.log_render_call();
     }
     fn capture(&mut self, saturated: bool, block: &mut Block) {
         let mut variation = EchoPathVariability::new(self.changed, DelayAdjustment::None, false);
@@ -64,11 +63,9 @@ impl Core {
         ) {
             self.delay.reset(false);
         }
-        let estimate: Option<DelayEstimate> = self.delay.get_delay(
-            self.render.downsampled_render_buffer(),
-            self.render.delay(),
-            block,
-        );
+        let estimate: Option<DelayEstimate> = self
+            .delay
+            .get_delay(self.render.downsampled_render_buffer(), block);
         if let Some(estimate) = estimate
             && self.render.align_from_delay(estimate.delay)
         {
@@ -80,7 +77,6 @@ impl Core {
             saturated,
             estimate,
             &self.render.render_buffer(),
-            None,
             block,
         );
     }

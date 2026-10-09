@@ -1,4 +1,4 @@
-use super::aec3_common::{Aec3Optimization, FFT_LENGTH, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1};
+use super::aec3_common::{Aec3Optimization, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1};
 
 /// Holds the positive-frequency bins (including DC and Nyquist) for a
 /// 128-point real-valued FFT.
@@ -18,10 +18,6 @@ impl Default for FftData {
 }
 
 impl FftData {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn assign(&mut self, src: &FftData) {
         self.re = src.re;
         self.im = src.im;
@@ -78,31 +74,6 @@ impl FftData {
             }
         }
         self.spectrum_scalar(power_spectrum);
-    }
-
-    pub fn copy_from_packed_array(&mut self, packed: &[f32; FFT_LENGTH]) {
-        self.re[0] = packed[0];
-        self.re[FFT_LENGTH_BY_2] = packed[1];
-        self.im[0] = 0.0;
-        self.im[FFT_LENGTH_BY_2] = 0.0;
-
-        let mut src_idx = 2;
-        for k in 1..FFT_LENGTH_BY_2 {
-            self.re[k] = packed[src_idx];
-            self.im[k] = packed[src_idx + 1];
-            src_idx += 2;
-        }
-    }
-
-    pub fn copy_to_packed_array(&self, packed: &mut [f32; FFT_LENGTH]) {
-        packed[0] = self.re[0];
-        packed[1] = self.re[FFT_LENGTH_BY_2];
-        let mut dst_idx = 2;
-        for k in 1..FFT_LENGTH_BY_2 {
-            packed[dst_idx] = self.re[k];
-            packed[dst_idx + 1] = self.im[k];
-            dst_idx += 2;
-        }
     }
 }
 

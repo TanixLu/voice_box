@@ -4,14 +4,12 @@ use crate::audio_processing::aec3::echo_path_variability::{DelayAdjustment, Echo
 use crate::audio_processing::aec3::fft_data::FftData;
 use crate::audio_processing::aec3::render_signal_analyzer::RenderSignalAnalyzer;
 use crate::audio_processing::aec3::subtractor_output::SubtractorOutput;
-use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 const H_ERROR_INITIAL: f32 = 10_000.0;
 const POOR_EXCITATION_COUNTER_INITIAL: usize = 1000;
 
 /// Provides the adaptive gain computation for the main filter.
 pub struct MainFilterUpdateGain {
-    data_dumper: ApmDataDumper,
     config_change_duration_blocks: i32,
     one_by_config_change_duration_blocks: f32,
     current_config: MainConfiguration,
@@ -29,7 +27,6 @@ impl MainFilterUpdateGain {
         let duration = config_change_duration_blocks as i32;
         let current_config = config.clone();
         Self {
-            data_dumper: ApmDataDumper::new_unique(),
             config_change_duration_blocks: duration,
             one_by_config_change_duration_blocks: 1.0 / duration as f32,
             current_config: current_config.clone(),
@@ -132,12 +129,6 @@ impl MainFilterUpdateGain {
             self.h_error[k] = self.h_error[k].max(self.current_config.error_floor);
             self.h_error[k] = self.h_error[k].min(self.current_config.error_ceil);
         }
-
-        self.data_dumper.dump_raw_f32_slice(
-            DiagnosticLevel::DeepDebug,
-            "aec3_main_gain_H_error",
-            &self.h_error,
-        );
     }
 
     fn update_current_config(&mut self) {

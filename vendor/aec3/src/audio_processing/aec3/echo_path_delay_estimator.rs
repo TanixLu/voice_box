@@ -11,12 +11,10 @@ use crate::audio_processing::aec3::delay_estimate::{DelayEstimate, DelayEstimate
 use crate::audio_processing::aec3::downsampled_render_buffer::DownsampledRenderBuffer;
 use crate::audio_processing::aec3::matched_filter::MatchedFilter;
 use crate::audio_processing::aec3::matched_filter_lag_aggregator::MatchedFilterLagAggregator;
-use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 /// Estimates the render/capture delay by correlating the decimated capture signal
 /// with the downsampled render buffer produced by the render delay buffer.
 pub struct EchoPathDelayEstimator {
-    data_dumper: ApmDataDumper,
     down_sampling_factor: usize,
     sub_block_size: usize,
     capture_mixer: AlignmentMixer,
@@ -36,7 +34,6 @@ impl EchoPathDelayEstimator {
         assert_eq!(0, BLOCK_SIZE % down_sampling_factor);
         let sub_block_size = BLOCK_SIZE / down_sampling_factor;
 
-        let data_dumper = ApmDataDumper::new_unique();
         let capture_mixer = AlignmentMixer::new(
             num_capture_channels,
             config.delay.capture_alignment_mixing.clone(),
@@ -48,7 +45,6 @@ impl EchoPathDelayEstimator {
             config.render_levels.poor_excitation_render_limit
         };
         let matched_filter = MatchedFilter::new(
-            data_dumper.clone(),
             detect_optimization(),
             sub_block_size,
             MATCHED_FILTER_WINDOW_SIZE_SUB_BLOCKS,
@@ -60,14 +56,10 @@ impl EchoPathDelayEstimator {
             config.delay.delay_candidate_detection_threshold,
             config.delay.detect_pre_echo,
         );
-        let matched_filter_lag_aggregator = MatchedFilterLagAggregator::new(
-            data_dumper.clone(),
-            matched_filter.max_filter_lag(),
-            &config.delay,
-        );
+        let matched_filter_lag_aggregator =
+            MatchedFilterLagAggregator::new(matched_filter.max_filter_lag(), &config.delay);
 
         Self {
-            data_dumper,
             down_sampling_factor,
             sub_block_size,
             capture_mixer,
@@ -97,14 +89,6 @@ impl EchoPathDelayEstimator {
         let downsampled_capture = &mut downsampled_capture_storage[..self.sub_block_size];
         self.capture_decimator
             .decimate(&downmixed_capture, downsampled_capture);
-        self.data_dumper.dump_wav(
-            DiagnosticLevel::Developer,
-            "aec3_capture_decimator_output",
-            downsampled_capture.len(),
-            downsampled_capture,
-            16_000 / self.down_sampling_factor,
-            1,
-        );
 
         self.matched_filter.update(
             render_buffer,
@@ -121,15 +105,6 @@ impl EchoPathDelayEstimator {
                 self.clockdrift_detector.update(estimate.delay as i32);
             }
         }
-
-        let dumped_delay = aggregated
-            .map(|estimate| (estimate.delay * self.down_sampling_factor) as i32)
-            .unwrap_or(-1);
-        self.data_dumper.dump_raw_i32(
-            DiagnosticLevel::Production,
-            "aec3_echo_path_delay_estimator_delay",
-            dumped_delay,
-        );
 
         if let Some(estimate) = aggregated.as_mut() {
             estimate.delay *= self.down_sampling_factor;
@@ -152,11 +127,6 @@ impl EchoPathDelayEstimator {
         }
 
         aggregated
-    }
-
-    pub fn log_delay_estimation_properties(&self, sample_rate_hz: i32, shift: usize) {
-        self.matched_filter
-            .log_filter_properties(sample_rate_hz, shift, self.down_sampling_factor);
     }
 
     pub fn clockdrift(&self) -> ClockDriftLevel {

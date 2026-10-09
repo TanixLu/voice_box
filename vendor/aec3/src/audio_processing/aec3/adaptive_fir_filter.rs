@@ -8,7 +8,6 @@ use crate::audio_processing::aec3::aec3_common::{detect_avx2, detect_sse2};
 use crate::audio_processing::aec3::aec3_fft::Aec3Fft;
 use crate::audio_processing::aec3::fft_data::FftData;
 use crate::audio_processing::aec3::render_buffer::RenderBuffer;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
 
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{
@@ -724,7 +723,6 @@ unsafe fn apply_filter_neon_impl(
 
 /// Frequency-domain adaptive FIR filter mirroring the WebRTC reference implementation.
 pub struct AdaptiveFirFilter {
-    _data_dumper: ApmDataDumper,
     fft: Aec3Fft,
     optimization: Aec3Optimization,
     num_render_channels: usize,
@@ -747,7 +745,6 @@ impl AdaptiveFirFilter {
         size_change_duration_blocks: usize,
         num_render_channels: usize,
         optimization: Aec3Optimization,
-        data_dumper: ApmDataDumper,
     ) -> Self {
         assert!(max_size_partitions >= initial_size_partitions);
         assert!(size_change_duration_blocks > 0);
@@ -760,7 +757,6 @@ impl AdaptiveFirFilter {
 
         let size_change_duration_blocks = size_change_duration_blocks as i32;
         let mut filter = Self {
-            _data_dumper: data_dumper,
             fft: Aec3Fft::new(),
             optimization,
             num_render_channels,
@@ -789,10 +785,6 @@ impl AdaptiveFirFilter {
 
     pub fn size_partitions(&self) -> usize {
         self.current_size_partitions
-    }
-
-    pub fn max_filter_size_partitions(&self) -> usize {
-        self.max_size_partitions
     }
 
     pub fn set_size_partitions(&mut self, size: usize, immediate_effect: bool) {

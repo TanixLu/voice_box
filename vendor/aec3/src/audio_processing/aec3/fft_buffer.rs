@@ -31,10 +31,6 @@ impl FftBuffer {
         self.size
     }
 
-    pub fn inc_index(&self, index: usize) -> usize {
-        if index + 1 < self.size { index + 1 } else { 0 }
-    }
-
     pub fn dec_index(&self, index: usize) -> usize {
         if index > 0 { index - 1 } else { self.size - 1 }
     }
@@ -49,24 +45,8 @@ impl FftBuffer {
         value as usize
     }
 
-    pub fn update_write_index(&mut self, offset: isize) {
-        self.write = self.offset_index(self.write, offset);
-    }
-
-    pub fn inc_write_index(&mut self) {
-        self.write = self.inc_index(self.write);
-    }
-
     pub fn dec_write_index(&mut self) {
         self.write = self.dec_index(self.write);
-    }
-
-    pub fn update_read_index(&mut self, offset: isize) {
-        self.read = self.offset_index(self.read, offset);
-    }
-
-    pub fn inc_read_index(&mut self) {
-        self.read = self.inc_index(self.read);
     }
 
     pub fn dec_read_index(&mut self) {

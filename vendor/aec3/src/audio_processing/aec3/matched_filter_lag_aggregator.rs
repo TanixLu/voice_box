@@ -4,7 +4,6 @@ use crate::audio_processing::aec3::aec3_common::{
 };
 use crate::audio_processing::aec3::delay_estimate::{DelayEstimate, DelayEstimateQuality};
 use crate::audio_processing::aec3::matched_filter::LagEstimate;
-use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 const HISTOGRAM_DATA_SIZE: usize = 250;
 const PRE_ECHO_HISTOGRAM_DATA_NOT_UPDATED: i32 = -1;
@@ -147,18 +146,9 @@ impl PreEchoLagAggregator {
     fn pre_echo_candidate(&self) -> i32 {
         self.pre_echo_candidate
     }
-
-    fn dump(&self, dumper: &ApmDataDumper) {
-        dumper.dump_raw_i32(
-            DiagnosticLevel::DeepDebug,
-            "aec3_pre_echo_delay_candidate",
-            self.pre_echo_candidate,
-        );
-    }
 }
 
 pub struct MatchedFilterLagAggregator {
-    data_dumper: ApmDataDumper,
     significant_candidate_found: bool,
     thresholds: DelaySelectionThresholds,
     headroom: usize,
@@ -167,14 +157,13 @@ pub struct MatchedFilterLagAggregator {
 }
 
 impl MatchedFilterLagAggregator {
-    pub fn new(data_dumper: ApmDataDumper, max_filter_lag: usize, delay_config: &Delay) -> Self {
+    pub fn new(max_filter_lag: usize, delay_config: &Delay) -> Self {
         assert!(delay_config.down_sampling_factor > 0);
         assert!(
             delay_config.delay_selection_thresholds.initial
                 <= delay_config.delay_selection_thresholds.converged
         );
         Self {
-            data_dumper,
             significant_candidate_found: false,
             thresholds: delay_config.delay_selection_thresholds.clone(),
             headroom: delay_config.delay_headroom_samples / delay_config.down_sampling_factor,
@@ -200,28 +189,15 @@ impl MatchedFilterLagAggregator {
         self.significant_candidate_found
     }
 
-    /// The delay taken from the highest peak of the matched filters, ignoring
-    /// any pre-echo.
-    pub fn delay_at_highest_peak(&self) -> i32 {
-        self.highest_peak_aggregator.candidate()
-    }
-
     pub fn aggregate(&mut self, lag_estimate: Option<LagEstimate>) -> Option<DelayEstimate> {
         let lag_estimate = lag_estimate?;
 
         if let Some(aggregator) = self.pre_echo_lag_aggregator.as_mut() {
-            aggregator.dump(&self.data_dumper);
             aggregator.aggregate(lag_estimate.pre_echo_lag.saturating_sub(self.headroom));
         }
 
         self.highest_peak_aggregator
             .aggregate(lag_estimate.lag.saturating_sub(self.headroom));
-
-        self.data_dumper.dump_raw_i32_slice(
-            DiagnosticLevel::DeepDebug,
-            "aec3_echo_path_delay_estimator_histogram",
-            self.highest_peak_aggregator.histogram(),
-        );
 
         let candidate = self.highest_peak_aggregator.candidate();
         let count = self.highest_peak_aggregator.histogram()[candidate as usize];

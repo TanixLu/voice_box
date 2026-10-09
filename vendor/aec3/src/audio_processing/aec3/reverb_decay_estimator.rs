@@ -1,5 +1,4 @@
 use crate::api::config::EchoCanceller3Config;
-use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 use super::aec3_common::{
     FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_LOG2, fast_approx_log2f, get_time_domain_length,
@@ -107,41 +106,6 @@ impl ReverbDecayEstimator {
         } else {
             self.decay
         }
-    }
-
-    pub fn dump(&self, dumper: &ApmDataDumper) {
-        dumper.dump_raw_f32(DiagnosticLevel::Developer, "aec3_reverb_decay", self.decay);
-        dumper.dump_raw_f32(
-            DiagnosticLevel::Developer,
-            "aec3_reverb_tail_energy",
-            self.tail_gain,
-        );
-        dumper.dump_raw_f32(
-            DiagnosticLevel::Developer,
-            "aec3_reverb_alpha",
-            self.smoothing_constant,
-        );
-        let num_blocks = if self.late_reverb_end >= self.late_reverb_start {
-            (self.late_reverb_end - self.late_reverb_start) as f32
-        } else {
-            0.0
-        };
-        dumper.dump_raw_f32(
-            DiagnosticLevel::Developer,
-            "aec3_num_reverb_decay_blocks",
-            num_blocks,
-        );
-        dumper.dump_raw_i32(
-            DiagnosticLevel::Developer,
-            "aec3_late_reverb_start",
-            self.late_reverb_start as i32,
-        );
-        dumper.dump_raw_i32(
-            DiagnosticLevel::Developer,
-            "aec3_late_reverb_end",
-            self.late_reverb_end as i32,
-        );
-        self.early_reverb_estimator.dump(dumper);
     }
 
     fn reset_decay_estimation(&mut self) {
@@ -391,14 +355,6 @@ impl EarlyReverbLengthEstimator {
         } else {
             early_reverb_size_minus1 + 1
         }
-    }
-
-    fn dump(&self, dumper: &ApmDataDumper) {
-        dumper.dump_raw_f32_slice(
-            DiagnosticLevel::DeepDebug,
-            "aec3_er_acum_numerator",
-            &self.numerators_smooth,
-        );
     }
 
     fn advance_counters(&mut self) {

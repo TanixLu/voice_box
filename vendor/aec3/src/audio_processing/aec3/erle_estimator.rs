@@ -4,7 +4,6 @@ use crate::audio_processing::aec3::fullband_erle_estimator::FullBandErleEstimato
 use crate::audio_processing::aec3::render_buffer::RenderBuffer;
 use crate::audio_processing::aec3::signal_dependent_erle_estimator::SignalDependentErleEstimator;
 use crate::audio_processing::aec3::subband_erle_estimator::SubbandErleEstimator;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
 
 pub struct ErleEstimator {
     startup_phase_length_blocks: usize,
@@ -116,23 +115,7 @@ impl ErleEstimator {
         }
     }
 
-    pub fn erle_onsets(&self) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
-        self.subband_erle_estimator.erle_onsets()
-    }
-
-    pub fn fullband_erle_log2(&self) -> f32 {
-        self.fullband_erle_estimator.fullband_erle_log2()
-    }
-
     pub fn get_inst_linear_quality_estimates(&self) -> &[Option<f32>] {
         self.fullband_erle_estimator.get_linear_quality_estimates()
-    }
-
-    pub fn dump(&self, dumper: &ApmDataDumper) {
-        self.fullband_erle_estimator.dump(dumper);
-        self.subband_erle_estimator.dump(dumper);
-        if let Some(signal_dependent) = &self.signal_dependent_erle_estimator {
-            signal_dependent.dump(dumper);
-        }
     }
 }

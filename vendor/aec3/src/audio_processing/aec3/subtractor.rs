@@ -17,12 +17,11 @@ use crate::audio_processing::aec3::render_buffer::RenderBuffer;
 use crate::audio_processing::aec3::render_signal_analyzer::RenderSignalAnalyzer;
 use crate::audio_processing::aec3::shadow_filter_update_gain::ShadowFilterUpdateGain;
 use crate::audio_processing::aec3::subtractor_output::SubtractorOutput;
-use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 /// Provides the linear echo subtraction functionality for the AEC3 pipeline.
 pub struct Subtractor {
     fft: Aec3Fft,
-    data_dumper: ApmDataDumper,
+
     optimization: Aec3Optimization,
     config: EchoCanceller3Config,
     num_capture_channels: usize,
@@ -42,7 +41,7 @@ impl Subtractor {
         config: EchoCanceller3Config,
         num_render_channels: usize,
         num_capture_channels: usize,
-        data_dumper: ApmDataDumper,
+
         optimization: Aec3Optimization,
     ) -> Self {
         assert!(num_capture_channels > 0);
@@ -59,7 +58,6 @@ impl Subtractor {
                 config.filter.config_change_duration_blocks,
                 num_render_channels,
                 optimization,
-                data_dumper.clone(),
             ));
             shadow_filters.push(AdaptiveFirFilter::new(
                 config.filter.shadow.length_blocks,
@@ -67,7 +65,6 @@ impl Subtractor {
                 config.filter.config_change_duration_blocks,
                 num_render_channels,
                 optimization,
-                data_dumper.clone(),
             ));
             main_gains.push(MainFilterUpdateGain::new(
                 config.filter.main_initial.clone(),
@@ -95,7 +92,7 @@ impl Subtractor {
 
         Self {
             fft: Aec3Fft::new(),
-            data_dumper,
+
             optimization,
             config,
             num_capture_channels,
@@ -170,7 +167,7 @@ impl Subtractor {
                 Some(&mut output.s_shadow),
             );
 
-            output.compute_metrics(y);
+            output.compute_signal_energies(y);
 
             let misadjustment = &mut self.filter_misadjustment_estimators[ch];
             misadjustment.update(output);
@@ -237,19 +234,6 @@ impl Subtractor {
             self.main_filters[ch]
                 .compute_frequency_response(&mut self.main_frequency_responses[ch]);
 
-            if ch == 0 {
-                self.data_dumper.dump_raw_f32_slice(
-                    DiagnosticLevel::DeepDebug,
-                    "aec3_subtractor_G_main",
-                    &g.re,
-                );
-                self.data_dumper.dump_raw_f32_slice(
-                    DiagnosticLevel::DeepDebug,
-                    "aec3_subtractor_G_main",
-                    &g.im,
-                );
-            }
-
             if output.e2_main < output.e2_shadow {
                 self.poor_shadow_filter_counters[ch] += 1;
             } else {
@@ -290,41 +274,9 @@ impl Subtractor {
 
             self.shadow_filters[ch].adapt(render_buffer, &g);
 
-            if ch == 0 {
-                self.data_dumper.dump_raw_f32_slice(
-                    DiagnosticLevel::DeepDebug,
-                    "aec3_subtractor_G_shadow",
-                    &g.re,
-                );
-                self.data_dumper.dump_raw_f32_slice(
-                    DiagnosticLevel::DeepDebug,
-                    "aec3_subtractor_G_shadow",
-                    &g.im,
-                );
-                self.filter_misadjustment_estimators[ch].dump(&self.data_dumper);
-                self.dump_filters();
-            }
-
             for sample in &mut output.e_main {
                 *sample = sample.clamp(-32_768.0, 32_767.0);
             }
-
-            self.data_dumper.dump_wav(
-                DiagnosticLevel::Developer,
-                "aec3_main_filters_output",
-                BLOCK_SIZE,
-                &output.e_main,
-                16_000,
-                1,
-            );
-            self.data_dumper.dump_wav(
-                DiagnosticLevel::Developer,
-                "aec3_shadow_filter_output",
-                BLOCK_SIZE,
-                &output.e_shadow,
-                16_000,
-                1,
-            );
         }
     }
 
@@ -370,35 +322,6 @@ impl Subtractor {
 
     pub fn filter_impulse_responses(&self) -> &[Vec<f32>] {
         &self.main_impulse_responses
-    }
-
-    fn dump_filters(&self) {
-        if self.main_filters.is_empty() {
-            return;
-        }
-        if let Some(response) = self.main_impulse_responses.first() {
-            self.data_dumper.dump_raw_f32_slice(
-                DiagnosticLevel::DeepDebug,
-                "aec3_subtractor_h_main",
-                response,
-            );
-        }
-        let filters = self.main_filters[0].get_filter();
-        for partition in filters {
-            if partition.is_empty() {
-                continue;
-            }
-            self.data_dumper.dump_raw_f32_slice(
-                DiagnosticLevel::DeepDebug,
-                "aec3_subtractor_H_main",
-                &partition[0].re,
-            );
-            self.data_dumper.dump_raw_f32_slice(
-                DiagnosticLevel::DeepDebug,
-                "aec3_subtractor_H_main",
-                &partition[0].im,
-            );
-        }
     }
 }
 
@@ -500,13 +423,5 @@ impl FilterMisadjustmentEstimator {
         self.n_blocks_acum = 0;
         self.inv_misadjustment = 0.0;
         self.overhang = 0;
-    }
-
-    fn dump(&self, data_dumper: &ApmDataDumper) {
-        data_dumper.dump_raw_f32(
-            DiagnosticLevel::Developer,
-            "aec3_inv_misadjustment_factor",
-            self.inv_misadjustment,
-        );
     }
 }

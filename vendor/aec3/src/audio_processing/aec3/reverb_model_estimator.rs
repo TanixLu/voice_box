@@ -1,5 +1,4 @@
 use crate::api::config::EchoCanceller3Config;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
 
 use super::aec3_common::FFT_LENGTH_BY_2_PLUS_1;
 use super::reverb_decay_estimator::ReverbDecayEstimator;
@@ -66,11 +65,5 @@ impl ReverbModelEstimator {
 
     pub fn get_reverb_frequency_response(&self) -> &[f32; FFT_LENGTH_BY_2_PLUS_1] {
         self.reverb_frequency_responses[0].frequency_response()
-    }
-
-    pub fn dump(&self, dumper: &ApmDataDumper) {
-        if let Some(estimator) = self.reverb_decay_estimators.first() {
-            estimator.dump(dumper);
-        }
     }
 }

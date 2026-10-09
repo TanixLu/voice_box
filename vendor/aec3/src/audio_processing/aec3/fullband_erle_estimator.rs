@@ -1,6 +1,5 @@
 use crate::api::config::Erle as ErleConfig;
 use crate::audio_processing::aec3::aec3_common::fast_approx_log2f;
-use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 use super::aec3_common::FFT_LENGTH_BY_2_PLUS_1;
 
@@ -10,20 +9,15 @@ const BLOCKS_TO_HOLD_ERLE: i32 = 100;
 const POINTS_TO_ACCUMULATE: i32 = 6;
 
 pub struct FullBandErleEstimator {
-    min_erle_log2: f32,
     hold_counters_time_domain: Vec<i32>,
-    erle_time_domain_log2: Vec<f32>,
     instantaneous_erle: Vec<ErleInstantaneous>,
     linear_filters_qualities: Vec<Option<f32>>,
 }
 
 impl FullBandErleEstimator {
     pub fn new(config: &ErleConfig, num_capture_channels: usize) -> Self {
-        let min_erle_log2 = fast_approx_log2f(config.min + EPSILON);
         let mut estimator = Self {
-            min_erle_log2,
             hold_counters_time_domain: vec![0; num_capture_channels],
-            erle_time_domain_log2: vec![min_erle_log2; num_capture_channels],
             instantaneous_erle: vec![ErleInstantaneous::new(config); num_capture_channels],
             linear_filters_qualities: vec![None; num_capture_channels],
         };
@@ -36,9 +30,6 @@ impl FullBandErleEstimator {
             inst.reset();
         }
         self.update_quality_estimates();
-        for value in &mut self.erle_time_domain_log2 {
-            *value = self.min_erle_log2;
-        }
         for counter in &mut self.hold_counters_time_domain {
             *counter = 0;
         }
@@ -63,12 +54,6 @@ impl FullBandErleEstimator {
                     let e2_sum: f32 = e2[ch].iter().sum();
                     if self.instantaneous_erle[ch].update(y2_sum, e2_sum) {
                         self.hold_counters_time_domain[ch] = BLOCKS_TO_HOLD_ERLE;
-                        if let Some(inst_erle) = self.instantaneous_erle[ch].inst_erle_log2() {
-                            self.erle_time_domain_log2[ch] +=
-                                0.05 * (inst_erle - self.erle_time_domain_log2[ch]);
-                            self.erle_time_domain_log2[ch] =
-                                self.erle_time_domain_log2[ch].max(self.min_erle_log2);
-                        }
                     }
                 }
             }
@@ -82,27 +67,8 @@ impl FullBandErleEstimator {
         self.update_quality_estimates();
     }
 
-    pub fn fullband_erle_log2(&self) -> f32 {
-        self.erle_time_domain_log2
-            .iter()
-            .copied()
-            .reduce(f32::min)
-            .unwrap_or(self.min_erle_log2)
-    }
-
     pub fn get_linear_quality_estimates(&self) -> &[Option<f32>] {
         &self.linear_filters_qualities
-    }
-
-    pub fn dump(&self, dumper: &ApmDataDumper) {
-        dumper.dump_raw_f32(
-            DiagnosticLevel::Developer,
-            "aec3_fullband_erle_log2",
-            self.fullband_erle_log2(),
-        );
-        if let Some(inst) = self.instantaneous_erle.first() {
-            inst.dump(dumper);
-        }
     }
 
     fn update_quality_estimates(&mut self) {
@@ -182,10 +148,6 @@ impl ErleInstantaneous {
         updated
     }
 
-    fn inst_erle_log2(&self) -> Option<f32> {
-        self.erle_log2
-    }
-
     fn quality_estimate(&self) -> Option<f32> {
         self.erle_log2.map(|_| {
             let mut value = self.inst_quality_estimate;
@@ -197,29 +159,6 @@ impl ErleInstantaneous {
             }
             value
         })
-    }
-
-    fn dump(&self, dumper: &ApmDataDumper) {
-        dumper.dump_raw_f32(
-            DiagnosticLevel::Developer,
-            "aec3_fullband_erle_inst_log2",
-            self.erle_log2.unwrap_or(-10.0),
-        );
-        dumper.dump_raw_f32(
-            DiagnosticLevel::Developer,
-            "aec3_erle_instantaneous_quality",
-            self.quality_estimate().unwrap_or(0.0),
-        );
-        dumper.dump_raw_f32(
-            DiagnosticLevel::Developer,
-            "aec3_fullband_erle_max_log2",
-            self.max_erle_log2,
-        );
-        dumper.dump_raw_f32(
-            DiagnosticLevel::Developer,
-            "aec3_fullband_erle_min_log2",
-            self.min_erle_log2,
-        );
     }
 
     fn update_max_min(&mut self) {

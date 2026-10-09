@@ -1,6 +1,5 @@
 use crate::api::config::EchoCanceller3Config;
 use crate::audio_processing::aec3::aec3_common::{FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1};
-use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 const X2_BAND_ENERGY_THRESHOLD: f32 = 44_015_068.0;
 const BLOCKS_TO_HOLD_ERLE: i32 = 100;
@@ -120,16 +119,6 @@ impl SubbandErleEstimator {
 
     pub fn erle_unbounded(&self) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
         &self.erle_unbounded
-    }
-
-    pub fn erle_onsets(&self) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
-        &self.erle_onsets
-    }
-
-    pub fn dump(&self, dumper: &ApmDataDumper) {
-        if let Some(erle) = self.erle_onsets.first() {
-            dumper.dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_erle_onset", erle);
-        }
     }
 
     fn update_accumulated_spectra(

@@ -4,9 +4,6 @@ use crate::audio_processing::aec3::aec3_common::{Aec3Optimization, BLOCK_SIZE};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::audio_processing::aec3::aec3_common::{detect_avx2, detect_sse2};
 use crate::audio_processing::aec3::downsampled_render_buffer::DownsampledRenderBuffer;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
-#[cfg(feature = "diagnostics")]
-use crate::audio_processing::logging::apm_data_dumper::DiagnosticLevel;
 use std::cmp::Ordering;
 
 #[cfg(target_arch = "aarch64")]
@@ -46,8 +43,6 @@ impl LagEstimate {
 }
 
 pub struct MatchedFilter {
-    #[allow(dead_code)] // Still constructed for consistent upstream instance numbering.
-    data_dumper: ApmDataDumper,
     optimization: Aec3Optimization,
     sub_block_size: usize,
     filter_intra_lag_shift: usize,
@@ -73,7 +68,6 @@ pub struct MatchedFilter {
 impl MatchedFilter {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        data_dumper: ApmDataDumper,
         optimization: Aec3Optimization,
         sub_block_size: usize,
         window_size_sub_blocks: usize,
@@ -116,7 +110,6 @@ impl MatchedFilter {
             };
 
         Self {
-            data_dumper,
             optimization,
             sub_block_size,
             filter_intra_lag_shift: alignment_shift_sub_blocks * sub_block_size,
@@ -297,15 +290,6 @@ impl MatchedFilter {
             }
             previous_lag_estimate = Some(lag);
 
-            // Avoid formatting a diagnostic name on the real-time path when
-            // diagnostics are compiled out.
-            #[cfg(feature = "diagnostics")]
-            self.data_dumper.dump_raw_f32_slice(
-                DiagnosticLevel::DeepDebug,
-                &format!("aec3_correlator_{}_h", index),
-                &self.filters[index],
-            );
-
             alignment_shift += self.filter_intra_lag_shift;
         }
 
@@ -342,30 +326,6 @@ impl MatchedFilter {
             0
         } else {
             self.filters.len() * self.filter_intra_lag_shift + self.filters[0].len()
-        }
-    }
-
-    pub fn log_filter_properties(
-        &self,
-        sample_rate_hz: i32,
-        shift: usize,
-        downsampling_factor: usize,
-    ) {
-        let mut alignment_shift = 0usize;
-        let samples_per_ms = 16; // 16 kHz reference clock.
-        for (index, filter) in self.filters.iter().enumerate() {
-            let start = (alignment_shift * downsampling_factor) as isize;
-            let end = ((alignment_shift + filter.len()) * downsampling_factor) as isize;
-            let start_ms = (start - shift as isize) / samples_per_ms;
-            let end_ms = (end - shift as isize) / samples_per_ms;
-            log::trace!(
-                "Matched filter {}: start={} ms, end={} ms @ {} Hz",
-                index,
-                start_ms,
-                end_ms,
-                sample_rate_hz
-            );
-            alignment_shift += self.filter_intra_lag_shift;
         }
     }
 

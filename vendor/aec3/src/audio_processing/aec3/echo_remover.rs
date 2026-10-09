@@ -1,20 +1,16 @@
 use std::ptr;
 
 use crate::api::config::EchoCanceller3Config;
-use crate::api::control::Metrics;
 use crate::audio_processing::aec3::aec_state::AecState;
 use crate::audio_processing::aec3::aec3_common::{
-    Aec3Optimization, BLOCK_SIZE, FFT_LENGTH_BY_2_PLUS_1, detect_optimization, log2_to_db,
-    num_bands_for_rate, valid_full_band_rate,
+    Aec3Optimization, BLOCK_SIZE, FFT_LENGTH_BY_2_PLUS_1, detect_optimization, num_bands_for_rate,
+    valid_full_band_rate,
 };
 use crate::audio_processing::aec3::aec3_fft::{Aec3Fft, Window};
 use crate::audio_processing::aec3::block::Block;
 use crate::audio_processing::aec3::comfort_noise_generator::ComfortNoiseGenerator;
 use crate::audio_processing::aec3::delay_estimate::DelayEstimate;
 use crate::audio_processing::aec3::echo_path_variability::{DelayAdjustment, EchoPathVariability};
-use crate::audio_processing::aec3::echo_remover_metrics::{
-    EchoRemoverMetrics, EchoRemoverMetricsReport,
-};
 use crate::audio_processing::aec3::fft_data::FftData;
 use crate::audio_processing::aec3::render_buffer::RenderBuffer;
 use crate::audio_processing::aec3::render_signal_analyzer::RenderSignalAnalyzer;
@@ -23,18 +19,15 @@ use crate::audio_processing::aec3::subtractor::Subtractor;
 use crate::audio_processing::aec3::subtractor_output::SubtractorOutput;
 use crate::audio_processing::aec3::suppression_filter::SuppressionFilter;
 use crate::audio_processing::aec3::suppression_gain::SuppressionGain;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
 
 const GAIN_CHANGE_HANGOVER_BLOCKS: i32 = 3;
 
 /// Top-level component that removes echo from the capture signal by
 /// orchestrating the linear echo canceller and suppression stages.
 pub struct EchoRemover {
-    #[allow(dead_code)]
     config: EchoCanceller3Config,
     fft: Aec3Fft,
-    #[allow(dead_code)]
-    data_dumper: ApmDataDumper,
+
     optimization: Aec3Optimization,
     sample_rate_hz: i32,
     num_render_channels: usize,
@@ -46,11 +39,8 @@ pub struct EchoRemover {
     suppression_filter: SuppressionFilter,
     render_signal_analyzer: RenderSignalAnalyzer,
     residual_echo_estimator: ResidualEchoEstimator,
-    echo_leakage_detected: bool,
-    capture_output_used: bool,
     aec_state: AecState,
-    metrics: EchoRemoverMetrics,
-    block_counter: usize,
+
     gain_change_hangover: i32,
     main_filter_output_last_selected: bool,
     e_blocks: Vec<[f32; BLOCK_SIZE]>,
@@ -80,13 +70,11 @@ impl EchoRemover {
         assert!(num_render_channels > 0);
 
         let fft = Aec3Fft::new();
-        let data_dumper = ApmDataDumper::new_unique();
         let optimization = detect_optimization();
         let subtractor = Subtractor::new(
             config.clone(),
             num_render_channels,
             num_capture_channels,
-            data_dumper.clone(),
             optimization,
         );
         let suppression_gain = SuppressionGain::new(
@@ -106,13 +94,12 @@ impl EchoRemover {
         let residual_echo_estimator =
             ResidualEchoEstimator::new(config.clone(), num_render_channels);
         let aec_state = AecState::new(config.clone(), num_capture_channels);
-        let metrics = EchoRemoverMetrics::new();
         let use_shadow_filter_output = config.filter.enable_shadow_filter_output_usage;
 
         Self {
             config,
             fft,
-            data_dumper,
+
             optimization,
             sample_rate_hz,
             num_render_channels,
@@ -124,11 +111,8 @@ impl EchoRemover {
             suppression_filter,
             render_signal_analyzer,
             residual_echo_estimator,
-            echo_leakage_detected: false,
-            capture_output_used: true,
             aec_state,
-            metrics,
-            block_counter: 0,
+
             gain_change_hangover: 0,
             main_filter_output_last_selected: true,
             e_blocks: vec![[0.0; BLOCK_SIZE]; num_capture_channels],
@@ -147,39 +131,6 @@ impl EchoRemover {
         }
     }
 
-    /// Controls whether the capture output is used downstream. When it is not,
-    /// the residual echo estimate, suppression gain and suppression filter are
-    /// skipped; the linear filter keeps adapting.
-    pub fn set_capture_output_usage(&mut self, capture_output_used: bool) {
-        self.capture_output_used = capture_output_used;
-    }
-
-    pub fn update_echo_leakage_status(&mut self, leakage_detected: bool) {
-        self.echo_leakage_detected = leakage_detected;
-    }
-
-    pub fn metrics(&self) -> Metrics {
-        Metrics {
-            echo_return_loss: (-10.0f64) * f64::from(self.aec_state.erl_time_domain()).log10(),
-            echo_return_loss_enhancement: f64::from(log2_to_db(
-                self.aec_state.fullband_erle_log2(),
-            )),
-            delay_ms: 0,
-            render_jitter_min: 0,
-            render_jitter_max: 0,
-            capture_jitter_min: 0,
-            capture_jitter_max: 0,
-        }
-    }
-
-    pub fn metrics_report(&self) -> Option<&EchoRemoverMetricsReport> {
-        if self.metrics.metrics_reported() {
-            Some(self.metrics.report())
-        } else {
-            None
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn process_capture(
         &mut self,
@@ -187,11 +138,8 @@ impl EchoRemover {
         capture_signal_saturation: bool,
         external_delay: Option<DelayEstimate>,
         render_buffer: &RenderBuffer<'_>,
-        mut linear_output: Option<&mut Block>,
         capture: &mut Block,
     ) {
-        self.block_counter += 1;
-
         let render_block = render_buffer.block(0);
         let num_bands = num_bands_for_rate(self.sample_rate_hz);
         assert_eq!(render_block.num_bands(), num_bands);
@@ -271,14 +219,6 @@ impl EchoRemover {
             }
         }
 
-        if let Some(linear) = linear_output.as_deref_mut() {
-            assert_eq!(1, linear.num_bands());
-            assert_eq!(self.num_capture_channels, linear.num_channels());
-            for ch in 0..self.num_capture_channels {
-                linear.view_mut(0, ch).copy_from_slice(&self.e_blocks[ch]);
-            }
-        }
-
         // The reference selects the nearend spectrum before updating the AEC
         // state, so the choice uses the previous block's state.
         let nearend_from_linear = self.aec_state.usable_linear_estimate();
@@ -313,74 +253,68 @@ impl EchoRemover {
             &mut self.high_band_comfort_noise,
         );
 
-        // Everything below only affects the capture output, so it is skipped
-        // when that output is unused.
+        // Estimate and suppress the residual echo in the capture output.
         let mut gain = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
-        if self.capture_output_used {
-            self.residual_echo_estimator.estimate(
-                &self.aec_state,
-                render_buffer,
-                &self.s2_linear,
-                &self.y2,
-                self.suppression_gain.is_dominant_nearend(),
-                &mut self.r2,
-                &mut self.r2_unbounded,
-            );
 
-            if self.aec_state.usable_linear_estimate() {
-                for ch in 0..self.num_capture_channels {
-                    for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
-                        if self.e2[ch][k] > self.y2[ch][k] {
-                            self.e2[ch][k] = self.y2[ch][k];
-                        }
+        self.residual_echo_estimator.estimate(
+            &self.aec_state,
+            render_buffer,
+            &self.s2_linear,
+            &self.y2,
+            self.suppression_gain.is_dominant_nearend(),
+            &mut self.r2,
+            &mut self.r2_unbounded,
+        );
+
+        if self.aec_state.usable_linear_estimate() {
+            for ch in 0..self.num_capture_channels {
+                for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
+                    if self.e2[ch][k] > self.y2[ch][k] {
+                        self.e2[ch][k] = self.y2[ch][k];
                     }
                 }
             }
-
-            // Re-derived after the clamp above, so the suppressor sees the
-            // clamped spectrum while comfort noise saw the unclamped one.
-            let nearend_spectrum = if nearend_from_linear {
-                &self.e2
-            } else {
-                &self.y2
-            };
-
-            let echo_spectrum = if self.aec_state.usable_linear_estimate() {
-                &self.s2_linear
-            } else {
-                &self.r2
-            };
-
-            let mut high_bands_gain = 1.0f32;
-            let clock_drift = self.config.echo_removal_control.has_clock_drift
-                || echo_path_variability.clock_drift;
-            self.suppression_gain.get_gain(
-                nearend_spectrum,
-                echo_spectrum,
-                &self.r2,
-                &self.r2_unbounded,
-                self.cng.noise_spectrum(),
-                &self.render_signal_analyzer,
-                &self.aec_state,
-                render_block,
-                clock_drift,
-                Some(&mut high_bands_gain),
-                Some(&mut gain),
-            );
-
-            self.suppression_filter.apply_gain(
-                &self.comfort_noise,
-                &self.high_band_comfort_noise,
-                &gain,
-                high_bands_gain,
-                y_fft,
-                Some(capture),
-            );
         }
 
-        let noise_spectrum = self.cng.noise_spectrum();
-        self.metrics
-            .update(&self.aec_state, &noise_spectrum[0], &gain);
+        // Re-derived after the clamp above, so the suppressor sees the
+        // clamped spectrum while comfort noise saw the unclamped one.
+        let nearend_spectrum = if nearend_from_linear {
+            &self.e2
+        } else {
+            &self.y2
+        };
+
+        let echo_spectrum = if self.aec_state.usable_linear_estimate() {
+            &self.s2_linear
+        } else {
+            &self.r2
+        };
+
+        let mut high_bands_gain = 1.0f32;
+        let clock_drift =
+            self.config.echo_removal_control.has_clock_drift || echo_path_variability.clock_drift;
+        self.suppression_gain.get_gain(
+            nearend_spectrum,
+            echo_spectrum,
+            &self.r2,
+            &self.r2_unbounded,
+            self.cng.noise_spectrum(),
+            &self.render_signal_analyzer,
+            &self.aec_state,
+            render_block,
+            clock_drift,
+            Some(&mut high_bands_gain),
+            Some(&mut gain),
+        );
+
+        self.suppression_filter.apply_gain(
+            &self.comfort_noise,
+            &self.high_band_comfort_noise,
+            &gain,
+            high_bands_gain,
+            y_fft,
+            Some(capture),
+        );
     }
 }
 

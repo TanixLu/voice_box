@@ -6,10 +6,19 @@ RustFFT `process` with `process_with_scratch` and fixed 128-element stack scratc
 Plan scratch bounds are validated during construction. This preserves FFT output
 while removing per-transform heap allocations from the audiodg real-time path.
 
-In `src/audio_processing/aec3/matched_filter.rs`, compile diagnostic name
-formatting only with the `diagnostics` feature. VoiceBox leaves that feature off:
-even disabled diagnostics must not allocate strings during delay estimation.
+Diagnostic dumping, logging and their dependencies have been removed, including
+diagnostic name formatting during delay estimation.
+
+Unused metrics reporting, ERL reporting-only estimation, activity/jitter
+counters, external-delay APIs, linear-output export and frame-level configuration
+have also been removed. ERLE and instantaneous filter-quality estimation used
+by the residual echo suppressor are retained. The block DSP and CPU fallbacks
+remain; only the modules needed by VoiceBox's adapter are public.
+
+The adapter no longer calls the empty render-call logging method or passes
+the ignored render-buffer delay argument to the delay controller.
 
 VoiceBox supplies block coordination and reuses existing allocations on reset.
 Unused graph pipelines, frame wrappers, AGC/NS modules and development code have
-been removed. Upstream licensing and patent notices are preserved.
+been removed. The remaining DSP dependencies are num-complex and rustfft.
+Upstream licensing and patent notices are preserved in LICENSE and PATENT.

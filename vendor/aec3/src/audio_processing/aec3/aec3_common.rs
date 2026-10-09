@@ -10,22 +10,13 @@ pub enum Aec3Optimization {
 }
 
 pub const NUM_BLOCKS_PER_SECOND: usize = 250;
-pub const METRICS_REPORTING_INTERVAL_BLOCKS: usize = 10 * NUM_BLOCKS_PER_SECOND;
-pub const METRICS_COMPUTATION_BLOCKS: usize = 11;
-pub const METRICS_COLLECTION_BLOCKS: usize =
-    METRICS_REPORTING_INTERVAL_BLOCKS - METRICS_COMPUTATION_BLOCKS;
 pub const FFT_LENGTH_BY_2: usize = 64;
 pub const FFT_LENGTH_BY_2_PLUS_1: usize = FFT_LENGTH_BY_2 + 1;
 pub const FFT_LENGTH_BY_2_MINUS_1: usize = FFT_LENGTH_BY_2 - 1;
 pub const FFT_LENGTH: usize = 2 * FFT_LENGTH_BY_2;
 pub const FFT_LENGTH_BY_2_LOG2: usize = 6;
-pub const RENDER_TRANSFER_QUEUE_SIZE_FRAMES: usize = 100;
-pub const MAX_NUM_BANDS: usize = 3;
-pub const FRAME_SIZE: usize = 160;
-pub const SUB_FRAME_LENGTH: usize = FRAME_SIZE / 2;
 pub const BLOCK_SIZE: usize = FFT_LENGTH_BY_2;
 pub const BLOCK_SIZE_LOG2: usize = FFT_LENGTH_BY_2_LOG2;
-pub const EXTENDED_BLOCK_SIZE: usize = 2 * FFT_LENGTH_BY_2;
 pub const MATCHED_FILTER_WINDOW_SIZE_SUB_BLOCKS: usize = 32;
 pub const MATCHED_FILTER_ALIGNMENT_SHIFT_SIZE_SUB_BLOCKS: usize =
     MATCHED_FILTER_WINDOW_SIZE_SUB_BLOCKS * 3 / 4;
@@ -78,10 +69,6 @@ pub fn fast_approx_log2f(input: f32) -> f32 {
     out *= 1.192_092_9e-7_f32;
     out -= 126.942_695_f32;
     out
-}
-
-pub fn log2_to_db(in_log2: f32) -> f32 {
-    3.010_299_956_639_812 * in_log2
 }
 
 pub fn detect_optimization() -> Aec3Optimization {

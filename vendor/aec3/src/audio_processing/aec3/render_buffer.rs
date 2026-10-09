@@ -10,7 +10,6 @@ pub struct RenderBuffer<'a> {
     block_buffer: &'a BlockBuffer,
     spectrum_buffer: &'a SpectrumBuffer,
     fft_buffer: &'a FftBuffer,
-    render_activity: bool,
 }
 
 impl<'a> RenderBuffer<'a> {
@@ -18,7 +17,6 @@ impl<'a> RenderBuffer<'a> {
         block_buffer: &'a BlockBuffer,
         spectrum_buffer: &'a SpectrumBuffer,
         fft_buffer: &'a FftBuffer,
-        render_activity: bool,
     ) -> Self {
         assert_eq!(block_buffer.size(), fft_buffer.size());
         assert_eq!(spectrum_buffer.size(), fft_buffer.size());
@@ -28,7 +26,6 @@ impl<'a> RenderBuffer<'a> {
             block_buffer,
             spectrum_buffer,
             fft_buffer,
-            render_activity,
         }
     }
 
@@ -99,14 +96,6 @@ impl<'a> RenderBuffer<'a> {
             position = self.spectrum_buffer.inc_index(position);
             processed += 1;
         }
-    }
-
-    pub fn render_activity(&self) -> bool {
-        self.render_activity
-    }
-
-    pub fn set_render_activity(&mut self, activity: bool) {
-        self.render_activity = activity;
     }
 
     pub fn headroom(&self) -> usize {

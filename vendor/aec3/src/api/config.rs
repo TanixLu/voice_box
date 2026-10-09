@@ -19,7 +19,6 @@ pub struct EchoCanceller3Config {
     pub echo_model: EchoModel,
     pub comfort_noise: ComfortNoise,
     pub suppressor: Suppressor,
-    pub multi_channel: MultiChannel,
 }
 
 impl Default for EchoCanceller3Config {
@@ -37,35 +36,11 @@ impl Default for EchoCanceller3Config {
             echo_model: EchoModel::default(),
             comfort_noise: ComfortNoise::default(),
             suppressor: Suppressor::default(),
-            multi_channel: MultiChannel::default(),
         }
     }
 }
 
 impl EchoCanceller3Config {
-    /// Produces the default configuration for multichannel render
-    /// content.
-    ///
-    /// Mirrors `EchoCanceller3Config::CreateDefaultMultichannelConfig`. Pass
-    /// the result as the multichannel config when constructing
-    /// [`EchoCanceller3`](crate::EchoCanceller3); it is selected only while
-    /// proper stereo content is detected.
-    pub fn create_default_multichannel_config() -> Self {
-        let mut cfg = Self::default();
-        // Use a shorter and more rapidly adapting coarse ("shadow") filter to
-        // compensate for the increased number of total filter parameters to
-        // adapt.
-        cfg.filter.shadow.length_blocks = 11;
-        cfg.filter.shadow.rate = 0.95;
-        cfg.filter.shadow_initial.length_blocks = 11;
-        cfg.filter.shadow_initial.rate = 0.95;
-
-        // Use more conservative suppressor behavior for non-nearend speech.
-        cfg.suppressor.normal_tuning.max_dec_factor_lf = 0.35;
-        cfg.suppressor.normal_tuning.max_inc_factor = 1.5;
-        cfg
-    }
-
     /// Validates the configuration by clamping all fields to the same ranges as the
     /// reference implementation. Returns true iff no field required adjustment.
     pub fn validate(&mut self) -> bool {
@@ -81,7 +56,6 @@ impl EchoCanceller3Config {
         res &= limit_usize(&mut c.delay.num_filters, 0, 5000);
         res &= limit_usize(&mut c.delay.delay_headroom_samples, 0, 5000);
         res &= limit_usize(&mut c.delay.hysteresis_limit_blocks, 0, 5000);
-        res &= limit_usize(&mut c.delay.fixed_capture_delay_samples, 0, 5000);
         res &= limit_f32(&mut c.delay.delay_estimate_smoothing, 0.0, 1.0);
         res &= limit_f32(&mut c.delay.delay_estimate_smoothing_delay_found, 0.0, 1.0);
         res &= limit_f32(&mut c.delay.delay_candidate_detection_threshold, 0.0, 1.0);
@@ -390,14 +364,13 @@ pub struct Delay {
     pub num_filters: usize,
     pub delay_headroom_samples: usize,
     pub hysteresis_limit_blocks: usize,
-    pub fixed_capture_delay_samples: usize,
+
     pub delay_estimate_smoothing: f32,
     /// Smoothing used once the lag aggregator has found a reliable delay.
     pub delay_estimate_smoothing_delay_found: f32,
     pub delay_candidate_detection_threshold: f32,
     pub delay_selection_thresholds: DelaySelectionThresholds,
-    pub use_external_delay_estimator: bool,
-    pub log_warning_on_delay_changes: bool,
+
     pub render_alignment_mixing: AlignmentMixing,
     pub capture_alignment_mixing: AlignmentMixing,
     /// Detects an early reflection preceding the strongest one and aligns to it
@@ -413,7 +386,7 @@ impl Default for Delay {
             num_filters: 5,
             delay_headroom_samples: 32,
             hysteresis_limit_blocks: 1,
-            fixed_capture_delay_samples: 0,
+
             delay_estimate_smoothing: 0.7,
             delay_estimate_smoothing_delay_found: 0.7,
             delay_candidate_detection_threshold: 0.2,
@@ -421,8 +394,7 @@ impl Default for Delay {
                 initial: 5,
                 converged: 20,
             },
-            use_external_delay_estimator: false,
-            log_warning_on_delay_changes: false,
+
             render_alignment_mixing: AlignmentMixing {
                 downmix: false,
                 adaptive_selection: true,
@@ -474,10 +446,6 @@ pub struct Filter {
     pub conservative_initial_phase: bool,
     pub enable_shadow_filter_output_usage: bool,
     pub use_linear_filter: bool,
-    /// High-pass filters the render reference before it reaches the linear
-    /// filter.
-    pub high_pass_filter_echo_reference: bool,
-    pub export_linear_aec_output: bool,
 }
 
 impl Default for Filter {
@@ -516,8 +484,6 @@ impl Default for Filter {
             conservative_initial_phase: false,
             enable_shadow_filter_output_usage: true,
             use_linear_filter: true,
-            high_pass_filter_echo_reference: false,
-            export_linear_aec_output: false,
         }
     }
 }
@@ -570,7 +536,7 @@ pub struct EpStrength {
     pub default_len: f32,
     /// Milder reverb decay, used while the dominant nearend state is active.
     pub nearend_len: f32,
-    pub echo_can_saturate: bool,
+
     pub bounded_erl: bool,
     /// Uses the onset-compensated ERLE during the dominant nearend state as
     /// well. When false, the uncompensated ERLE is used there.
@@ -587,7 +553,7 @@ impl Default for EpStrength {
             default_gain: 1.0,
             default_len: 0.83,
             nearend_len: 0.83,
-            echo_can_saturate: true,
+
             bounded_erl: false,
             erle_onset_compensation_in_dominant_nearend: false,
             use_conservative_tail_frequency_response: true,
@@ -877,39 +843,6 @@ pub struct HighBandsSuppression {
     pub max_gain_during_echo: f32,
     pub anti_howling_activation_threshold: f32,
     pub anti_howling_gain: f32,
-}
-
-/// Controls detection of multichannel render content.
-///
-/// Render signals are frequently upmixed mono, in which case adapting one
-/// filter per render channel costs convergence speed for no benefit. When
-/// stereo content is detected, [`EchoCanceller3`](crate::EchoCanceller3)
-/// switches to the multichannel config, if one was supplied.
-#[derive(Debug, Clone, PartialEq)]
-pub struct MultiChannel {
-    /// When false, the render channel count alone decides whether the signal is
-    /// treated as multichannel, and no detection is performed.
-    pub detect_stereo_content: bool,
-    /// Maximum absolute inter-channel difference still considered upmixed mono.
-    pub stereo_detection_threshold: f32,
-    /// Time without stereo content after which the detection is reset. Values
-    /// of zero or less disable the timeout, latching detection for the lifetime
-    /// of the detector.
-    pub stereo_detection_timeout_threshold_seconds: i32,
-    /// Duration of continuous stereo content required before it is considered
-    /// persistent.
-    pub stereo_detection_hysteresis_seconds: f32,
-}
-
-impl Default for MultiChannel {
-    fn default() -> Self {
-        Self {
-            detect_stereo_content: true,
-            stereo_detection_threshold: 0.0,
-            stereo_detection_timeout_threshold_seconds: 300,
-            stereo_detection_hysteresis_seconds: 2.0,
-        }
-    }
 }
 
 /// Bounds the gains above `limiting_gain_band` by the smallest gain found in

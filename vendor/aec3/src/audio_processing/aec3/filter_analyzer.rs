@@ -1,7 +1,6 @@
 use std::cmp::{max, min};
 
 use crate::api::config::EchoCanceller3Config;
-use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 use super::aec3_common::{
     BLOCK_SIZE, BLOCK_SIZE_LOG2, FFT_LENGTH_BY_2, NUM_BLOCKS_PER_SECOND, get_time_domain_length,
@@ -10,7 +9,6 @@ use super::block::Block;
 use super::render_buffer::RenderBuffer;
 
 pub struct FilterAnalyzer {
-    data_dumper: ApmDataDumper,
     bounded_erl: bool,
     default_gain: f32,
     h_highpass: Vec<Vec<f32>>,
@@ -18,7 +16,6 @@ pub struct FilterAnalyzer {
     region: FilterRegion,
     filter_analysis_states: Vec<FilterAnalysisState>,
     filter_delays_blocks: Vec<i32>,
-    min_filter_delay_blocks: i32,
 }
 
 impl FilterAnalyzer {
@@ -30,8 +27,6 @@ impl FilterAnalyzer {
             h_highpass.push(vec![0.0f32; filter_length]);
         }
 
-        let data_dumper = ApmDataDumper::new_unique();
-
         let filter_analysis_states = (0..num_capture_channels)
             .map(|_| FilterAnalysisState::new(config))
             .collect();
@@ -39,7 +34,6 @@ impl FilterAnalyzer {
         let filter_delays_blocks = vec![0; num_capture_channels];
 
         let mut analyzer = Self {
-            data_dumper,
             bounded_erl: config.ep_strength.bounded_erl,
             default_gain: config.ep_strength.default_gain,
             h_highpass,
@@ -47,7 +41,6 @@ impl FilterAnalyzer {
             region: FilterRegion::default(),
             filter_analysis_states,
             filter_delays_blocks,
-            min_filter_delay_blocks: 0,
         };
         analyzer.reset();
         analyzer
@@ -63,7 +56,6 @@ impl FilterAnalyzer {
             state.consistent_filter_detector.reset();
         }
         self.filter_delays_blocks.fill(0);
-        self.min_filter_delay_blocks = 0;
     }
 
     pub fn update(
@@ -82,25 +74,17 @@ impl FilterAnalyzer {
 
         let mut any_consistent = self.filter_analysis_states[0].consistent_estimate;
         let mut gain = self.filter_analysis_states[0].gain;
-        let mut min_delay = self.filter_delays_blocks[0];
         for ch in 1..self.filter_analysis_states.len() {
             let state = &self.filter_analysis_states[ch];
-            let delay = self.filter_delays_blocks[ch];
             any_consistent |= state.consistent_estimate;
             gain = gain.max(state.gain);
-            min_delay = min(min_delay, delay);
         }
-        self.min_filter_delay_blocks = min_delay;
         *any_filter_consistent = any_consistent;
         *max_echo_path_gain = gain;
     }
 
     pub fn filter_delays_blocks(&self) -> &[i32] {
         &self.filter_delays_blocks
-    }
-
-    pub fn min_filter_delay_blocks(&self) -> i32 {
-        self.min_filter_delay_blocks
     }
 
     pub fn filter_length_blocks(&self) -> usize {
@@ -120,11 +104,6 @@ impl FilterAnalyzer {
 
     fn analyze_region(&mut self, filters_time_domain: &[Vec<f32>], render_buffer: &RenderBuffer) {
         self.pre_process_filters(filters_time_domain);
-        self.data_dumper.dump_raw_f32_slice(
-            DiagnosticLevel::DeepDebug,
-            "aec3_linear_filter_processed_td",
-            &self.h_highpass[0],
-        );
 
         for (ch, ((state, h_hp), filter)) in self
             .filter_analysis_states

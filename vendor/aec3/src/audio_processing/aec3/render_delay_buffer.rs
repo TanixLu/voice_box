@@ -1,7 +1,7 @@
 use crate::api::config::EchoCanceller3Config;
 use crate::audio_processing::aec3::aec3_common::{
-    Aec3Optimization, BLOCK_SIZE, FFT_LENGTH_BY_2, detect_optimization,
-    get_down_sampled_buffer_size, get_render_delay_buffer_size, num_bands_for_rate,
+    Aec3Optimization, BLOCK_SIZE, detect_optimization, get_down_sampled_buffer_size,
+    get_render_delay_buffer_size, num_bands_for_rate,
 };
 use crate::audio_processing::aec3::aec3_fft::Aec3Fft;
 use crate::audio_processing::aec3::alignment_mixer::AlignmentMixer;
@@ -12,22 +12,18 @@ use crate::audio_processing::aec3::downsampled_render_buffer::DownsampledRenderB
 use crate::audio_processing::aec3::fft_buffer::FftBuffer;
 use crate::audio_processing::aec3::render_buffer::RenderBuffer;
 use crate::audio_processing::aec3::spectrum_buffer::SpectrumBuffer;
-use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BufferingEvent {
     None,
     RenderUnderrun,
     RenderOverrun,
-    ApiCallSkew,
 }
 
 pub struct RenderDelayBuffer {
-    data_dumper: ApmDataDumper,
     optimization: Aec3Optimization,
     config: EchoCanceller3Config,
     render_linear_amplitude_gain: f32,
-    down_sampling_factor: usize,
     sub_block_size: usize,
     blocks: BlockBuffer,
     spectra: SpectrumBuffer,
@@ -39,16 +35,6 @@ pub struct RenderDelayBuffer {
     fft: Aec3Fft,
     render_ds: Vec<f32>,
     buffer_headroom: usize,
-    last_call_was_render: bool,
-    num_api_calls_in_a_row: i32,
-    max_observed_jitter: i32,
-    capture_call_counter: i64,
-    render_call_counter: i64,
-    render_activity_pending: bool,
-    render_activity_latched: bool,
-    render_activity_counter: usize,
-    external_audio_buffer_delay: Option<i32>,
-    external_audio_buffer_delay_verified_after_reset: bool,
     min_latency_blocks: usize,
     excess_render_detection_counter: usize,
 }
@@ -81,11 +67,9 @@ impl RenderDelayBuffer {
         ));
 
         let mut instance = Self {
-            data_dumper: ApmDataDumper::new_unique(),
             optimization: detect_optimization(),
             render_linear_amplitude_gain: 10f32
                 .powf(config.render_levels.render_power_gain_db / 20.0),
-            down_sampling_factor,
             sub_block_size,
             blocks,
             spectra,
@@ -100,16 +84,6 @@ impl RenderDelayBuffer {
             fft: Aec3Fft::new(),
             render_ds: vec![0.0; sub_block_size],
             buffer_headroom: config.filter.main.length_blocks,
-            last_call_was_render: false,
-            num_api_calls_in_a_row: 1,
-            max_observed_jitter: 1,
-            capture_call_counter: 0,
-            render_call_counter: 0,
-            render_activity_pending: false,
-            render_activity_latched: false,
-            render_activity_counter: 0,
-            external_audio_buffer_delay: None,
-            external_audio_buffer_delay_verified_after_reset: false,
             min_latency_blocks: 0,
             excess_render_detection_counter: 0,
             config,
@@ -120,8 +94,6 @@ impl RenderDelayBuffer {
     }
 
     pub fn reset(&mut self) {
-        self.last_call_was_render = false;
-        self.num_api_calls_in_a_row = 1;
         self.min_latency_blocks = 0;
         self.excess_render_detection_counter = 0;
 
@@ -129,51 +101,17 @@ impl RenderDelayBuffer {
             .low_rate
             .offset_index(self.low_rate.write, self.sub_block_size as isize);
 
-        if let Some(external_delay) = self.external_audio_buffer_delay {
-            let headroom = 2;
-            let mut audio_buffer_delay = if external_delay <= headroom {
-                1
-            } else {
-                (external_delay - headroom) as usize
-            };
-            audio_buffer_delay = audio_buffer_delay.min(self.max_delay());
-            self.apply_total_delay(audio_buffer_delay as isize);
-            self.delay = Some(self.compute_delay().max(0) as usize);
-            self.external_audio_buffer_delay_verified_after_reset = false;
-        } else {
-            self.apply_total_delay(self.config.delay.default_delay as isize);
-            self.delay = None;
-        }
+        self.apply_total_delay(self.config.delay.default_delay as isize);
+        self.delay = None;
     }
 
     pub fn insert(&mut self, block: &Block) -> BufferingEvent {
-        self.render_call_counter += 1;
-        if self.delay.is_some() {
-            if !self.last_call_was_render {
-                self.last_call_was_render = true;
-                self.num_api_calls_in_a_row = 1;
-            } else {
-                self.num_api_calls_in_a_row += 1;
-                self.max_observed_jitter =
-                    self.max_observed_jitter.max(self.num_api_calls_in_a_row);
-            }
-        }
-
         let previous_write = self.blocks.write;
         self.increment_write_indices();
 
         let mut event = BufferingEvent::None;
         if self.render_overrun() {
             event = BufferingEvent::RenderOverrun;
-        }
-
-        if !self.render_activity_pending {
-            if self.detect_active_render(block.view(0, 0)) {
-                self.render_activity_counter += 1;
-                if self.render_activity_counter >= 20 {
-                    self.render_activity_pending = true;
-                }
-            }
         }
 
         self.insert_block(block, previous_write);
@@ -187,19 +125,6 @@ impl RenderDelayBuffer {
 
     pub fn prepare_capture_processing(&mut self) -> BufferingEvent {
         let mut event = BufferingEvent::None;
-        self.capture_call_counter += 1;
-
-        if self.delay.is_some() {
-            if self.last_call_was_render {
-                self.last_call_was_render = false;
-                self.num_api_calls_in_a_row = 1;
-            } else {
-                self.num_api_calls_in_a_row += 1;
-                self.max_observed_jitter =
-                    self.max_observed_jitter.max(self.num_api_calls_in_a_row);
-            }
-        }
-
         if self.detect_excess_render_blocks() {
             self.reset();
             event = BufferingEvent::RenderOverrun;
@@ -216,32 +141,10 @@ impl RenderDelayBuffer {
             self.increment_read_indices();
         }
 
-        self.render_activity_latched = self.render_activity_pending;
-        if self.render_activity_pending {
-            self.render_activity_counter = 0;
-            self.render_activity_pending = false;
-        }
-
         event
     }
 
-    /// Signals that a capture block arrived but capture processing was skipped.
-    ///
-    /// This mirrors WebRTC's `RenderDelayBuffer::HandleSkippedCaptureProcessing()` and is
-    /// required to keep the internal render/capture call counters consistent when
-    /// `delay.use_external_delay_estimator = true`.
-    pub fn handle_skipped_capture_processing(&mut self) {
-        self.capture_call_counter += 1;
-    }
-
     pub fn align_from_delay(&mut self, delay: usize) -> bool {
-        assert!(!self.config.delay.use_external_delay_estimator);
-        if !self.external_audio_buffer_delay_verified_after_reset
-            && self.external_audio_buffer_delay.is_some()
-            && self.delay.is_some()
-        {
-            self.external_audio_buffer_delay_verified_after_reset = true;
-        }
         if self.delay == Some(delay) {
             return false;
         }
@@ -252,65 +155,20 @@ impl RenderDelayBuffer {
         true
     }
 
-    pub fn align_from_external_delay(&mut self) {
-        assert!(self.config.delay.use_external_delay_estimator);
-        if let Some(external) = self.external_audio_buffer_delay {
-            let delay = self.render_call_counter - self.capture_call_counter + external as i64;
-            let delay_with_headroom =
-                delay - (self.config.delay.delay_headroom_samples / BLOCK_SIZE) as i64;
-            self.apply_total_delay(delay_with_headroom as isize);
-        }
-    }
-
-    pub fn delay(&self) -> usize {
-        self.compute_delay().max(0) as usize
-    }
-
     pub fn max_delay(&self) -> usize {
         self.blocks.size() - 1 - self.buffer_headroom
     }
 
     pub fn render_buffer(&self) -> RenderBuffer<'_> {
-        RenderBuffer::new(
-            &self.blocks,
-            &self.spectra,
-            &self.ffts,
-            self.render_activity_latched,
-        )
+        RenderBuffer::new(&self.blocks, &self.spectra, &self.ffts)
     }
 
     pub fn downsampled_render_buffer(&self) -> &DownsampledRenderBuffer {
         &self.low_rate
     }
 
-    pub fn set_audio_buffer_delay(&mut self, delay_ms: i32) {
-        if self.external_audio_buffer_delay.is_none() {
-            self.external_audio_buffer_delay_verified_after_reset = false;
-        }
-        const SAMPLE_RATE_FOR_FIXED_CAPTURE_DELAY: i64 = 16_000;
-        const NUM_SAMPLES_PER_MS: i64 = SAMPLE_RATE_FOR_FIXED_CAPTURE_DELAY / 1000;
-        let delay_samples = delay_ms as i64 * NUM_SAMPLES_PER_MS
-            + self.config.delay.fixed_capture_delay_samples as i64;
-        self.external_audio_buffer_delay = Some((delay_samples / BLOCK_SIZE as i64) as i32);
-    }
-
-    pub fn has_received_buffer_delay(&self) -> bool {
-        self.external_audio_buffer_delay.is_some()
-    }
-
     fn map_delay_to_total_delay(&self, external_delay_blocks: usize) -> i32 {
         self.buffer_latency() + external_delay_blocks as i32
-    }
-
-    fn compute_delay(&self) -> i32 {
-        let latency_blocks = self.buffer_latency();
-        let size = self.spectra.size();
-        let internal_delay = if self.spectra.read >= self.spectra.write {
-            self.spectra.read - self.spectra.write
-        } else {
-            size + self.spectra.read - self.spectra.write
-        };
-        internal_delay as i32 - latency_blocks
     }
 
     fn apply_total_delay(&mut self, delay: isize) {
@@ -344,14 +202,6 @@ impl RenderDelayBuffer {
             .produce_output(&self.blocks.buffer[write], &mut downmixed);
         self.render_decimator
             .decimate(&downmixed, &mut self.render_ds);
-        self.data_dumper.dump_wav(
-            DiagnosticLevel::Developer,
-            "aec3_render_decimator_output",
-            self.render_ds.len(),
-            &self.render_ds,
-            16_000 / self.down_sampling_factor,
-            1,
-        );
         assert!(self.low_rate.write + self.render_ds.len() <= self.low_rate.buffer.len());
         for (i, &sample) in self.render_ds.iter().rev().enumerate() {
             self.low_rate.buffer[self.low_rate.write + i] = sample;
@@ -373,12 +223,6 @@ impl RenderDelayBuffer {
         }
     }
 
-    fn detect_active_render(&self, x: &[f32]) -> bool {
-        let energy: f32 = x.iter().map(|v| v * v).sum();
-        let limit = self.config.render_levels.active_render_limit;
-        energy > (limit * limit) * FFT_LENGTH_BY_2 as f32
-    }
-
     fn detect_excess_render_blocks(&mut self) -> bool {
         let latency_blocks = self.buffer_latency() as usize;
         self.min_latency_blocks = self.min_latency_blocks.min(latency_blocks);
@@ -395,21 +239,6 @@ impl RenderDelayBuffer {
             self.min_latency_blocks = latency_blocks;
             self.excess_render_detection_counter = 0;
         }
-        self.data_dumper.dump_raw_f32(
-            DiagnosticLevel::Production,
-            "aec3_latency_blocks",
-            latency_blocks as f32,
-        );
-        self.data_dumper.dump_raw_f32(
-            DiagnosticLevel::Production,
-            "aec3_min_latency_blocks",
-            self.min_latency_blocks as f32,
-        );
-        self.data_dumper.dump_raw_f32(
-            DiagnosticLevel::Production,
-            "aec3_excess_render_detected",
-            if excess_detected { 1.0 } else { 0.0 },
-        );
         excess_detected
     }
 

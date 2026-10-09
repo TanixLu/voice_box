@@ -21,29 +21,7 @@ pub struct SubtractorOutput {
 }
 
 impl SubtractorOutput {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn reset(&mut self) {
-        self.s_main.fill(0.0);
-        self.s_shadow.fill(0.0);
-        self.e_main.fill(0.0);
-        self.e_shadow.fill(0.0);
-        self.e_main_fft.re.fill(0.0);
-        self.e_main_fft.im.fill(0.0);
-        self.e2_main_spectrum.fill(0.0);
-        self.e2_shadow_spectrum.fill(0.0);
-        self.e2_main = 0.0;
-        self.e2_shadow = 0.0;
-        self.s2_main = 0.0;
-        self.s2_shadow = 0.0;
-        self.y2 = 0.0;
-        self.s_main_max_abs = 0.0;
-        self.s_shadow_max_abs = 0.0;
-    }
-
-    pub fn compute_metrics(&mut self, y: &[f32]) {
+    pub fn compute_signal_energies(&mut self, y: &[f32]) {
         assert_eq!(y.len(), BLOCK_SIZE);
         let sum_of_squares = |acc: f32, sample: &f32| acc + sample * sample;
         self.y2 = y.iter().fold(0.0, sum_of_squares);

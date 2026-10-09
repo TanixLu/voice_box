@@ -51,5 +51,5 @@ windows = { version = "0.62.2", features = [
 windows-core = "0.62.2"
 
 [patch.crates-io]
-# Remove FFT scratch and disabled diagnostic allocations inside APO callbacks.
+# Retain only the AEC3 DSP used by VoiceBox, with allocation-free FFT scratch.
 aec3 = { path = "vendor/aec3" }
