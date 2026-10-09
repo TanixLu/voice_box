@@ -40,17 +40,11 @@ echo [3/3] Building EXE (%PROFILE%)...
 cargo build --bin voice_box %CARGO_ARGS%
 if errorlevel 1 goto :failed
 
-copy /Y "vendor\aec3\LICENSE" "target\%PROFILE%\AEC3-LICENSE.txt" >nul
-if errorlevel 1 goto :failed
-copy /Y "vendor\aec3\PATENT" "target\%PROFILE%\AEC3-PATENTS.txt" >nul
-if errorlevel 1 goto :failed
-
 echo.
 echo Done:
 echo   DLL: target\%PROFILE%\voice_box.dll
 echo   Embedded input: target\voice_box.dll
 echo   EXE: target\%PROFILE%\voice_box.exe
-echo   Include AEC3-LICENSE.txt and AEC3-PATENTS.txt when distributing.
 
 if "%RUN_EXE%"=="1" (
     echo.
