@@ -1,4 +1,4 @@
-//! VoiceBox APO: AEC3 echo cancellation followed by GTCRN speech enhancement.
+//! VoiceBox APO: high-pass filtering, AEC3, GTCRN and final peak limiting.
 //!
 //! APO implementation lives in [`apo`]; shared data formats live in [`shared`].
 

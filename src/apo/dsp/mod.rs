@@ -2,6 +2,8 @@
 
 mod aec;
 mod gtcrn;
+mod high_pass;
+mod limiter;
 mod simd;
 mod spectral;
 mod weights;
@@ -11,6 +13,8 @@ pub use crate::shared::audio::SampleFormat;
 use crate::shared::resample::Resampler;
 use aec::AecChannel;
 use gtcrn::Gtcrn;
+use high_pass::HighPass;
+use limiter::Limiter;
 
 // Resource bounds apply during format negotiation, before any model allocation.
 pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
@@ -45,6 +49,7 @@ impl ModelKind {
 struct Channel {
     model: Box<dyn StreamingModel>,
     aec: AecChannel,
+    high_pass: HighPass,
     down: Resampler,
     up: Resampler,
     input: Vec<f32>,
@@ -71,6 +76,7 @@ impl Channel {
         let mut channel = Self {
             model,
             aec: AecChannel::new(),
+            high_pass: HighPass::new(),
             down,
             up,
             input: vec![0.0; hop],
@@ -89,6 +95,7 @@ impl Channel {
     fn reset(&mut self) {
         self.model.reset();
         self.aec.reset();
+        self.high_pass.reset();
         self.down.reset();
         self.up.reset();
         self.input.fill(0.0);
@@ -108,7 +115,7 @@ impl Channel {
     ) -> f32 {
         self.down.push(input);
         while let Some(sample) = self.down.next() {
-            self.input[self.pending] = sample;
+            self.input[self.pending] = self.high_pass.process_sample(sample);
             self.pending += 1;
             if self.pending == self.input.len() {
                 self.aec.process(&mut self.input, aec_enabled, reference);
@@ -143,6 +150,7 @@ pub struct AudioProcessor {
     format: Option<SampleFormat>,
     frame_bytes: usize,
     channels: Vec<Channel>,
+    limiter: Option<Limiter>,
     latency_hns: i64,
     muted: bool,
 }
@@ -161,6 +169,7 @@ impl AudioProcessor {
             return Err(());
         }
         let frame_bytes = channels.checked_mul(format.bytes()).ok_or(())?;
+        let limiter = model.map(|_| Limiter::new(sample_rate, channels));
         let mut processors = Vec::new();
         let mut latency_hns = 0;
         if let Some(kind) = model {
@@ -171,7 +180,8 @@ impl AudioProcessor {
             let delay = first.prefill as f64 / sample_rate
                 + intrinsic as f64 / rate
                 + first.down.delay_seconds()
-                + first.up.delay_seconds();
+                + first.up.delay_seconds()
+                + limiter.as_ref().unwrap().latency_samples() as f64 / sample_rate;
             latency_hns = (delay * 10_000_000.0).ceil() as i64;
             processors.push(first);
             for _ in 1..channels {
@@ -181,6 +191,7 @@ impl AudioProcessor {
         self.format = Some(format);
         self.frame_bytes = frame_bytes;
         self.channels = processors;
+        self.limiter = limiter;
         self.latency_hns = latency_hns;
         self.muted = false;
         Ok(())
@@ -189,6 +200,9 @@ impl AudioProcessor {
     pub fn reset(&mut self) {
         for channel in &mut self.channels {
             channel.reset();
+        }
+        if let Some(limiter) = &mut self.limiter {
+            limiter.reset();
         }
     }
     pub fn silence_byte(&self) -> u8 {
@@ -233,14 +247,24 @@ impl AudioProcessor {
         for channel in &mut self.channels {
             channel.model.set_enabled(enabled);
         }
+        let mut samples = [0.0; MAX_CHANNELS];
         for frame in buffer.chunks_exact_mut(self.frame_bytes) {
-            for (sample, channel) in frame
-                .chunks_exact_mut(format.bytes())
+            for ((sample, channel), output) in frame
+                .chunks_exact(format.bytes())
                 .zip(&mut self.channels)
+                .zip(&mut samples)
             {
-                let output =
+                *output =
                     channel.process_sample(format.decode(sample) as f32, aec_enabled, reference)
                         * gain;
+            }
+            // Limit after resampling and manual gain, before format conversion
+            // can hard-clip peaks. A shared envelope preserves channel balance.
+            let samples = &mut samples[..self.channels.len()];
+            if let Some(limiter) = &mut self.limiter {
+                limiter.process_frame(samples);
+            }
+            for (sample, &output) in frame.chunks_exact_mut(format.bytes()).zip(samples.iter()) {
                 format.encode(sample, f64::from(output));
                 silent &= output == 0.0;
             }
