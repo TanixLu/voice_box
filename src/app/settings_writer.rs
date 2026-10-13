@@ -43,11 +43,11 @@ pub fn save(settings: Settings) -> anyhow::Result<()> {
 }
 
 fn save_to(directory: &Path, settings: &Settings) -> anyhow::Result<()> {
-    let bytes = settings.encode()?;
+    let path = directory.join(paths::SETTINGS_FILE);
+    let bytes = settings.encode(&path)?;
     // The temporary file inherits Everyone Modify from its parent directory.
     // Only commit publishes the fully written file to the APO watcher.
-    let mut file = AtomicWriteFile::open(directory.join(paths::SETTINGS_FILE))
-        .context("创建临时配置文件失败")?;
+    let mut file = AtomicWriteFile::open(&path).context("创建临时配置文件失败")?;
     file.write_all(&bytes).context("写入临时配置文件失败")?;
     file.commit().context("提交配置文件失败")
 }
