@@ -1,12 +1,12 @@
 //! Settings file notifications and effect events stay off the real-time thread.
-use super::{etw, reference::Subscription, worker};
+use super::{etw, worker};
 use crate::shared::{
     paths,
-    settings::{MIN_GAIN_MILLIDB, Settings},
+    settings::{DenoiseModel, MIN_GAIN_MILLIDB, Settings},
     utils::wide_null,
 };
 use std::sync::{
-    Arc, Mutex, OnceLock,
+    Arc, Mutex,
     atomic::{AtomicU64, Ordering},
 };
 use windows::Win32::{
@@ -24,8 +24,10 @@ use windows::Win32::{
 };
 use windows::core::{PCWSTR, w};
 
+const MODEL_SHIFT: u32 = 32;
+const MODEL_MASK: u64 = 3;
+
 pub struct RtParams {
-    pub(super) reference: OnceLock<Subscription>,
     bits: AtomicU64,
     // Only settings updates and COM discovery touch this mutex. RT loads bits alone.
     effects: Mutex<[Option<Event>; 2]>,
@@ -33,8 +35,10 @@ pub struct RtParams {
 impl Default for RtParams {
     fn default() -> Self {
         Self {
-            reference: OnceLock::new(),
-            bits: AtomicU64::new((1u64 << 32) | 1.0_f32.to_bits() as u64),
+            bits: AtomicU64::new(
+                ((DenoiseModel::default().index() as u64) << MODEL_SHIFT)
+                    | 1.0_f32.to_bits() as u64,
+            ),
             effects: Mutex::new([None, None]),
         }
     }
@@ -46,16 +50,17 @@ impl RtParams {
         } else {
             10.0_f32.powf(settings.gain_millidb as f32 / 20_000.0)
         };
-        let bits = ((settings.enabled as u64) << 32)
-            | ((settings.aec_enabled as u64) << 33)
-            | gain.to_bits() as u64;
+        let bits = ((settings.denoise_model.index() as u64) << MODEL_SHIFT) | gain.to_bits() as u64;
         // Subscription plus its returned snapshot must be serialized with updates.
         let effects = self
             .effects
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let previous = self.bits.swap(bits, Ordering::AcqRel);
-        if previous >> 32 != bits >> 32 {
+        let was_enabled =
+            DenoiseModel::from_index(((previous >> MODEL_SHIFT) & MODEL_MASK) as usize)
+                != DenoiseModel::Off;
+        if was_enabled != (settings.denoise_model != DenoiseModel::Off) {
             for event in effects.iter().flatten() {
                 unsafe {
                     let _ = SetEvent(event.handle());
@@ -63,11 +68,10 @@ impl RtParams {
             }
         }
     }
-    pub fn load(&self) -> (bool, bool, f32) {
+    pub fn load(&self) -> (DenoiseModel, f32) {
         let bits = self.bits.load(Ordering::Acquire);
         (
-            bits & (1 << 32) != 0,
-            bits & (1 << 33) != 0,
+            DenoiseModel::from_index(((bits >> MODEL_SHIFT) & MODEL_MASK) as usize),
             f32::from_bits(bits as u32),
         )
     }
@@ -76,7 +80,7 @@ impl RtParams {
         &self,
         event: HANDLE,
         controllable: bool,
-    ) -> windows::core::Result<(bool, bool)> {
+    ) -> windows::core::Result<bool> {
         let event = if event.0.is_null() {
             None
         } else {
@@ -100,8 +104,7 @@ impl RtParams {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         effects[usize::from(controllable)] = event;
-        let (denoise, aec, _) = self.load();
-        Ok((denoise, aec))
+        Ok(self.load().0 != DenoiseModel::Off)
     }
 }
 
@@ -126,15 +129,13 @@ pub struct SettingsWatcher {
     stop: Arc<Event>,
 }
 impl SettingsWatcher {
-    pub fn start(params: Arc<RtParams>, allow_reference: bool) -> windows::core::Result<Self> {
+    pub fn start(params: Arc<RtParams>) -> windows::core::Result<Self> {
         if let Ok(settings) = Settings::try_load() {
             params.store(settings);
         }
         let stop = Arc::new(Event(unsafe { CreateEventW(None, true, false, None)? }));
         let worker_stop = Arc::clone(&stop);
-        worker::spawn(w!("VoiceBoxSettings"), move || {
-            watch(&worker_stop, &params, allow_reference)
-        })?;
+        worker::spawn(w!("VoiceBoxSettings"), move || watch(&worker_stop, &params))?;
         Ok(Self { stop })
     }
 }
@@ -203,35 +204,13 @@ fn reload(params: &RtParams, faulted: &mut bool) {
     }
 }
 
-fn watch(stop: &Event, params: &RtParams, allow_reference: bool) {
+fn watch(stop: &Event, params: &RtParams) {
     let mut watch: Option<DirectoryWatch> = None;
     let mut retry_ms = 250;
     let mut faulted = false;
-    let mut reference_faulted = false;
     loop {
         if unsafe { WaitForSingleObject(stop.handle(), 0) } == WAIT_OBJECT_0 {
             break;
-        }
-        if allow_reference && params.load().1 && params.reference.get().is_none() {
-            match Subscription::acquire() {
-                Ok(reference) => {
-                    let _ = params.reference.set(reference);
-                    if reference_faulted {
-                        etw::apo_log!(etw::INFO, etw::LIFECYCLE, "Reference worker recovered");
-                        reference_faulted = false;
-                    }
-                }
-                Err(error) => {
-                    if !reference_faulted {
-                        etw::apo_log!(
-                            etw::WARNING,
-                            etw::LIFECYCLE,
-                            "Cannot start reference worker; will retry: {error}"
-                        );
-                        reference_faulted = true;
-                    }
-                }
-            }
         }
         if watch.is_none() {
             match DirectoryWatch::open() {
@@ -255,13 +234,7 @@ fn watch(stop: &Event, params: &RtParams, allow_reference: bool) {
         let events = [stop.handle(), current.0];
         // Directory notifications handle writes and atomic replacements. A slow
         // health check also recovers if the whole directory is deleted/recreated.
-        let timeout = if faulted {
-            retry_ms
-        } else if allow_reference && params.load().1 && params.reference.get().is_none() {
-            1_000
-        } else {
-            30_000
-        };
+        let timeout = if faulted { retry_ms } else { 30_000 };
         let result = unsafe { WaitForMultipleObjects(&events, false, timeout) };
         if result == WAIT_OBJECT_0 {
             break;

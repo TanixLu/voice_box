@@ -1,4 +1,4 @@
-//! VoiceBox APO: high-pass filtering, AEC3, GTCRN and final peak limiting.
+//! VoiceBox APO: high-pass filtering, DeepFilterNet3/UL-UNAS/GTCRN and peak limiting.
 //!
 //! APO implementation lives in [`apo`]; shared data formats live in [`shared`].
 

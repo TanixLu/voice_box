@@ -1,8 +1,7 @@
-//! A 60 Hz Butterworth high-pass for the 16 kHz microphone processing stream.
+//! A 60 Hz Butterworth high-pass at the selected model's sample rate.
 
 use std::f64::consts::{PI, SQRT_2};
 
-const SAMPLE_RATE: f64 = 16_000.0;
 const CUTOFF_HZ: f64 = 60.0;
 const STATE_FLOOR: f64 = 1e-20;
 
@@ -17,10 +16,10 @@ pub(super) struct HighPass {
 }
 
 impl HighPass {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(sample_rate: f64) -> Self {
         // Bilinear transform of the second-order Butterworth high-pass.
         // Keep coefficients and DF2T state in f64 at this low cutoff.
-        let k = (PI * CUTOFF_HZ / SAMPLE_RATE).tan();
+        let k = (PI * CUTOFF_HZ / sample_rate).tan();
         let norm = 1.0 / (1.0 + SQRT_2 * k + k * k);
         Self {
             b0: norm,

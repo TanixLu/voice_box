@@ -11,7 +11,6 @@ crate-type = ["cdylib"]
 panic = "abort"
 
 [dependencies]
-aec3 = "=0.4.0"
 egui = { version = "0.36", default-features = false, features = ["default_fonts"] }
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "persistence"] }
 serde = { version = "1", features = ["derive"] }
@@ -41,15 +40,9 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Com",
     "Win32_System_Diagnostics_Etw",
     "Win32_System_LibraryLoader",
-    "Win32_System_Memory",
     "Win32_System_Registry",
-    "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ] }
 windows-core = "0.62.2"
-
-[patch.crates-io]
-# Retain only the AEC3 DSP used by VoiceBox, with allocation-free FFT scratch.
-aec3 = { path = "vendor/aec3" }

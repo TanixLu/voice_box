@@ -1,10 +1,7 @@
-use std::{
-    sync::{Arc, mpsc},
-    time::{Duration, Instant},
-};
+use std::sync::{Arc, mpsc};
 
 use egui::{FontData, FontDefinitions, FontFamily};
-use wasapi::{DeviceEnumerator, Direction, Role};
+use wasapi::{DeviceEnumerator, Direction};
 
 use super::{
     settings_writer,
@@ -12,7 +9,7 @@ use super::{
 };
 use crate::shared::{
     paths,
-    settings::{MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB, ReferenceDevice, Settings},
+    settings::{DenoiseModel, MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB, Settings},
 };
 
 pub fn run() -> anyhow::Result<()> {
@@ -50,7 +47,7 @@ impl Microphone {
 }
 
 enum JobResult {
-    Microphones(anyhow::Result<(Vec<Microphone>, usize, RenderDevices)>),
+    Microphones(anyhow::Result<(Vec<Microphone>, usize)>),
     Plugin {
         result: anyhow::Result<()>,
         statuses: Vec<(String, PluginStatus)>,
@@ -60,18 +57,6 @@ enum JobResult {
         settings: Settings,
         result: anyhow::Result<()>,
     },
-}
-
-struct RenderDevice {
-    id: String,
-    name: String,
-}
-
-#[derive(Default)]
-struct RenderDevices {
-    devices: Vec<RenderDevice>,
-    default_playback: Option<String>,
-    default_communications: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -92,9 +77,6 @@ impl Default for UiPreferences {
 
 struct VoiceBoxApp {
     microphones: Vec<Microphone>,
-    render_devices: RenderDevices,
-    render_job: Option<mpsc::Receiver<anyhow::Result<RenderDevices>>>,
-    last_render_refresh: Instant,
     selected: usize,
     preferred_guid: Option<String>,
     zoom_factor: f32,
@@ -122,9 +104,6 @@ impl VoiceBoxApp {
         let settings = Settings::try_load().unwrap_or_default();
         let mut app = Self {
             microphones: Vec::new(),
-            render_devices: RenderDevices::default(),
-            render_job: None,
-            last_render_refresh: Instant::now(),
             selected: 0,
             preferred_guid: preferences.selected_microphone,
             zoom_factor: ctx.zoom_factor(),
@@ -207,7 +186,7 @@ impl VoiceBoxApp {
         };
         self.job = None;
         match result {
-            JobResult::Microphones(Ok((microphones, selected, render_devices))) => {
+            JobResult::Microphones(Ok((microphones, selected))) => {
                 let selected = self
                     .preferred_guid
                     .as_ref()
@@ -218,8 +197,6 @@ impl VoiceBoxApp {
                     })
                     .unwrap_or(selected);
                 self.microphones = microphones;
-                self.render_devices = render_devices;
-                self.last_render_refresh = Instant::now();
                 self.selected = selected;
                 if self.preferred_guid.is_none() {
                     self.preferred_guid =
@@ -280,61 +257,12 @@ impl VoiceBoxApp {
             settings,
         });
     }
-
-    fn poll_render_devices(&mut self, ctx: &egui::Context) {
-        const INTERVAL: Duration = Duration::from_secs(1);
-        let result = match self.render_job.as_ref().map(|job| job.try_recv()) {
-            Some(Ok(result)) => Some(result),
-            Some(Err(mpsc::TryRecvError::Disconnected)) => {
-                Some(Err(anyhow::anyhow!("输出设备查询未完成")))
-            }
-            _ => None,
-        };
-        if let Some(result) = result {
-            self.render_job = None;
-            self.last_render_refresh = Instant::now();
-            match result {
-                Ok(devices) => self.render_devices = devices,
-                Err(error) => {
-                    self.render_devices.default_playback = None;
-                    self.render_devices.default_communications = None;
-                    tracing::warn!(%error, "Cannot refresh default output devices");
-                }
-            }
-        }
-        if self.render_job.is_none() && self.last_render_refresh.elapsed() >= INTERVAL {
-            let (sender, receiver) = mpsc::channel();
-            let worker_ctx = ctx.clone();
-            self.last_render_refresh = Instant::now();
-            match std::thread::Builder::new()
-                .name("VoiceBoxOutputs".into())
-                .spawn(move || {
-                    let result = (|| {
-                        let _apartment = ComApartment::new()?;
-                        Ok(render_devices(&DeviceEnumerator::new()?))
-                    })();
-                    let _ = sender.send(result);
-                    worker_ctx.request_repaint();
-                }) {
-                Ok(_) => self.render_job = Some(receiver),
-                Err(error) => {
-                    tracing::warn!(%error, "Cannot start output device query");
-                }
-            }
-        }
-        ctx.request_repaint_after(if self.render_job.is_some() {
-            Duration::from_millis(100)
-        } else {
-            INTERVAL.saturating_sub(self.last_render_refresh.elapsed())
-        });
-    }
 }
 
 impl VoiceBoxApp {
     fn show(&mut self, ui: &mut egui::Ui) {
         self.zoom_factor = ui.ctx().zoom_factor();
         self.poll_job();
-        self.poll_render_devices(ui.ctx());
         let busy = self.job.is_some();
         // Also repaint if the worker exits unexpectedly without sending a result.
         if busy {
@@ -462,74 +390,16 @@ impl VoiceBoxApp {
     fn settings_ui(&mut self, ui: &mut egui::Ui) {
         ui.strong("语音设置");
         ui.add_enabled_ui(self.job.is_none(), |ui| {
-            ui.checkbox(&mut self.settings.enabled, "启用语音降噪");
-            ui.checkbox(&mut self.settings.aec_enabled, "启用回声消除")
-                .on_hover_text(
-                    "消除麦克风收到的扬声器声音，减少通话回声。使用耳机时通常可以关闭。",
-                );
-            ui.add_enabled_ui(self.settings.aec_enabled, |ui| {
-                let default_playback = format!(
-                    "跟随默认播放设备（{}）",
-                    self.render_devices
-                        .default_playback
-                        .as_deref()
-                        .unwrap_or("未获取到设备")
-                );
-                let default_communications = format!(
-                    "跟随默认通信设备（{}）",
-                    self.render_devices
-                        .default_communications
-                        .as_deref()
-                        .unwrap_or("未获取到设备")
-                );
-                let selected = match &self.settings.reference_device {
-                    ReferenceDevice::DefaultPlayback => default_playback.as_str(),
-                    ReferenceDevice::DefaultCommunications => default_communications.as_str(),
-                    ReferenceDevice::Device(id) => self
-                        .render_devices
-                        .devices
-                        .iter()
-                        .find(|device| &device.id == id)
-                        .map_or("所选设备未连接", |device| device.name.as_str()),
-                };
-                egui::ComboBox::from_id_salt("aec_output_device")
-                    .selected_text(selected)
-                    .width(ui.available_width())
-                    .height(240.0)
-                    .wrap()
-                    .show_ui(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        for (choice, name) in [
-                            (ReferenceDevice::DefaultPlayback, &default_playback),
-                            (
-                                ReferenceDevice::DefaultCommunications,
-                                &default_communications,
-                            ),
-                        ] {
-                            let row = egui::Button::selectable(
-                                self.settings.reference_device == choice,
-                                name,
-                            )
-                            .wrap()
-                            .min_size(egui::vec2(ui.available_width(), 30.0));
-                            if ui.add(row).clicked() {
-                                self.settings.reference_device = choice;
-                            }
-                        }
-                        for device in &self.render_devices.devices {
-                            let choice = ReferenceDevice::Device(device.id.clone());
-                            let row = egui::Button::selectable(
-                                self.settings.reference_device == choice,
-                                &device.name,
-                            )
-                            .wrap()
-                            .min_size(egui::vec2(ui.available_width(), 30.0));
-                            if ui.add(row).clicked() {
-                                self.settings.reference_device = choice;
-                            }
-                        }
-                    });
-            });
+            ui.label("降噪模型");
+            egui::ComboBox::from_id_salt("denoise_model")
+                .width(ui.available_width())
+                .selected_text(self.settings.denoise_model.label())
+                .show_ui(ui, |ui| {
+                    for model in DenoiseModel::ALL {
+                        ui.selectable_value(&mut self.settings.denoise_model, model, model.label());
+                    }
+                });
+            hint(ui, "保存后实时生效，切换模型时会短暂静音。");
             ui.separator();
             let mut gain_db = self.settings.gain_millidb as f64 / 1000.0;
             let mut changed = false;
@@ -811,7 +681,7 @@ impl Drop for ComApartment {
     }
 }
 
-fn microphones() -> anyhow::Result<(Vec<Microphone>, usize, RenderDevices)> {
+fn microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
     let _apartment = ComApartment::new()?;
     let enumerator = DeviceEnumerator::new()?;
     let default_id = enumerator
@@ -843,42 +713,7 @@ fn microphones() -> anyhow::Result<(Vec<Microphone>, usize, RenderDevices)> {
             guid,
         });
     }
-    Ok((microphones, selected, render_devices(&enumerator)))
-}
-
-fn render_devices(enumerator: &DeviceEnumerator) -> RenderDevices {
-    let default_name = |role| {
-        enumerator
-            .get_default_device_for_role(&Direction::Render, &role)
-            .and_then(|device| device.get_friendlyname())
-            .ok()
-    };
-    let mut result = RenderDevices {
-        default_playback: default_name(Role::Console),
-        default_communications: default_name(Role::Communications),
-        ..Default::default()
-    };
-    match enumerator.get_device_collection(&Direction::Render) {
-        Ok(collection) => {
-            for device in &collection {
-                match device.and_then(|device| {
-                    Ok(RenderDevice {
-                        id: device.get_id()?,
-                        name: device.get_friendlyname()?,
-                    })
-                }) {
-                    Ok(device) => result.devices.push(device),
-                    Err(error) => {
-                        tracing::warn!(%error, "Cannot read an output device; keeping microphone list")
-                    }
-                }
-            }
-        }
-        Err(error) => {
-            tracing::warn!(%error, "Cannot enumerate output devices; keeping microphone list")
-        }
-    }
-    result
+    Ok((microphones, selected))
 }
 
 fn install_chinese_font(ctx: &egui::Context) {

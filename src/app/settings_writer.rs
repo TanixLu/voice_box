@@ -33,10 +33,8 @@ pub fn initialize() -> anyhow::Result<()> {
 pub fn save(settings: Settings) -> anyhow::Result<()> {
     save_to(&paths::data_dir()?, &settings).context("无法保存 VoiceBox 配置文件")?;
     tracing::info!(
-        enabled = settings.enabled,
+        denoise_model = settings.denoise_model.as_str(),
         gain_millidb = settings.gain_millidb,
-        aec_enabled = settings.aec_enabled,
-        reference_device = ?settings.reference_device,
         "Saved audio settings"
     );
     Ok(())
@@ -44,7 +42,7 @@ pub fn save(settings: Settings) -> anyhow::Result<()> {
 
 fn save_to(directory: &Path, settings: &Settings) -> anyhow::Result<()> {
     let path = directory.join(paths::SETTINGS_FILE);
-    let bytes = settings.encode(&path)?;
+    let bytes = settings.encode()?;
     // The temporary file inherits Everyone Modify from its parent directory.
     // Only commit publishes the fully written file to the APO watcher.
     let mut file = AtomicWriteFile::open(&path).context("创建临时配置文件失败")?;

@@ -26,11 +26,11 @@ use windows::Win32::Media::Audio::Apo::{
     IAudioSystemEffects3_Vtbl, UNCOMPRESSEDAUDIOFORMAT,
 };
 use windows::Win32::Media::KernelStreaming::{
-    AUDIO_EFFECT_TYPE_ACOUSTIC_ECHO_CANCELLATION, AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION,
-    AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS, AUDIO_SIGNALPROCESSINGMODE_DEFAULT,
-    AUDIO_SIGNALPROCESSINGMODE_FAR_FIELD_SPEECH, AUDIO_SIGNALPROCESSINGMODE_MEDIA,
-    AUDIO_SIGNALPROCESSINGMODE_MOVIE, AUDIO_SIGNALPROCESSINGMODE_NOTIFICATION,
-    AUDIO_SIGNALPROCESSINGMODE_RAW, AUDIO_SIGNALPROCESSINGMODE_SPEECH, KSDATAFORMAT_SUBTYPE_PCM,
+    AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION, AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS,
+    AUDIO_SIGNALPROCESSINGMODE_DEFAULT, AUDIO_SIGNALPROCESSINGMODE_FAR_FIELD_SPEECH,
+    AUDIO_SIGNALPROCESSINGMODE_MEDIA, AUDIO_SIGNALPROCESSINGMODE_MOVIE,
+    AUDIO_SIGNALPROCESSINGMODE_NOTIFICATION, AUDIO_SIGNALPROCESSINGMODE_RAW,
+    AUDIO_SIGNALPROCESSINGMODE_SPEECH, KSDATAFORMAT_SUBTYPE_PCM,
 };
 use windows::Win32::Media::Multimedia::KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
 use windows::Win32::System::Com::{
@@ -38,14 +38,11 @@ use windows::Win32::System::Com::{
 };
 use windows_core::{BOOL, GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface};
 
-use super::dsp::{
-    AudioProcessor, MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, ModelKind, SampleFormat,
-};
+use super::dsp::{AudioProcessor, MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat};
 use super::etw::{self, apo_log};
 use crate::shared::plugin;
 
 const EFFECT_ID_DENOISE: GUID = AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION;
-const EFFECT_ID_AEC: GUID = AUDIO_EFFECT_TYPE_ACOUSTIC_ECHO_CANCELLATION;
 
 static LIVE_OBJECTS: AtomicU32 = AtomicU32::new(0);
 static SERVER_LOCKS: AtomicU32 = AtomicU32::new(0);
@@ -359,10 +356,7 @@ unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *const 
         if mode != AUDIO_SIGNALPROCESSINGMODE_RAW {
             // Discovery objects also expose live effect lists and change events.
             // They watch settings but still cannot allocate/process a DSP graph.
-            match super::settings_watcher::SettingsWatcher::start(
-                Arc::clone(&(*object).params),
-                !discovery_only,
-            ) {
+            match super::settings_watcher::SettingsWatcher::start(Arc::clone(&(*object).params)) {
                 Ok(worker) => (*object).settings_watcher = Some(worker),
                 Err(error) => {
                     apo_log!(
@@ -431,39 +425,33 @@ unsafe extern "system" fn get_effects_list(
     // caller's existing subscription. The returned snapshot and subscription
     // are synchronized even if Enabled changes while this call is running.
     let memory = if supports_effect {
-        unsafe { CoTaskMemAlloc(2 * core::mem::size_of::<GUID>()) }.cast::<GUID>()
+        unsafe { CoTaskMemAlloc(core::mem::size_of::<GUID>()) }.cast::<GUID>()
     } else {
         ptr::null_mut()
     };
     if supports_effect && memory.is_null() {
         return E_OUTOFMEMORY;
     }
-    let (denoise, aec) = match unsafe { (*object).params.subscribe_effects(event, false) } {
+    let denoise = match unsafe { (*object).params.subscribe_effects(event, false) } {
         Ok(enabled) => enabled,
         Err(error) => {
             unsafe { CoTaskMemFree(Some(memory.cast())) };
             return error.code();
         }
     };
-    if !supports_effect || (!denoise && !aec) {
+    if !supports_effect || !denoise {
         unsafe { CoTaskMemFree(Some(memory.cast())) };
         return S_OK;
     }
     unsafe {
-        let mut length = 0;
-        for (enabled, id) in [(denoise, EFFECT_ID_DENOISE), (aec, EFFECT_ID_AEC)] {
-            if enabled {
-                memory.add(length).write(id);
-                length += 1;
-            }
-        }
+        memory.write(EFFECT_ID_DENOISE);
         *effects = memory;
-        *count = length as u32;
+        *count = 1;
     }
     apo_log!(
         etw::INFO,
         etw::LIFECYCLE,
-        "GetEffectsList instance={object:p} denoise={denoise} aec={aec}"
+        "GetEffectsList instance={object:p} denoise={denoise}"
     );
     S_OK
 }
@@ -484,7 +472,7 @@ unsafe extern "system" fn get_controllable_effects_list(
     let object = unsafe { object_from(this) };
     let supports_effect = unsafe { (*object).effect_enabled.load(Ordering::Acquire) };
     let memory = if supports_effect {
-        unsafe { CoTaskMemAlloc(2 * core::mem::size_of::<AUDIO_SYSTEMEFFECT>()) }
+        unsafe { CoTaskMemAlloc(core::mem::size_of::<AUDIO_SYSTEMEFFECT>()) }
             .cast::<AUDIO_SYSTEMEFFECT>()
     } else {
         ptr::null_mut()
@@ -492,7 +480,7 @@ unsafe extern "system" fn get_controllable_effects_list(
     if supports_effect && memory.is_null() {
         return E_OUTOFMEMORY;
     }
-    let (denoise, aec) = match unsafe { (*object).params.subscribe_effects(event, true) } {
+    let denoise = match unsafe { (*object).params.subscribe_effects(event, true) } {
         Ok(enabled) => enabled,
         Err(error) => {
             unsafe { CoTaskMemFree(Some(memory.cast())) };
@@ -503,27 +491,22 @@ unsafe extern "system" fn get_controllable_effects_list(
         return S_OK;
     }
     unsafe {
-        for (index, (enabled, id)) in [(denoise, EFFECT_ID_DENOISE), (aec, EFFECT_ID_AEC)]
-            .into_iter()
-            .enumerate()
-        {
-            memory.add(index).write(AUDIO_SYSTEMEFFECT {
-                id,
-                canSetState: BOOL::from(false),
-                state: if enabled {
-                    AUDIO_SYSTEMEFFECT_STATE_ON
-                } else {
-                    AUDIO_SYSTEMEFFECT_STATE_OFF
-                },
-            });
-        }
+        memory.write(AUDIO_SYSTEMEFFECT {
+            id: EFFECT_ID_DENOISE,
+            canSetState: BOOL::from(false),
+            state: if denoise {
+                AUDIO_SYSTEMEFFECT_STATE_ON
+            } else {
+                AUDIO_SYSTEMEFFECT_STATE_OFF
+            },
+        });
         *effects = memory;
-        *count = 2;
+        *count = 1;
     }
     apo_log!(
         etw::INFO,
         etw::LIFECYCLE,
-        "GetControllableSystemEffectsList instance={object:p} denoise={denoise} aec={aec} controllable=false"
+        "GetControllableSystemEffectsList instance={object:p} denoise={denoise} controllable=false"
     );
     S_OK
 }
@@ -930,7 +913,7 @@ unsafe extern "system" fn lock_for_process(
             (*object)
                 .effect_enabled
                 .load(Ordering::Acquire)
-                .then_some(ModelKind::default()),
+                .then_some((*object).params.load().0),
         )
     }
     .is_err()
@@ -964,10 +947,11 @@ unsafe extern "system" fn lock_for_process(
     apo_log!(
         etw::INFO,
         etw::SETTINGS,
-        "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} effect=gtcrn latency_hns={}",
+        "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} effect=denoise model={} latency_hns={}",
         unsafe { (**inputs).u32MaxFrameCount },
         unsafe { (**outputs).u32MaxFrameCount },
         input_format.dwSamplesPerFrame,
+        unsafe { (*object).params.load().0.as_str() },
         unsafe { (*object).latency_hns.load(Ordering::Acquire) },
     );
     S_OK
@@ -1057,19 +1041,8 @@ unsafe extern "system" fn process(
     if unsafe { (*object).effect_enabled.load(Ordering::Acquire) } {
         let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
         let params = unsafe { &(*object).params };
-        let (enabled, aec, gain) = params.load();
-        unsafe {
-            (&mut *(*object).dsp.get()).process_with_settings(
-                buffer,
-                enabled,
-                aec,
-                gain,
-                params
-                    .reference
-                    .get()
-                    .map(super::reference::Subscription::reference),
-            )
-        };
+        let (model, gain) = params.load();
+        unsafe { (&mut *(*object).dsp.get()).process_with_settings(buffer, gain, model) };
         // The DSP materializes every frame, including startup padding and mute.
         // Keep these packets valid even when all samples are zero: legacy capture
         // clients can stop recording when initial packets are BUFFER_SILENT.

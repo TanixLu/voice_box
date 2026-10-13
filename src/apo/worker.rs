@@ -1,5 +1,5 @@
 //! Detached native workers with an owned DLL reference through their final exit.
-//! No APO control callback waits for a worker or its WASAPI/COM destructors.
+//! No APO control callback waits for a settings worker to exit.
 use super::etw;
 use std::{
     ffi::c_void,
@@ -106,7 +106,7 @@ unsafe extern "system" fn entry(raw: *mut c_void) -> u32 {
         etw::apo_log!(etw::ERROR, etw::LIFECYCLE, "APO background worker panicked");
     }
     let module = start.module.take().expect("owned DLL reference").into_raw();
-    // All Rust values, COM objects, buffers and counters are destroyed first.
+    // All Rust values, buffers and counters are destroyed first.
     drop(start);
     // Clean up ETW too if the host already released its loader reference and
     // this worker is now the last owner. COM hosts otherwise do this themselves.
