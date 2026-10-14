@@ -573,8 +573,11 @@ impl VoiceBoxApp {
                 .size()
                 .x
                 + 2.0 * ui.spacing().button_padding.x;
+            // Wrapping layouts report the full row in available_width(); use
+            // the remaining space so the spacer cannot expand the section.
             let spacer =
-                (ui.available_width() - button_width - ui.spacing().item_spacing.x).max(0.0);
+                (ui.available_size_before_wrap().x - button_width - ui.spacing().item_spacing.x)
+                    .max(0.0);
             ui.add_space(spacer);
             if ui
                 .add_enabled(
