@@ -110,6 +110,15 @@ impl AudioTest {
             .and_then(|job| job.started)
             .map(|started| started.elapsed().as_secs_f64())
     }
+    pub fn playback_progress(&self) -> Option<(f64, f64)> {
+        let job = self.job.as_ref()?;
+        if job.activity == Activity::Record {
+            return None;
+        }
+        let started = job.started?;
+        let duration = self.recording.as_ref()?.duration();
+        Some((started.elapsed().as_secs_f64().min(duration), duration))
+    }
     pub fn stop(&self) {
         if let Some(job) = &self.job {
             job.stop.store(true, Ordering::Relaxed);
@@ -239,8 +248,7 @@ impl AudioTest {
                     job.started = Some(Instant::now());
                     self.message = match job.activity {
                         Activity::Record => "正在录音…",
-                        Activity::Original => "正在播放原音频…",
-                        Activity::Processed => "正在播放处理后的声音…",
+                        Activity::Original | Activity::Processed => "正在播放…",
                     }
                     .into();
                 }
@@ -248,8 +256,7 @@ impl AudioTest {
                     self.job = None;
                     match result {
                         Ok(Outcome::Recorded(recording)) => {
-                            self.message =
-                                format!("已录音 {:.1} 秒，可以播放试听。", recording.duration());
+                            self.message = format!("已录音 {:.1} 秒。", recording.duration());
                             self.recording = Some(recording);
                             self.processed = None;
                         }
@@ -257,7 +264,9 @@ impl AudioTest {
                             if let Some(processed) = processed {
                                 self.processed = Some(processed);
                             }
-                            self.message = "播放已结束。".into();
+                            if let Some(recording) = &self.recording {
+                                self.message = format!("已录音 {:.1} 秒。", recording.duration());
+                            }
                         }
                         Err(error) => {
                             self.message = format!("试听失败：{error:#}");

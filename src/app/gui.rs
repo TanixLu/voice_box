@@ -596,6 +596,8 @@ impl VoiceBoxApp {
             hint(ui, "正在停止…");
         } else if let Some(elapsed) = self.audio_test.elapsed() {
             ui.label(format!("正在录音：{elapsed:.1} 秒"));
+        } else if let Some((elapsed, duration)) = self.audio_test.playback_progress() {
+            ui.label(format!("正在播放 {elapsed:.1} / {duration:.1} 秒"));
         } else if self.audio_test.failed {
             ui.add(
                 egui::Label::new(
