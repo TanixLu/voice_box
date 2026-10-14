@@ -3,6 +3,8 @@
 pub mod audio;
 pub mod paths;
 pub mod plugin;
+#[allow(dead_code)] // ABI symbols are used by the EXE; limits are used by both.
+pub mod preview;
 #[allow(dead_code)]
 pub mod resample;
 pub mod settings;

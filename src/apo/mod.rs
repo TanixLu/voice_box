@@ -2,6 +2,7 @@
 mod com;
 mod dsp;
 mod etw;
+mod preview;
 mod settings_watcher;
 mod worker;
 

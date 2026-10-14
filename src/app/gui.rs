@@ -4,6 +4,7 @@ use egui::{FontData, FontDefinitions, FontFamily};
 use wasapi::{DeviceEnumerator, Direction};
 
 use super::{
+    audio_test::{Activity, AudioTest},
     settings_writer,
     setup::{self, PluginStatus},
 };
@@ -16,7 +17,7 @@ pub fn run() -> anyhow::Result<()> {
     let settings = Settings::try_load()?;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([560.0, 620.0])
+            .with_inner_size([560.0, 760.0])
             .with_min_inner_size([380.0, 340.0]),
         persist_window: true,
         persistence_path: Some(paths::data_dir()?.join(super::UI_STATE_FILE)),
@@ -32,6 +33,7 @@ pub fn run() -> anyhow::Result<()> {
 
 struct Microphone {
     name: String,
+    device_id: String,
     guid: String,
     plugin_status: PluginStatus,
 }
@@ -88,6 +90,7 @@ struct VoiceBoxApp {
     status: String,
     failed: bool,
     confirm_uninstall: bool,
+    audio_test: AudioTest,
 }
 
 impl VoiceBoxApp {
@@ -114,6 +117,7 @@ impl VoiceBoxApp {
             status: String::new(),
             failed: false,
             confirm_uninstall: false,
+            audio_test: AudioTest::default(),
         };
         app.refresh_microphones(ctx);
         app
@@ -263,6 +267,11 @@ impl VoiceBoxApp {
     fn show(&mut self, ui: &mut egui::Ui) {
         self.zoom_factor = ui.ctx().zoom_factor();
         self.poll_job();
+        self.audio_test.poll();
+        if self.audio_test.busy() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
         let busy = self.job.is_some();
         // Also repaint if the worker exits unexpectedly without sending a result.
         if busy {
@@ -295,6 +304,7 @@ impl VoiceBoxApp {
                                         self.microphone_ui(ui);
                                     });
                                     section(ui, |ui| self.settings_ui(ui));
+                                    section(ui, |ui| self.test_ui(ui));
                                 },
                             );
                         });
@@ -320,7 +330,10 @@ impl VoiceBoxApp {
             ui.strong("麦克风");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .add_enabled(self.job.is_none(), egui::Button::new("刷新"))
+                    .add_enabled(
+                        self.job.is_none() && !self.audio_test.busy(),
+                        egui::Button::new("刷新"),
+                    )
                     .clicked()
                 {
                     self.refresh_microphones(ui.ctx());
@@ -333,32 +346,35 @@ impl VoiceBoxApp {
             .get(self.selected)
             .map_or_else(|| "暂无可用麦克风".to_owned(), Microphone::display_name);
         let response = ui
-            .add_enabled_ui(self.job.is_none() && !self.microphones.is_empty(), |ui| {
-                egui::ComboBox::from_id_salt("microphone")
-                    .width(ui.available_width())
-                    .height(240.0)
-                    .wrap()
-                    .selected_text(&name)
-                    .show_ui(ui, |ui| {
-                        // ComboBox popups default to extending their text. Explicitly
-                        // constrain every row, including names with no word breaks.
-                        ui.set_width(ui.available_width());
-                        for (index, microphone) in self.microphones.iter().enumerate() {
-                            let row = egui::Button::selectable(
-                                self.selected == index,
-                                microphone.display_name(),
-                            )
-                            .wrap()
-                            .min_size(egui::vec2(ui.available_width(), 30.0));
-                            if ui.add(row).clicked() {
-                                self.selected = index;
-                                self.preferred_guid = Some(microphone.guid.clone());
+            .add_enabled_ui(
+                self.job.is_none() && !self.audio_test.busy() && !self.microphones.is_empty(),
+                |ui| {
+                    egui::ComboBox::from_id_salt("microphone")
+                        .width(ui.available_width())
+                        .height(240.0)
+                        .wrap()
+                        .selected_text(&name)
+                        .show_ui(ui, |ui| {
+                            // ComboBox popups default to extending their text. Explicitly
+                            // constrain every row, including names with no word breaks.
+                            ui.set_width(ui.available_width());
+                            for (index, microphone) in self.microphones.iter().enumerate() {
+                                let row = egui::Button::selectable(
+                                    self.selected == index,
+                                    microphone.display_name(),
+                                )
+                                .wrap()
+                                .min_size(egui::vec2(ui.available_width(), 30.0));
+                                if ui.add(row).clicked() {
+                                    self.selected = index;
+                                    self.preferred_guid = Some(microphone.guid.clone());
+                                }
                             }
-                        }
-                    })
-                    .response
-                    .on_hover_text(name)
-            })
+                        })
+                        .response
+                        .on_hover_text(name)
+                },
+            )
             .inner;
         if self.selected != previous {
             self.confirm_uninstall = false;
@@ -487,9 +503,114 @@ impl VoiceBoxApp {
             });
         });
         if self.settings != self.saved {
-            warning(ui, "有未保存的更改，点击“保存设置”后生效。");
+            warning(
+                ui,
+                "有未保存的更改；试听会使用当前设置，保存后应用于麦克风插件。",
+            );
         } else {
             hint(ui, "设置已作用于所有安装VoiceBox插件的麦克风。");
+        }
+    }
+
+    fn test_ui(&mut self, ui: &mut egui::Ui) {
+        ui.strong("测试");
+        let activity = self.audio_test.activity();
+        let idle = self.job.is_none() && !self.audio_test.busy();
+        let stopping = self.audio_test.stopping();
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(
+                    !stopping
+                        && (activity == Some(Activity::Record)
+                            || (idle && !self.microphones.is_empty())),
+                    egui::Button::new(if activity == Some(Activity::Record) {
+                        "结束录音"
+                    } else {
+                        "开始录音"
+                    }),
+                )
+                .clicked()
+            {
+                if activity == Some(Activity::Record) {
+                    self.audio_test.stop();
+                } else if let Some(mic) = self.microphones.get(self.selected) {
+                    self.audio_test.record(ui.ctx(), mic.device_id.clone());
+                }
+            }
+            if ui
+                .add_enabled(
+                    !stopping
+                        && (activity == Some(Activity::Original)
+                            || (idle && self.audio_test.has_recording())),
+                    egui::Button::new(if activity == Some(Activity::Original) {
+                        "停止播放"
+                    } else {
+                        "播放原音频"
+                    }),
+                )
+                .clicked()
+            {
+                if activity == Some(Activity::Original) {
+                    self.audio_test.stop();
+                } else {
+                    self.audio_test.play(ui.ctx(), None);
+                }
+            }
+            // Place processed playback at the right on normal window sizes;
+            // wrapped layout keeps every button reachable in a narrow window.
+            let processed_label = if activity == Some(Activity::Processed) {
+                "停止播放"
+            } else {
+                "播放处理后声音"
+            };
+            let button_width = ui
+                .painter()
+                .layout_no_wrap(
+                    processed_label.into(),
+                    egui::TextStyle::Button.resolve(ui.style()),
+                    ui.visuals().text_color(),
+                )
+                .size()
+                .x
+                + 2.0 * ui.spacing().button_padding.x;
+            let spacer =
+                (ui.available_width() - button_width - ui.spacing().item_spacing.x).max(0.0);
+            ui.add_space(spacer);
+            if ui
+                .add_enabled(
+                    !stopping
+                        && (activity == Some(Activity::Processed)
+                            || (idle && self.audio_test.has_recording())),
+                    egui::Button::new(processed_label),
+                )
+                .clicked()
+            {
+                if activity == Some(Activity::Processed) {
+                    self.audio_test.stop();
+                } else {
+                    self.audio_test.play(ui.ctx(), Some(self.settings.clone()));
+                }
+            }
+        });
+        if stopping {
+            hint(ui, "正在停止…");
+        } else if let Some(elapsed) = self.audio_test.elapsed() {
+            ui.label(format!("正在录音：{elapsed:.1} 秒"));
+        } else if self.audio_test.failed {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(&self.audio_test.message)
+                        .color(ui.visuals().error_fg_color),
+                )
+                .wrap(),
+            );
+        } else if !self.audio_test.message.is_empty() {
+            ui.horizontal(|ui| {
+                if self.audio_test.busy() {
+                    ui.spinner();
+                }
+                ui.add(egui::Label::new(&self.audio_test.message).wrap());
+            });
         }
     }
 
@@ -499,53 +620,56 @@ impl VoiceBoxApp {
             .get(self.selected)
             .map_or(PluginStatus::NotInstalled, |mic| mic.plugin_status);
         let needs_update = status == PluginStatus::NeedsUpdate;
-        ui.add_enabled_ui(!self.microphones.is_empty() && self.job.is_none(), |ui| {
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        status != PluginStatus::Installed,
-                        egui::Button::new(if needs_update {
-                            "更新插件"
-                        } else {
-                            "安装插件"
-                        }),
-                    )
-                    .on_hover_text("安装或更新所选麦克风的VoiceBox插件")
-                    .clicked()
-                    && self.job.is_none()
-                {
-                    self.confirm_uninstall = false;
-                    let guid = self.microphones[self.selected].guid.clone();
-                    let guids = self
-                        .microphones
-                        .iter()
-                        .map(|mic| mic.guid.clone())
-                        .collect();
-                    self.begin_job(
-                        ui.ctx(),
-                        if needs_update {
-                            "正在更新插件，请完成管理员授权…"
-                        } else {
-                            "正在安装插件，请完成管理员授权…"
-                        },
-                        move || plugin_operation(guid, guids, false),
-                    );
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.add_enabled_ui(
+            !self.microphones.is_empty() && self.job.is_none() && !self.audio_test.busy(),
+            |ui| {
+                ui.horizontal(|ui| {
                     if ui
                         .add_enabled(
-                            status != PluginStatus::NotInstalled,
-                            egui::Button::new("卸载插件"),
+                            status != PluginStatus::Installed,
+                            egui::Button::new(if needs_update {
+                                "更新插件"
+                            } else {
+                                "安装插件"
+                            }),
                         )
+                        .on_hover_text("安装或更新所选麦克风的VoiceBox插件")
                         .clicked()
                         && self.job.is_none()
                     {
-                        self.confirm_uninstall = true;
+                        self.confirm_uninstall = false;
+                        let guid = self.microphones[self.selected].guid.clone();
+                        let guids = self
+                            .microphones
+                            .iter()
+                            .map(|mic| mic.guid.clone())
+                            .collect();
+                        self.begin_job(
+                            ui.ctx(),
+                            if needs_update {
+                                "正在更新插件，请完成管理员授权…"
+                            } else {
+                                "正在安装插件，请完成管理员授权…"
+                            },
+                            move || plugin_operation(guid, guids, false),
+                        );
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add_enabled(
+                                status != PluginStatus::NotInstalled,
+                                egui::Button::new("卸载插件"),
+                            )
+                            .clicked()
+                            && self.job.is_none()
+                        {
+                            self.confirm_uninstall = true;
+                        }
+                    });
                 });
-            });
-        });
-        ui.add_enabled_ui(self.job.is_none(), |ui| {
+            },
+        );
+        ui.add_enabled_ui(self.job.is_none() && !self.audio_test.busy(), |ui| {
             if self.confirm_uninstall {
                 ui.separator();
                 ui.add(
@@ -693,6 +817,7 @@ fn microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
         }
         let name = device.get_friendlyname()?;
         microphones.push(Microphone {
+            device_id: id,
             name: if is_default {
                 format!("{name}（默认）")
             } else {

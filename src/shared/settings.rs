@@ -27,6 +27,15 @@ impl Default for Settings {
 }
 
 impl Settings {
+    #[allow(dead_code)] // Conversion stays in the DLL, including offline preview.
+    pub fn linear_gain(&self) -> f32 {
+        if self.gain_millidb == MIN_GAIN_MILLIDB {
+            0.0
+        } else {
+            10.0_f32.powf(self.gain_millidb as f32 / 20_000.0)
+        }
+    }
+
     pub fn validate(&self) -> io::Result<()> {
         if !(MIN_GAIN_MILLIDB..=MAX_GAIN_MILLIDB).contains(&self.gain_millidb) {
             return Err(io::Error::new(

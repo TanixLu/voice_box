@@ -1,10 +1,6 @@
 //! Settings file notifications and effect events stay off the real-time thread.
 use super::{etw, worker};
-use crate::shared::{
-    paths,
-    settings::{MIN_GAIN_MILLIDB, Settings},
-    utils::wide_null,
-};
+use crate::shared::{paths, settings::Settings, utils::wide_null};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
@@ -41,11 +37,7 @@ impl Default for RtParams {
 }
 impl RtParams {
     pub(crate) fn store(&self, settings: Settings) {
-        let gain = if settings.gain_millidb == MIN_GAIN_MILLIDB {
-            0.0
-        } else {
-            10.0_f32.powf(settings.gain_millidb as f32 / 20_000.0)
-        };
+        let gain = settings.linear_gain();
         let bits = if settings.enable_denoising {
             ENABLED_BIT
         } else {

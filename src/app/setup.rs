@@ -102,9 +102,10 @@ fn default_processing_modes() -> Vec<String> {
 
 const DISABLE_APO_GUID: &str = "{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5";
 
-const APO_DLL: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/target/voice_box.dll"));
+pub(super) const APO_DLL: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/target/voice_box.dll"));
 
-const APO_DLL_PATH: &str = r"C:\Windows\System32\voice_box.dll";
+pub(super) const APO_DLL_PATH: &str = r"C:\Windows\System32\voice_box.dll";
 const AUDIO_SERVICE_NAME: &str = "AudioSrv";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

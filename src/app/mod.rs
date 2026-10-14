@@ -1,7 +1,9 @@
 //! Management application: GUI, plugin setup, writable settings and file logs.
+mod audio_test;
 mod data_permissions;
 mod gui;
 mod logging;
+mod preview;
 mod registry;
 mod settings_writer;
 mod setup;
