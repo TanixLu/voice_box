@@ -21,8 +21,10 @@ scales both components of the noisy spectrum. The native STFT normalizes the
 Hann-window overlap; its intrinsic delay is 256 samples (16 ms).
 
 The model runs synchronously without allocating during inference or reset.
-Weights are decoded with `f32::from_le_bytes` during compilation. All three
-models are prepared when the audio stream opens; only the selected model runs.
-Switching fades out, resets, fills buffers in silence and fades in at the same
-device-frame delay as the other choices. No Python or inference runtime is
-required by the application.
+Weights are decoded with `f32::from_le_bytes` during compilation. Each channel
+has one UL-UNAS instance, prepared when the audio stream opens. Enabling or
+disabling denoising resets only neural state; the STFT, resamplers and output
+FIFO continue running with the same latency. Disabling skips neural inference
+and retains the 16 kHz STFT bypass. High-pass filtering, user gain and peak
+limiting remain active. No Python or inference runtime is required by the
+application.

@@ -4,9 +4,12 @@ mod network;
 mod spectral;
 mod weights;
 
-use super::StreamingModel;
 use network::Network;
 use spectral::{Complex, Stft};
+
+pub(super) const SAMPLE_RATE: u32 = 16_000;
+pub(super) const HOP_SIZE: usize = 256;
+pub(super) const LATENCY_SAMPLES: usize = HOP_SIZE;
 
 pub(super) struct UlUnas {
     enabled: bool,
@@ -24,30 +27,20 @@ impl UlUnas {
             spectrum: [Complex::new(0.0, 0.0); 257],
         }
     }
-}
-
-impl StreamingModel for UlUnas {
-    fn set_enabled(&mut self, enabled: bool) {
+    pub(super) fn set_enabled(&mut self, enabled: bool) {
         if self.enabled != enabled {
             self.network.reset();
             self.enabled = enabled;
         }
     }
-    fn sample_rate(&self) -> u32 {
-        16_000
-    }
-    fn hop_size(&self) -> usize {
-        256
-    }
-    fn latency_samples(&self) -> usize {
-        256
-    }
-    fn reset(&mut self) {
+    pub(super) fn reset(&mut self) {
         self.network.reset();
         self.stft.reset();
         self.spectrum.fill(Complex::new(0.0, 0.0));
     }
-    fn process(&mut self, input: &[f32], output: &mut [f32]) {
+    pub(super) fn process(&mut self, input: &[f32], output: &mut [f32]) {
+        debug_assert_eq!(input.len(), HOP_SIZE);
+        debug_assert_eq!(output.len(), HOP_SIZE);
         self.stft.analyze(input, &mut self.spectrum);
         if self.enabled {
             self.network.enhance(&mut self.spectrum);

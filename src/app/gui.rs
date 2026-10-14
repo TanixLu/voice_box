@@ -9,10 +9,11 @@ use super::{
 };
 use crate::shared::{
     paths,
-    settings::{DenoiseModel, MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB, Settings},
+    settings::{MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB, Settings},
 };
 
 pub fn run() -> anyhow::Result<()> {
+    let settings = Settings::try_load()?;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([560.0, 620.0])
@@ -24,7 +25,7 @@ pub fn run() -> anyhow::Result<()> {
     eframe::run_native(
         "VoiceBox",
         options,
-        Box::new(|cc| Ok(Box::new(VoiceBoxApp::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(VoiceBoxApp::new(cc, settings)))),
     )
     .map_err(|error| anyhow::anyhow!("无法打开 VoiceBox 窗口：{error}"))
 }
@@ -90,7 +91,7 @@ struct VoiceBoxApp {
 }
 
 impl VoiceBoxApp {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, settings: Settings) -> Self {
         let ctx = &cc.egui_ctx;
         let preferences: UiPreferences = cc
             .storage
@@ -101,7 +102,6 @@ impl VoiceBoxApp {
         }
         install_chinese_font(ctx);
         apply_style(ctx);
-        let settings = Settings::try_load().unwrap_or_default();
         let mut app = Self {
             microphones: Vec::new(),
             selected: 0,
@@ -390,17 +390,7 @@ impl VoiceBoxApp {
     fn settings_ui(&mut self, ui: &mut egui::Ui) {
         ui.strong("语音设置");
         ui.add_enabled_ui(self.job.is_none(), |ui| {
-            ui.label("降噪模型");
-            egui::ComboBox::from_id_salt("denoise_model")
-                .width(ui.available_width())
-                .selected_text(self.settings.denoise_model.label())
-                .show_ui(ui, |ui| {
-                    for model in DenoiseModel::ALL {
-                        ui.selectable_value(&mut self.settings.denoise_model, model, model.label());
-                    }
-                });
-            hint(ui, "保存后实时生效，切换模型时会短暂静音。");
-            ui.separator();
+            ui.checkbox(&mut self.settings.enable_denoising, "启用降噪");
             let mut gain_db = self.settings.gain_millidb as f64 / 1000.0;
             let mut changed = false;
             ui.horizontal(|ui| {
@@ -467,7 +457,6 @@ impl VoiceBoxApp {
             if changed {
                 self.settings.gain_millidb = (gain_db * 1000.0).round() as i32;
             }
-            ui.separator();
         });
         ui.horizontal(|ui| {
             if ui

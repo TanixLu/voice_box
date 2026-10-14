@@ -2,7 +2,7 @@
 use super::{etw, worker};
 use crate::shared::{
     paths,
-    settings::{DenoiseModel, MIN_GAIN_MILLIDB, Settings},
+    settings::{MIN_GAIN_MILLIDB, Settings},
     utils::wide_null,
 };
 use std::sync::{
@@ -24,8 +24,7 @@ use windows::Win32::{
 };
 use windows::core::{PCWSTR, w};
 
-const MODEL_SHIFT: u32 = 32;
-const MODEL_MASK: u64 = 3;
+const ENABLED_BIT: u64 = 1 << 32;
 
 pub struct RtParams {
     bits: AtomicU64,
@@ -35,10 +34,7 @@ pub struct RtParams {
 impl Default for RtParams {
     fn default() -> Self {
         Self {
-            bits: AtomicU64::new(
-                ((DenoiseModel::default().index() as u64) << MODEL_SHIFT)
-                    | 1.0_f32.to_bits() as u64,
-            ),
+            bits: AtomicU64::new(ENABLED_BIT | u64::from(1.0_f32.to_bits())),
             effects: Mutex::new([None, None]),
         }
     }
@@ -50,17 +46,19 @@ impl RtParams {
         } else {
             10.0_f32.powf(settings.gain_millidb as f32 / 20_000.0)
         };
-        let bits = ((settings.denoise_model.index() as u64) << MODEL_SHIFT) | gain.to_bits() as u64;
+        let bits = if settings.enable_denoising {
+            ENABLED_BIT
+        } else {
+            0
+        } | u64::from(gain.to_bits());
         // Subscription plus its returned snapshot must be serialized with updates.
         let effects = self
             .effects
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let previous = self.bits.swap(bits, Ordering::AcqRel);
-        let was_enabled =
-            DenoiseModel::from_index(((previous >> MODEL_SHIFT) & MODEL_MASK) as usize)
-                != DenoiseModel::Off;
-        if was_enabled != (settings.denoise_model != DenoiseModel::Off) {
+        let was_enabled = previous & ENABLED_BIT != 0;
+        if was_enabled != settings.enable_denoising {
             for event in effects.iter().flatten() {
                 unsafe {
                     let _ = SetEvent(event.handle());
@@ -68,12 +66,9 @@ impl RtParams {
             }
         }
     }
-    pub fn load(&self) -> (DenoiseModel, f32) {
+    pub fn load(&self) -> (bool, f32) {
         let bits = self.bits.load(Ordering::Acquire);
-        (
-            DenoiseModel::from_index(((bits >> MODEL_SHIFT) & MODEL_MASK) as usize),
-            f32::from_bits(bits as u32),
-        )
+        (bits & ENABLED_BIT != 0, f32::from_bits(bits as u32))
     }
 
     pub fn subscribe_effects(
@@ -104,7 +99,7 @@ impl RtParams {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         effects[usize::from(controllable)] = event;
-        Ok(self.load().0 != DenoiseModel::Off)
+        Ok(self.load().0)
     }
 }
 

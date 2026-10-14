@@ -910,10 +910,7 @@ unsafe extern "system" fn lock_for_process(
             sample_format,
             input_format.dwSamplesPerFrame as usize,
             f64::from(input_format.fFramesPerSecond),
-            (*object)
-                .effect_enabled
-                .load(Ordering::Acquire)
-                .then_some((*object).params.load().0),
+            (*object).effect_enabled.load(Ordering::Acquire),
         )
     }
     .is_err()
@@ -947,11 +944,11 @@ unsafe extern "system" fn lock_for_process(
     apo_log!(
         etw::INFO,
         etw::SETTINGS,
-        "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} effect=denoise model={} latency_hns={}",
+        "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} effect=denoise enabled={} latency_hns={}",
         unsafe { (**inputs).u32MaxFrameCount },
         unsafe { (**outputs).u32MaxFrameCount },
         input_format.dwSamplesPerFrame,
-        unsafe { (*object).params.load().0.as_str() },
+        unsafe { (*object).params.load().0 },
         unsafe { (*object).latency_hns.load(Ordering::Acquire) },
     );
     S_OK
@@ -1041,13 +1038,10 @@ unsafe extern "system" fn process(
     if unsafe { (*object).effect_enabled.load(Ordering::Acquire) } {
         let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
         let params = unsafe { &(*object).params };
-        let (model, gain) = params.load();
-        unsafe { (&mut *(*object).dsp.get()).process_with_settings(buffer, gain, model) };
-        // The DSP materializes every frame, including startup padding and mute.
-        // Keep these packets valid even when all samples are zero: legacy capture
-        // clients can stop recording when initial packets are BUFFER_SILENT.
-        // Silent input can also yield audio while the model's buffers drain.
-        output_flags = BUFFER_VALID;
+        let (enabled, gain) = params.load();
+        let silent =
+            unsafe { (&mut *(*object).dsp.get()).process_with_settings(buffer, gain, enabled) };
+        output_flags = if silent { BUFFER_SILENT } else { BUFFER_VALID };
     }
     output.u32ValidFrameCount = input.u32ValidFrameCount;
     output.u32BufferFlags = output_flags;

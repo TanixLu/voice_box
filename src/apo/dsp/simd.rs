@@ -24,10 +24,6 @@ impl Kernels {
     pub(super) fn norm(self, data: &mut [f32], scale: f32, bias: f32) {
         self.0.dispatch(Affine { data, scale, bias });
     }
-
-    pub(super) fn prelu(self, data: &mut [f32], slope: f32) {
-        self.0.dispatch(Prelu { data, slope });
-    }
 }
 
 struct Linear<'a> {
@@ -79,32 +75,6 @@ impl WithSimd for Affine<'_> {
         }
         for value in tail {
             *value = *value * self.scale + self.bias;
-        }
-    }
-}
-
-struct Prelu<'a> {
-    data: &'a mut [f32],
-    slope: f32,
-}
-impl WithSimd for Prelu<'_> {
-    type Output = ();
-    #[inline(always)]
-    fn with_simd<S: Simd>(self, simd: S) {
-        let (head, tail) = S::as_mut_simd_f32s(self.data);
-        let zero = simd.splat_f32s(0.0);
-        let slope = simd.splat_f32s(self.slope);
-        for value in head {
-            *value = simd.select_f32s(
-                simd.greater_than_or_equal_f32s(*value, zero),
-                *value,
-                simd.mul_f32s(*value, slope),
-            );
-        }
-        for value in tail {
-            if *value < 0.0 {
-                *value *= self.slope;
-            }
         }
     }
 }

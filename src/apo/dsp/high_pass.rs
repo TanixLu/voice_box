@@ -1,4 +1,4 @@
-//! A 60 Hz Butterworth high-pass at the selected model's sample rate.
+//! A 60 Hz Butterworth high-pass at UL-UNAS's sample rate.
 
 use std::f64::consts::{PI, SQRT_2};
 

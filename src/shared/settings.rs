@@ -10,66 +10,20 @@ pub const MIN_GAIN_MILLIDB: i32 = -60_000;
 pub const MAX_GAIN_MILLIDB: i32 = 60_000;
 const MAX_SETTINGS_BYTES: usize = 16_384;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u8)]
-pub enum DenoiseModel {
-    #[default]
-    #[serde(rename = "deep_filter_net3")]
-    DeepFilterNet3 = 0,
-    #[serde(rename = "ul_unas")]
-    UlUnas = 1,
-    #[serde(rename = "gtcrn")]
-    Gtcrn = 2,
-    #[serde(rename = "off")]
-    Off = 3,
-}
-
-impl DenoiseModel {
-    #[allow(dead_code)] // Only the GUI enumerates the selectable options.
-    pub const ALL: [Self; 4] = [Self::Off, Self::DeepFilterNet3, Self::UlUnas, Self::Gtcrn];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Gtcrn => "gtcrn",
-            Self::Off => "off",
-            Self::DeepFilterNet3 => "deep_filter_net3",
-            Self::UlUnas => "ul_unas",
-        }
-    }
-
-    // GUI labels are not used by the APO DLL.
-    #[allow(dead_code)]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Gtcrn => "GTCRN",
-            Self::Off => "关闭",
-            Self::DeepFilterNet3 => "DeepFilterNet3",
-            Self::UlUnas => "UL-UNAS",
-        }
-    }
-
-    // Index encoding is only used by the APO's real-time snapshot and DSP.
-    #[allow(dead_code)]
-    pub const fn index(self) -> usize {
-        self as usize
-    }
-
-    #[allow(dead_code)]
-    pub const fn from_index(index: usize) -> Self {
-        match index {
-            1 => Self::UlUnas,
-            2 => Self::Gtcrn,
-            3 => Self::Off,
-            _ => Self::DeepFilterNet3,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    pub denoise_model: DenoiseModel,
+    pub enable_denoising: bool,
     pub gain_millidb: i32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            enable_denoising: true,
+            gain_millidb: 0,
+        }
+    }
 }
 
 impl Settings {

@@ -1,4 +1,4 @@
-//! VoiceBox APO: high-pass filtering, DeepFilterNet3/UL-UNAS/GTCRN and peak limiting.
+//! VoiceBox APO: high-pass filtering, UL-UNAS denoising and peak limiting.
 //!
 //! APO implementation lives in [`apo`]; shared data formats live in [`shared`].
 
