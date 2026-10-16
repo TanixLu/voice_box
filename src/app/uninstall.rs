@@ -1,19 +1,26 @@
-//! Elevated uninstall; self-replace handles executable deletion on exit.
-use std::path::Path;
+//! Elevated APO removal followed by recycling from a separate system process.
+use std::{
+    ffi::OsString,
+    os::windows::{ffi::OsStringExt, io::AsRawHandle, process::CommandExt},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
 
 use anyhow::{Context, ensure};
 use is_elevated::is_elevated;
 use windows::{
     Win32::{
-        Foundation::WAIT_OBJECT_0,
+        Foundation::{HANDLE, WAIT_OBJECT_0},
         System::{
             Com::{
                 CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateGuid, CoCreateInstance,
                 CoInitializeEx, CoUninitialize,
             },
+            SystemInformation::GetSystemDirectoryW,
             Threading::{
-                CreateEventW, EVENT_MODIFY_STATE, INFINITE, OpenEventW, OpenProcess,
-                PROCESS_SYNCHRONIZE, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
+                CREATE_NO_WINDOW, CreateEventW, EVENT_MODIFY_STATE, INFINITE, OpenEventW,
+                OpenProcess, PROCESS_SYNCHRONIZE, SetEvent, WaitForMultipleObjects,
+                WaitForSingleObject,
             },
         },
         UI::{
@@ -23,7 +30,7 @@ use windows::{
                 SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS,
                 SHCreateItemFromParsingName, SHELLEXECUTEINFOW, ShellExecuteExW,
             },
-            WindowsAndMessaging::{MB_ICONINFORMATION, MB_OK, MessageBoxW, SW_HIDE},
+            WindowsAndMessaging::SW_HIDE,
         },
     },
     core::{Owned, PCWSTR, w},
@@ -34,25 +41,17 @@ use crate::shared::{paths, utils::wide_null};
 
 const ELEVATED_UNINSTALL: &str = "--uninstall-all";
 
-// Called after eframe has closed and finished all persistence writes, so it
-// cannot recreate the data directory after that directory has been recycled.
+// Runs on a GUI worker thread. The independent progress window is shown before
+// the GUI closes; file recycling still waits for the entire process to exit.
 pub fn run() -> anyhow::Result<()> {
     if is_elevated() {
-        return elevated_uninstall();
+        return elevated_uninstall(None);
     }
 
-    // Keep the GUI process alive until the elevated process has opened its handle.
-    // self_delete must run after the GUI exits, since both processes use this EXE.
+    // Keep the GUI visible until the elevated process has shown its progress UI.
+    // The elevated process shares this EXE and takes over only after the GUI exits.
     let event_name = format!("Local\\VoiceBox.Uninstall.{:?}", unsafe { CoCreateGuid()? });
-    let ready_name = wide_null(&event_name);
-    let ready = unsafe {
-        Owned::new(CreateEventW(
-            None,
-            true,
-            false,
-            PCWSTR(ready_name.as_ptr()),
-        )?)
-    };
+    let ready = create_event(&event_name)?;
     let parameters = wide_null(format!(
         "{ELEVATED_UNINSTALL} {} {event_name}",
         std::process::id()
@@ -103,31 +102,21 @@ pub fn maybe_elevated_uninstall() -> anyhow::Result<bool> {
             OpenProcess(PROCESS_SYNCHRONIZE, false, parent_id).context("打开原程序进程失败")?,
         )
     };
-    unsafe { SetEvent(*ready).context("通知原程序退出失败")? };
-    ensure!(
-        unsafe { WaitForSingleObject(*parent, INFINITE) } == WAIT_OBJECT_0,
-        "等待原程序退出失败"
-    );
-    let single_instance = single_instance::SingleInstance::new("VoiceBoxSingleInstance")?;
-    ensure!(
-        single_instance.is_single(),
-        "另一个 VoiceBox 实例正在运行，请关闭后重试卸载"
-    );
-    elevated_uninstall()?;
+    elevated_uninstall(Some((*parent, *ready)))?;
     Ok(true)
 }
 
-fn elevated_uninstall() -> anyhow::Result<()> {
+fn elevated_uninstall(handoff: Option<(HANDLE, HANDLE)>) -> anyhow::Result<()> {
     ensure!(is_elevated(), "完全卸载需要管理员权限");
     let directory = paths::data_dir()?;
-    if directory.try_exists()? {
-        // self_delete may stage files alongside the EXE if moving to TEMP fails.
-        // Keep that staging area outside the directory we are about to recycle.
+    let cleanup = start_cleanup(&directory)?;
+    // Close the original GUI only after the independent progress window is shown.
+    // That window also retains the single-instance mutex during the handoff.
+    if let Some((parent, ready)) = handoff {
+        unsafe { SetEvent(ready).context("通知原程序退出失败")? };
         ensure!(
-            !std::env::current_exe()?
-                .canonicalize()?
-                .starts_with(directory.canonicalize()?),
-            "当前 exe 位于 VoiceBox 数据目录内，请先将 exe 移至其他目录再卸载"
+            unsafe { WaitForSingleObject(parent, INFINITE) } == WAIT_OBJECT_0,
+            "等待原程序退出失败"
         );
     }
     // Never initialize settings or recreate a missing data directory here.
@@ -137,17 +126,92 @@ fn elevated_uninstall() -> anyhow::Result<()> {
         setup::unregister_all()?;
         recycle(Path::new(setup::APO_DLL_PATH)).context("回收 APO DLL 失败")
     })?;
-    recycle(&directory).context("回收 VoiceBox 数据目录失败")?;
-    self_replace::self_delete().context("安排程序自删除失败")?;
-    unsafe {
-        MessageBoxW(
-            None,
-            w!("VoiceBox 已完全从您的电脑中移除。"),
-            w!("VoiceBox 卸载完成"),
-            MB_OK | MB_ICONINFORMATION,
-        );
+    cleanup.finish()
+}
+
+// On failure, dismiss the progress window without permitting file recycling.
+struct Cleanup {
+    complete: Owned<HANDLE>,
+    cancel: Owned<HANDLE>,
+    committed: bool,
+}
+
+impl Cleanup {
+    fn finish(mut self) -> anyhow::Result<()> {
+        unsafe { SetEvent(*self.complete).context("通知清理进程卸载完成失败")? };
+        self.committed = true;
+        Ok(())
     }
-    Ok(())
+}
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        if !self.committed {
+            unsafe {
+                let _ = SetEvent(*self.cancel);
+            }
+        }
+    }
+}
+
+fn create_event(name: &str) -> anyhow::Result<Owned<HANDLE>> {
+    let name = wide_null(name);
+    Ok(unsafe { Owned::new(CreateEventW(None, true, false, PCWSTR(name.as_ptr()))?) })
+}
+
+fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
+    let mut buffer = vec![0_u16; 32768];
+    let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
+    ensure!(
+        length > 0 && length < buffer.len(),
+        "读取 Windows 系统目录失败"
+    );
+    let system_directory = PathBuf::from(OsString::from_wide(&buffer[..length]));
+    let event_name = format!("Local\\VoiceBox.Cleanup.{:?}", unsafe { CoCreateGuid()? });
+    let ready = create_event(&event_name)?;
+    let complete_name = format!("{event_name}.complete");
+    let cancel_name = format!("{event_name}.cancel");
+    let cleanup_state = Cleanup {
+        complete: create_event(&complete_name)?,
+        cancel: create_event(&cancel_name)?,
+        committed: false,
+    };
+
+    let cleanup = Command::new(system_directory.join(r"WindowsPowerShell\v1.0\powershell.exe"))
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-STA",
+            "-Command",
+        ])
+        .arg(include_str!("uninstall_cleanup.ps1"))
+        // Paths are data, never interpolated into PowerShell source code.
+        .env("VOICEBOX_UNINSTALL_EXE", std::env::current_exe()?)
+        .env("VOICEBOX_UNINSTALL_DATA", directory)
+        .env("VOICEBOX_UNINSTALL_READY", event_name)
+        .env("VOICEBOX_UNINSTALL_COMPLETE", complete_name)
+        .env("VOICEBOX_UNINSTALL_CANCEL", cancel_name)
+        .env(
+            "VOICEBOX_UNINSTALL_PROCESS_ID",
+            std::process::id().to_string(),
+        )
+        .current_dir(system_directory)
+        .creation_flags(CREATE_NO_WINDOW.0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("启动回收站清理进程失败")?;
+    ensure!(
+        unsafe {
+            WaitForMultipleObjects(&[*ready, HANDLE(cleanup.as_raw_handle())], false, INFINITE)
+        } == WAIT_OBJECT_0,
+        "回收站清理进程初始化失败，请查看错误提示后重试"
+    );
+    Ok(cleanup_state)
 }
 
 struct ShellApartment;

@@ -1,8 +1,4 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-    mpsc,
-};
+use std::sync::{Arc, mpsc};
 
 use egui::{FontData, FontDefinitions, FontFamily};
 use wasapi::{DeviceEnumerator, Direction};
@@ -32,8 +28,6 @@ const LICENSES: &str = concat!(
 
 pub fn run() -> anyhow::Result<()> {
     let settings = Settings::try_load()?;
-    let uninstall_requested = Arc::new(AtomicBool::new(false));
-    let app_uninstall_requested = Arc::clone(&uninstall_requested);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([560.0, 760.0])
@@ -45,20 +39,11 @@ pub fn run() -> anyhow::Result<()> {
     eframe::run_native(
         "VoiceBox",
         options,
-        Box::new(move |cc| {
-            Ok(Box::new(VoiceBoxApp::new(
-                cc,
-                settings,
-                app_uninstall_requested,
-            )))
-        }),
+        Box::new(move |cc| Ok(Box::new(VoiceBoxApp::new(cc, settings)))),
     )
     .map_err(|error| anyhow::anyhow!("无法打开 VoiceBox 窗口：{error}"))?;
-    // Wait for eframe storage (including its save thread) to be dropped before
-    // recycling the directory. Otherwise shutdown would recreate ui.ron.
-    if uninstall_requested.load(Ordering::Relaxed) {
-        uninstall::run()?;
-    }
+    // The cleanup process waits for this entire process to exit, including all
+    // eframe persistence writes, before recycling the data directory.
     Ok(())
 }
 
@@ -81,6 +66,7 @@ impl Microphone {
 }
 
 enum JobResult {
+    Uninstall(anyhow::Result<()>),
     Microphones(anyhow::Result<(Vec<Microphone>, usize)>),
     Plugin {
         result: anyhow::Result<()>,
@@ -122,17 +108,14 @@ struct VoiceBoxApp {
     failed: bool,
     confirm_uninstall: bool,
     confirm_full_uninstall: bool,
-    uninstall_requested: Arc<AtomicBool>,
+    uninstalling: bool,
+    uninstall_requested: bool,
     show_licenses: bool,
     audio_test: AudioTest,
 }
 
 impl VoiceBoxApp {
-    fn new(
-        cc: &eframe::CreationContext<'_>,
-        settings: Settings,
-        uninstall_requested: Arc<AtomicBool>,
-    ) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, settings: Settings) -> Self {
         let ctx = &cc.egui_ctx;
         let preferences: UiPreferences = cc
             .storage
@@ -156,7 +139,8 @@ impl VoiceBoxApp {
             failed: false,
             confirm_uninstall: false,
             confirm_full_uninstall: false,
-            uninstall_requested,
+            uninstalling: false,
+            uninstall_requested: false,
             show_licenses: false,
             audio_test: AudioTest::default(),
         };
@@ -181,7 +165,8 @@ impl VoiceBoxApp {
             .spawn(move || {
                 let result = operation();
                 match &result {
-                    JobResult::Microphones(Err(error))
+                    JobResult::Uninstall(Err(error))
+                    | JobResult::Microphones(Err(error))
                     | JobResult::Plugin {
                         result: Err(error), ..
                     }
@@ -203,6 +188,7 @@ impl VoiceBoxApp {
             })
         {
             self.job = None;
+            self.uninstalling = false;
             self.status = format!("无法开始操作：{error}");
             self.failed = true;
         }
@@ -224,6 +210,7 @@ impl VoiceBoxApp {
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.job = None;
+                self.uninstalling = false;
                 self.status = "操作未完成，请重试。".into();
                 self.failed = true;
                 return;
@@ -231,6 +218,12 @@ impl VoiceBoxApp {
         };
         self.job = None;
         match result {
+            JobResult::Uninstall(Ok(())) => self.uninstall_requested = true,
+            JobResult::Uninstall(Err(error)) => {
+                self.uninstalling = false;
+                self.status = format!("卸载未完成：{error:#}");
+                self.failed = true;
+            }
             JobResult::Microphones(Ok((microphones, selected))) => {
                 let selected = self
                     .preferred_guid
@@ -309,8 +302,34 @@ impl VoiceBoxApp {
         self.zoom_factor = ui.ctx().zoom_factor();
         self.poll_job();
         self.audio_test.poll();
-        if self.uninstall_requested.load(Ordering::Relaxed) {
+        if self.uninstall_requested {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        if self.uninstalling {
+            if ui.ctx().input(|input| input.viewport().close_requested()) {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            }
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::EnableButtons {
+                    close: false,
+                    minimized: true,
+                    maximize: false,
+                });
+            self.close_enabled = false;
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(64.0);
+                    ui.heading("正在卸载 VoiceBox");
+                    ui.add_space(20.0);
+                    ui.spinner();
+                    ui.add_space(12.0);
+                    ui.label(&self.status);
+                });
+            });
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
             return;
         }
         if self.audio_test.busy() {
@@ -410,8 +429,12 @@ impl VoiceBoxApp {
                     .clicked()
                 {
                     self.confirm_full_uninstall = false;
-                    self.uninstall_requested.store(true, Ordering::Relaxed);
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    self.uninstalling = true;
+                    self.begin_job(
+                        ctx,
+                        "正在准备卸载，请完成管理员授权…",
+                        || JobResult::Uninstall(uninstall::run()),
+                    );
                 }
                 if ui.button("取消").clicked() {
                     self.confirm_full_uninstall = false;
