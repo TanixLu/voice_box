@@ -1,4 +1,8 @@
-use std::sync::{Arc, mpsc};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+    mpsc,
+};
 
 use egui::{FontData, FontDefinitions, FontFamily};
 use wasapi::{DeviceEnumerator, Direction};
@@ -7,6 +11,7 @@ use super::{
     audio_test::{Activity, AudioTest},
     settings_writer,
     setup::{self, PluginStatus},
+    uninstall,
 };
 use crate::shared::{
     paths,
@@ -27,6 +32,8 @@ const LICENSES: &str = concat!(
 
 pub fn run() -> anyhow::Result<()> {
     let settings = Settings::try_load()?;
+    let uninstall_requested = Arc::new(AtomicBool::new(false));
+    let app_uninstall_requested = Arc::clone(&uninstall_requested);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([560.0, 760.0])
@@ -38,9 +45,21 @@ pub fn run() -> anyhow::Result<()> {
     eframe::run_native(
         "VoiceBox",
         options,
-        Box::new(move |cc| Ok(Box::new(VoiceBoxApp::new(cc, settings)))),
+        Box::new(move |cc| {
+            Ok(Box::new(VoiceBoxApp::new(
+                cc,
+                settings,
+                app_uninstall_requested,
+            )))
+        }),
     )
-    .map_err(|error| anyhow::anyhow!("无法打开 VoiceBox 窗口：{error}"))
+    .map_err(|error| anyhow::anyhow!("无法打开 VoiceBox 窗口：{error}"))?;
+    // Wait for eframe storage (including its save thread) to be dropped before
+    // recycling the directory. Otherwise shutdown would recreate ui.ron.
+    if uninstall_requested.load(Ordering::Relaxed) {
+        uninstall::run()?;
+    }
+    Ok(())
 }
 
 struct Microphone {
@@ -102,12 +121,18 @@ struct VoiceBoxApp {
     status: String,
     failed: bool,
     confirm_uninstall: bool,
+    confirm_full_uninstall: bool,
+    uninstall_requested: Arc<AtomicBool>,
     show_licenses: bool,
     audio_test: AudioTest,
 }
 
 impl VoiceBoxApp {
-    fn new(cc: &eframe::CreationContext<'_>, settings: Settings) -> Self {
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        settings: Settings,
+        uninstall_requested: Arc<AtomicBool>,
+    ) -> Self {
         let ctx = &cc.egui_ctx;
         let preferences: UiPreferences = cc
             .storage
@@ -130,6 +155,8 @@ impl VoiceBoxApp {
             status: String::new(),
             failed: false,
             confirm_uninstall: false,
+            confirm_full_uninstall: false,
+            uninstall_requested,
             show_licenses: false,
             audio_test: AudioTest::default(),
         };
@@ -282,6 +309,10 @@ impl VoiceBoxApp {
         self.zoom_factor = ui.ctx().zoom_factor();
         self.poll_job();
         self.audio_test.poll();
+        if self.uninstall_requested.load(Ordering::Relaxed) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
         if self.audio_test.busy() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
@@ -314,9 +345,17 @@ impl VoiceBoxApp {
                                 |ui| {
                                     ui.horizontal(|ui| {
                                         ui.menu_button("其他", |ui| {
-                                            // TODO: Implement complete application uninstallation.
-                                            ui.add_enabled(false, egui::Button::new("完全卸载"))
-                                                .on_hover_text("暂未实现");
+                                            if ui
+                                                .add_enabled(
+                                                    self.job.is_none() && !self.audio_test.busy(),
+                                                    egui::Button::new("完全卸载"),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.confirm_uninstall = false;
+                                                self.confirm_full_uninstall = true;
+                                                ui.close();
+                                            }
                                             if ui.button("版权声明").clicked() {
                                                 self.show_licenses = true;
                                                 ui.close();
@@ -336,6 +375,7 @@ impl VoiceBoxApp {
             });
 
         self.licenses_ui(ui.ctx());
+        self.full_uninstall_ui(ui.ctx());
 
         // Apply after drawing so a job started by a button click disables the
         // native close button in the same frame. Every completion path restores it.
@@ -348,6 +388,38 @@ impl VoiceBoxApp {
                     maximize: true,
                 });
             self.close_enabled = close_enabled;
+        }
+    }
+
+    fn full_uninstall_ui(&mut self, ctx: &egui::Context) {
+        if !self.confirm_full_uninstall {
+            return;
+        }
+        let available = ctx.content_rect().size();
+        let response = egui::Modal::new(egui::Id::new("full_uninstall")).show(ctx, |ui| {
+            ui.set_width((available.x - 64.0).clamp(180.0, 400.0));
+            ui.heading("卸载 VoiceBox");
+            ui.add(egui::Label::new("将卸载 VoiceBox 的所有组件及配置。\n\n确定要继续吗？").wrap());
+            ui.separator();
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(
+                        self.job.is_none() && !self.audio_test.busy(),
+                        egui::Button::new("卸载"),
+                    )
+                    .clicked()
+                {
+                    self.confirm_full_uninstall = false;
+                    self.uninstall_requested.store(true, Ordering::Relaxed);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                if ui.button("取消").clicked() {
+                    self.confirm_full_uninstall = false;
+                }
+            });
+        });
+        if response.should_close() {
+            self.confirm_full_uninstall = false;
         }
     }
 

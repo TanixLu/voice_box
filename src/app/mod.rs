@@ -7,6 +7,7 @@ mod preview;
 mod registry;
 mod settings_writer;
 mod setup;
+mod uninstall;
 
 const UI_STATE_FILE: &str = "ui.ron";
 
@@ -32,6 +33,9 @@ pub fn run() {
 }
 
 fn run_inner() -> anyhow::Result<()> {
+    if uninstall::maybe_elevated_uninstall()? {
+        return Ok(());
+    }
     // The same EXE performs elevated setup without creating another GUI.
     if setup::maybe_elevated_setup()? {
         info!("Elevated setup operation completed successfully");

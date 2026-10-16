@@ -187,6 +187,18 @@ fn elevated_reg(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
         "Elevated operation requested but not running as administrator"
     );
 
+    with_audio_service_stopped(|| {
+        if uninstall {
+            elevated_unreg_inner(device_guid)
+        } else {
+            elevated_reg_inner(device_guid)
+        }
+    })
+}
+
+pub(super) fn with_audio_service_stopped(
+    operation: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     let mut session = RestartSession::new()?;
     session.register_services([AUDIO_SERVICE_NAME])?;
     let report = session.affected_applications()?;
@@ -203,11 +215,7 @@ fn elevated_reg(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
     info!("Audio service shutdown successfully");
 
     // Always restart the service, including when a registry or DLL write fails.
-    let registration = if uninstall {
-        elevated_unreg_inner(device_guid)
-    } else {
-        elevated_reg_inner(device_guid)
-    };
+    let registration = operation();
 
     let completion = pending.restart();
     let outcome = completion.outcome().clone();
@@ -339,6 +347,76 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+pub(super) fn unregister_all() -> anyhow::Result<()> {
+    let transaction = Transaction::new().context("创建完全卸载注册事务失败")?;
+    let root = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let capture = match root.open_subkey_transacted_with_flags(
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture",
+        &transaction,
+        KEY_READ | KEY_WOW64_64KEY,
+    ) {
+        Ok(capture) => Some(capture),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error).context("枚举麦克风注册表失败"),
+    };
+    if let Some(capture) = capture {
+        // Enumerate the registry rather than active WASAPI devices: disabled and
+        // disconnected microphones must lose their VoiceBox association too.
+        for device in capture.enum_keys() {
+            let device = device.context("读取麦克风注册表项失败")?;
+            let fx = match capture.open_subkey_transacted_with_flags(
+                format!(r"{device}\FxProperties"),
+                &transaction,
+                KEY_QUERY_VALUE | KEY_SET_VALUE | KEY_WOW64_64KEY,
+            ) {
+                Ok(fx) => fx,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("打开麦克风 {device} 的 FxProperties 失败"));
+                }
+            };
+            update_fx_properties(&fx, true)
+                .with_context(|| format!("卸载麦克风 {device} 的 VoiceBox APO 失败"))?;
+        }
+    }
+
+    // Match the machine-wide 64-bit COM and APO registrations made by setup.
+    // Do not reset shared Windows audio settings or other APOs' properties.
+    let guid = plugin_guid();
+    for path in [
+        format!(r"SOFTWARE\Classes\CLSID\{guid}"),
+        format!(r"SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}"),
+    ] {
+        delete_tree_transacted(&root, &path, &transaction)
+            .with_context(|| format!("删除 VoiceBox APO 注册失败：{path}"))?;
+    }
+    transaction.commit().context("提交完全卸载注册事务失败")?;
+    info!("Removed VoiceBox from all capture devices and unregistered the APO");
+    Ok(())
+}
+
+fn delete_tree_transacted(
+    root: &RegKey,
+    path: &str,
+    transaction: &Transaction,
+) -> std::io::Result<()> {
+    let key =
+        match root.open_subkey_transacted_with_flags(path, transaction, KEY_READ | KEY_WOW64_64KEY)
+        {
+            Ok(key) => key,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+    let children = key.enum_keys().collect::<std::io::Result<Vec<_>>>()?;
+    for child in children {
+        delete_tree_transacted(root, &format!(r"{path}\{child}"), transaction)?;
+    }
+    drop(key);
+    root.delete_subkey_transacted_with_flags(path, transaction, KEY_WOW64_64KEY)
+}
+
 pub fn maybe_elevated_setup() -> anyhow::Result<bool> {
     let args: Vec<String> = std::env::args().collect();
     if matches!(
