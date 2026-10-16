@@ -1,0 +1,47 @@
+VoiceBox - Third-Party Licenses and Copyright Notices
+===================================================
+
+Target: x86_64-pc-windows-msvc
+Generated from Cargo.lock, about.toml and about.hbs by build.cmd.
+Includes transitive and build dependencies; excludes dev-only dependencies.
+Third-party terms remain in effect independently of VoiceBox's dual license.
+
+{{#each licenses}}
+{{! Skip a license group used only by VoiceBox itself. }}
+{{#unless (and (eq used_by.[0].crate.name "voice_box") (not used_by.[1]))}}
+===== {{{name}}} ({{id}}) =====
+{{#each used_by}}
+{{#unless (eq crate.name "voice_box")}}
+- {{crate.name}} {{crate.version}}: {{{crate.repository}}}
+{{/unless}}
+{{/each}}
+
+{{#if (and (eq id "MIT") (not source_path))}}
+These packages declare MIT but supply no original license text.
+Authors below are Cargo metadata, not an inferred copyright notice:
+{{#each used_by}}
+- {{crate.name}}: {{#each crate.authors}}{{{this}}} {{/each}}
+{{/each}}
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+{{else}}
+{{{text}}}
+{{/if}}
+
+{{/unless}}
+{{/each}}

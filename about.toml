@@ -1,0 +1,44 @@
+accepted = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "Zlib",
+    "ISC",
+    "Unicode-3.0",
+]
+targets = ["x86_64-pc-windows-msvc"]
+ignore-dev-dependencies = true
+
+# Preserve the complete mixed license files, including their original notices.
+[dpi.clarify]
+license = "Apache-2.0 AND MIT"
+[[dpi.clarify.files]]
+path = "LICENSE"
+license = "Apache-2.0"
+checksum = "6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a"
+[[dpi.clarify.files]]
+path = "LICENSE-LIBM-MIT"
+license = "MIT"
+checksum = "9eff396a99bafd208e7126602420d6864f6066c08b84485a5b032320a9c01997"
+
+[libm.clarify]
+license = "MIT"
+[[libm.clarify.files]]
+path = "LICENSE.txt"
+license = "MIT"
+checksum = "3823dda7cf046602f4b4e77ec8e227863dc4736037cc85bb33d9f19febe16bb7"
+
+# These packages omit LICENSE from their archives. cargo-about automatically
+# uses the published commit from .cargo_vcs_info.json; only license content is pinned.
+[pulp-wasm-simd-flag.clarify]
+license = "MIT"
+[[pulp-wasm-simd-flag.clarify.git]]
+path = "LICENSE"
+checksum = "d64f878c89bd5f1e5ada7e4aad57690b122727cf5229b7b87ea1980c188da1d9"
+
+[single-instance.clarify]
+license = "MIT"
+[[single-instance.clarify.git]]
+path = "LICENSE"
+checksum = "0f6934ae137e8dc014384bf1adb46dbc95453f56a269c54bb2d552a810fb6e96"

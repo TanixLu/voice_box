@@ -13,6 +13,18 @@ use crate::shared::{
     settings::{MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB, Settings},
 };
 
+const LICENSES: &str = concat!(
+    "VoiceBox\nCopyright (c) 2026 Tanix\n\n",
+    "Original VoiceBox code is licensed under MIT OR Apache-2.0, at your option.\n",
+    "Third-party components and model weights retain their respective licenses.\n\n",
+    "===== VoiceBox: MIT License =====\n\n",
+    include_str!("../../LICENSE-MIT"),
+    "\n===== VoiceBox: Apache License 2.0 =====\n\n",
+    include_str!("../../LICENSE-APACHE"),
+    "\n===== Third-party licenses and notices =====\n\n",
+    include_str!("../../THIRD_PARTY_LICENSES"),
+);
+
 pub fn run() -> anyhow::Result<()> {
     let settings = Settings::try_load()?;
     let options = eframe::NativeOptions {
@@ -90,6 +102,7 @@ struct VoiceBoxApp {
     status: String,
     failed: bool,
     confirm_uninstall: bool,
+    show_licenses: bool,
     audio_test: AudioTest,
 }
 
@@ -103,7 +116,7 @@ impl VoiceBoxApp {
         if preferences.zoom_factor.is_finite() && preferences.zoom_factor > 0.0 {
             ctx.set_zoom_factor(preferences.zoom_factor);
         }
-        install_chinese_font(ctx);
+        install_system_font(ctx);
         apply_style(ctx);
         let mut app = Self {
             microphones: Vec::new(),
@@ -117,6 +130,7 @@ impl VoiceBoxApp {
             status: String::new(),
             failed: false,
             confirm_uninstall: false,
+            show_licenses: false,
             audio_test: AudioTest::default(),
         };
         app.refresh_microphones(ctx);
@@ -298,7 +312,17 @@ impl VoiceBoxApp {
                                 egui::vec2(width, 0.0),
                                 egui::Layout::top_down(egui::Align::Min),
                                 |ui| {
-                                    ui.heading("VoiceBox");
+                                    ui.horizontal(|ui| {
+                                        ui.menu_button("其他", |ui| {
+                                            // TODO: Implement complete application uninstallation.
+                                            ui.add_enabled(false, egui::Button::new("完全卸载"))
+                                                .on_hover_text("暂未实现");
+                                            if ui.button("版权声明").clicked() {
+                                                self.show_licenses = true;
+                                                ui.close();
+                                            }
+                                        });
+                                    });
                                     ui.add_space(6.0);
                                     section(ui, |ui| {
                                         self.microphone_ui(ui);
@@ -311,6 +335,8 @@ impl VoiceBoxApp {
                     });
             });
 
+        self.licenses_ui(ui.ctx());
+
         // Apply after drawing so a job started by a button click disables the
         // native close button in the same frame. Every completion path restores it.
         let close_enabled = self.job.is_none();
@@ -322,6 +348,38 @@ impl VoiceBoxApp {
                     maximize: true,
                 });
             self.close_enabled = close_enabled;
+        }
+    }
+
+    fn licenses_ui(&mut self, ctx: &egui::Context) {
+        if !self.show_licenses {
+            return;
+        }
+        let available = ctx.content_rect().size();
+        let response = egui::Modal::new(egui::Id::new("copyright_notice")).show(ctx, |ui| {
+            ui.set_width((available.x - 64.0).clamp(180.0, 760.0));
+            ui.heading("版权声明");
+            ui.label("VoiceBox · MIT OR Apache-2.0");
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .id_salt("copyright_scroll")
+                .max_height((available.y - 180.0).clamp(60.0, 560.0))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.add(egui::Label::new(LICENSES).wrap().selectable(true));
+                });
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("复制全部").clicked() {
+                    ctx.copy_text(LICENSES.to_owned());
+                }
+                if ui.button("关闭").clicked() {
+                    ui.close();
+                }
+            });
+        });
+        if response.should_close() {
+            self.show_licenses = false;
         }
     }
 
@@ -835,26 +893,26 @@ fn microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
     Ok((microphones, selected))
 }
 
-fn install_chinese_font(ctx: &egui::Context) {
+fn install_system_font(ctx: &egui::Context) {
     let windows = std::env::var_os("WINDIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "C:\\Windows".into());
-    for file in ["msyh.ttc", "simsun.ttc"] {
+    for file in ["msyh.ttc", "simsun.ttc", "segoeui.ttf"] {
         if let Ok(data) = std::fs::read(windows.join("Fonts").join(file)) {
-            let mut fonts = FontDefinitions::default();
+            let mut fonts = FontDefinitions::empty();
             fonts
                 .font_data
-                .insert("chinese".into(), Arc::new(FontData::from_owned(data)));
+                .insert("system".into(), Arc::new(FontData::from_owned(data)));
             fonts
                 .families
                 .entry(FontFamily::Proportional)
                 .or_default()
-                .insert(0, "chinese".into());
+                .push("system".into());
             fonts
                 .families
                 .entry(FontFamily::Monospace)
                 .or_default()
-                .push("chinese".into());
+                .push("system".into());
             ctx.set_fonts(fonts);
             break;
         }
