@@ -1,0 +1,85 @@
+name: Build and release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Windows x64 build
+    runs-on: windows-2022
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_ABOUT_VERSION: '0.9.2'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable (Windows x64 MSVC)
+        shell: pwsh
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal --no-self-update
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable-x86_64-pc-windows-msvc
+
+      - name: Verify tag matches Cargo.toml version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $metadataJson = cargo metadata --no-deps --format-version 1 --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $metadata = $metadataJson | ConvertFrom-Json
+          $manifestPath = (Resolve-Path -LiteralPath 'Cargo.toml').Path
+          $package = $metadata.packages | Where-Object { $_.manifest_path -eq $manifestPath }
+          if (-not $package) { throw 'Could not find the root package in Cargo metadata.' }
+          $expectedTag = "v$($package.version)"
+          if ($env:RELEASE_TAG -cne $expectedTag) {
+            throw "Tag '$env:RELEASE_TAG' does not match Cargo.toml version '$($package.version)'; expected '$expectedTag'."
+          }
+          Write-Host "Verified release tag: $expectedTag"
+
+      - name: Cache Cargo dependencies, build artifacts and tools
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-x64-release-cargo-about-${{ env.CARGO_ABOUT_VERSION }}
+
+      - name: Install license generator
+        shell: pwsh
+        run: |
+          if ((Get-Command cargo-about -ErrorAction SilentlyContinue) -and
+              ((cargo about --version) -eq "cargo-about $env:CARGO_ABOUT_VERSION")) {
+            Write-Host "Using cached cargo-about $env:CARGO_ABOUT_VERSION"
+          } else {
+            cargo install cargo-about --version "$env:CARGO_ABOUT_VERSION" --locked --force
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Build release executable with embedded DLL
+        shell: cmd
+        run: call build.cmd --release
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if (-not (Test-Path -LiteralPath 'target/release/voice_box.exe' -PathType Leaf)) {
+            throw 'Release executable was not produced.'
+          }
+          gh release create "$env:RELEASE_TAG" 'target/release/voice_box.exe' --repo "$env:GITHUB_REPOSITORY" --title "$env:RELEASE_TAG" --generate-notes --verify-tag

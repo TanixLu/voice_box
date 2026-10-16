@@ -15,7 +15,10 @@ use crate::shared::{
 };
 
 const LICENSES: &str = concat!(
-    "VoiceBox\nCopyright (c) 2026 Tanix\n\n",
+    "VoiceBox v",
+    env!("CARGO_PKG_VERSION"),
+    "\nCopyright (c) 2026 Tanix\n\n",
+    "Project source: https://github.com/TanixLu/voice_box\n\n",
     "Original VoiceBox code is licensed under MIT OR Apache-2.0, at your option.\n",
     "Third-party components and model weights retain their respective licenses.\n\n",
     "===== VoiceBox: MIT License =====\n\n",
@@ -457,11 +460,19 @@ impl VoiceBoxApp {
         let response = egui::Modal::new(egui::Id::new("copyright_notice")).show(ctx, |ui| {
             ui.set_width((available.x - 64.0).clamp(180.0, 760.0));
             ui.heading("版权声明");
-            ui.label("VoiceBox · MIT OR Apache-2.0");
+            ui.label(concat!(
+                "VoiceBox v",
+                env!("CARGO_PKG_VERSION"),
+                " · MIT OR Apache-2.0"
+            ));
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Project source:");
+                ui.hyperlink("https://github.com/TanixLu/voice_box");
+            });
             ui.separator();
             egui::ScrollArea::vertical()
                 .id_salt("copyright_scroll")
-                .max_height((available.y - 180.0).clamp(60.0, 560.0))
+                .max_height((available.y - 180.0).clamp(60.0, 360.0))
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.add(egui::Label::new(LICENSES).wrap().selectable(true));
