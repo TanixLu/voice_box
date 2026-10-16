@@ -64,9 +64,11 @@ jobs:
               ((cargo about --version) -eq "cargo-about $env:CARGO_ABOUT_VERSION")) {
             Write-Host "Using cached cargo-about $env:CARGO_ABOUT_VERSION"
           } else {
-            cargo install cargo-about --version "$env:CARGO_ABOUT_VERSION" --locked --force
+            cargo install cargo-about --version "$env:CARGO_ABOUT_VERSION" --features cli --locked --force
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+          cargo about --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build release executable with embedded DLL
         shell: cmd

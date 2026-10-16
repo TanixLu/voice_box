@@ -72,7 +72,7 @@ set "LICENSE_CRATES=target\license-report\crates.txt"
 echo [licenses] Checking notice inputs...
 cargo about --version >"%LICENSE_INPUTS%" 2>nul
 if errorlevel 1 (
-    echo Missing cargo-about. Install it with: cargo install --locked cargo-about
+    echo Missing cargo-about. Install it with: cargo install --locked cargo-about --features cli
     exit /b 1
 )
 rem Compare content, not timestamps. Source-code edits do not change licenses.
