@@ -3158,6 +3158,7 @@ Software.
 - either 1.18.0: https://github.com/rayon-rs/either
 - errno 0.3.14: https://github.com/lambda-fairy/rust-errno
 - euclid 0.22.14: https://github.com/servo/euclid
+- fastrand 2.5.0: https://github.com/smol-rs/fastrand
 - flate2 1.1.10: https://github.com/rust-lang/flate2-rs
 - hashbrown 0.17.1: https://github.com/rust-lang/hashbrown
 - itertools 0.15.0: https://github.com/rust-itertools/itertools
@@ -3176,8 +3177,10 @@ Software.
 - runas 1.2.0: 
 - rustix 0.38.44: https://github.com/bytecodealliance/rustix
 - scopeguard 1.2.0: https://github.com/bluss/scopeguard
+- self-replace 1.5.0: https://github.com/mitsuhiko/self-replace
 - smallvec 1.16.1: https://github.com/servo/rust-smallvec
 - smol_str 0.2.2: https://github.com/rust-analyzer/smol_str
+- tempfile 3.27.0: https://github.com/Stebalien/tempfile
 - thread_local 1.1.10: https://github.com/Amanieu/thread_local-rs
 - unicode-segmentation 1.13.3: https://github.com/unicode-rs/unicode-segmentation
 - uuid 1.27.0: https://github.com/uuid-rs/uuid

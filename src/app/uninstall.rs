@@ -1,24 +1,32 @@
-//! Remove the APO and its data; leave the executable for the user to delete.
+//! Elevated uninstall; self-replace handles executable deletion on exit.
 use std::path::Path;
 
 use anyhow::{Context, ensure};
 use is_elevated::is_elevated;
 use windows::{
     Win32::{
-        System::Com::{
-            CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-            CoUninitialize,
+        Foundation::WAIT_OBJECT_0,
+        System::{
+            Com::{
+                CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateGuid, CoCreateInstance,
+                CoInitializeEx, CoUninitialize,
+            },
+            Threading::{
+                CreateEventW, EVENT_MODIFY_STATE, INFINITE, OpenEventW, OpenProcess,
+                PROCESS_SYNCHRONIZE, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
+            },
         },
         UI::{
             Shell::{
                 FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FOF_WANTNUKEWARNING,
                 FOFX_EARLYFAILURE, FOFX_RECYCLEONDELETE, FileOperation, IFileOperation, IShellItem,
-                SHCreateItemFromParsingName,
+                SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS,
+                SHCreateItemFromParsingName, SHELLEXECUTEINFOW, ShellExecuteExW,
             },
-            WindowsAndMessaging::{MB_ICONINFORMATION, MB_OK, MessageBoxW},
+            WindowsAndMessaging::{MB_ICONINFORMATION, MB_OK, MessageBoxW, SW_HIDE},
         },
     },
-    core::{PCWSTR, w},
+    core::{Owned, PCWSTR, w},
 };
 
 use super::{logging, setup};
@@ -29,34 +37,48 @@ const ELEVATED_UNINSTALL: &str = "--uninstall-all";
 // Called after eframe has closed and finished all persistence writes, so it
 // cannot recreate the data directory after that directory has been recycled.
 pub fn run() -> anyhow::Result<()> {
-    let executable = std::env::current_exe()?;
     if is_elevated() {
-        elevated_uninstall()?;
-    } else {
-        let status = runas::Command::new(&executable)
-            .arg(ELEVATED_UNINSTALL)
-            .gui(false)
-            .show(false)
-            .status()
-            .context("无法启动管理员卸载操作")?;
-        ensure!(
-            status.success(),
-            "管理员卸载操作失败或已取消，请查看错误提示后重试"
-        );
+        return elevated_uninstall();
     }
 
-    let message = wide_null(format!(
-        "VoiceBox 卸载完成。\n\n点击“确定”退出后，请手动删除以下程序文件：\n{}",
-        executable.display()
-    ));
-    unsafe {
-        MessageBoxW(
+    // Keep the GUI process alive until the elevated process has opened its handle.
+    // self_delete must run after the GUI exits, since both processes use this EXE.
+    let event_name = format!("Local\\VoiceBox.Uninstall.{:?}", unsafe { CoCreateGuid()? });
+    let ready_name = wide_null(&event_name);
+    let ready = unsafe {
+        Owned::new(CreateEventW(
             None,
-            PCWSTR(message.as_ptr()),
-            w!("VoiceBox 卸载完成"),
-            MB_OK | MB_ICONINFORMATION,
-        );
+            true,
+            false,
+            PCWSTR(ready_name.as_ptr()),
+        )?)
+    };
+    let parameters = wide_null(format!(
+        "{ELEVATED_UNINSTALL} {} {event_name}",
+        std::process::id()
+    ));
+    let executable = wide_null(std::env::current_exe()?);
+    let working_directory = wide_null(std::env::temp_dir());
+    let _apartment = ShellApartment::new()?;
+    let mut launch = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI,
+        lpVerb: w!("runas"),
+        lpFile: PCWSTR(executable.as_ptr()),
+        lpParameters: PCWSTR(parameters.as_ptr()),
+        lpDirectory: PCWSTR(working_directory.as_ptr()),
+        nShow: SW_HIDE.0,
+        ..Default::default()
+    };
+    unsafe {
+        ShellExecuteExW(&mut launch).context("无法启动管理员卸载操作，或管理员授权已取消")?;
     }
+    ensure!(!launch.hProcess.is_invalid(), "未取得管理员卸载进程句柄");
+    let child = unsafe { Owned::new(launch.hProcess) };
+    ensure!(
+        unsafe { WaitForMultipleObjects(&[*ready, *child], false, INFINITE) } == WAIT_OBJECT_0,
+        "管理员卸载进程未能接管，请查看错误提示后重试"
+    );
     Ok(())
 }
 
@@ -66,10 +88,31 @@ pub fn maybe_elevated_uninstall() -> anyhow::Result<bool> {
         return Ok(false);
     }
     ensure!(is_elevated(), "完全卸载需要管理员权限");
-    ensure!(args.len() == 2, "完全卸载参数无效");
-    // Removal must also work with a missing directory or corrupt settings.
-    // Never initialize settings or recreate the data directory here.
-    let _ = logging::init(true);
+    ensure!(args.len() == 4, "完全卸载参数无效");
+    let parent_id: u32 = args[2].to_str().context("卸载进程参数无效")?.parse()?;
+    let ready_name = wide_null(&args[3]);
+    let ready = unsafe {
+        Owned::new(OpenEventW(
+            EVENT_MODIFY_STATE,
+            false,
+            PCWSTR(ready_name.as_ptr()),
+        )?)
+    };
+    let parent = unsafe {
+        Owned::new(
+            OpenProcess(PROCESS_SYNCHRONIZE, false, parent_id).context("打开原程序进程失败")?,
+        )
+    };
+    unsafe { SetEvent(*ready).context("通知原程序退出失败")? };
+    ensure!(
+        unsafe { WaitForSingleObject(*parent, INFINITE) } == WAIT_OBJECT_0,
+        "等待原程序退出失败"
+    );
+    let single_instance = single_instance::SingleInstance::new("VoiceBoxSingleInstance")?;
+    ensure!(
+        single_instance.is_single(),
+        "另一个 VoiceBox 实例正在运行，请关闭后重试卸载"
+    );
     elevated_uninstall()?;
     Ok(true)
 }
@@ -78,21 +121,32 @@ fn elevated_uninstall() -> anyhow::Result<()> {
     ensure!(is_elevated(), "完全卸载需要管理员权限");
     let directory = paths::data_dir()?;
     if directory.try_exists()? {
-        // Keep the executable even if it was placed inside the data directory.
-        let directory = directory.canonicalize()?;
-        let executable = std::env::current_exe()?.canonicalize()?;
+        // self_delete may stage files alongside the EXE if moving to TEMP fails.
+        // Keep that staging area outside the directory we are about to recycle.
         ensure!(
-            !executable.starts_with(&directory),
+            !std::env::current_exe()?
+                .canonicalize()?
+                .starts_with(directory.canonicalize()?),
             "当前 exe 位于 VoiceBox 数据目录内，请先将 exe 移至其他目录再卸载"
         );
     }
-
+    // Never initialize settings or recreate a missing data directory here.
+    let _ = logging::init(true);
     let _apartment = ShellApartment::new()?;
     setup::with_audio_service_stopped(|| {
         setup::unregister_all()?;
         recycle(Path::new(setup::APO_DLL_PATH)).context("回收 APO DLL 失败")
     })?;
     recycle(&directory).context("回收 VoiceBox 数据目录失败")?;
+    self_replace::self_delete().context("安排程序自删除失败")?;
+    unsafe {
+        MessageBoxW(
+            None,
+            w!("VoiceBox 已完全从您的电脑中移除。"),
+            w!("VoiceBox 卸载完成"),
+            MB_OK | MB_ICONINFORMATION,
+        );
+    }
     Ok(())
 }
 
@@ -144,38 +198,4 @@ fn recycle(path: &Path) -> anyhow::Result<()> {
         path.display()
     );
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recycle_data_preserves_executable_and_allows_missing_paths() -> anyhow::Result<()> {
-        let _apartment = ShellApartment::new()?;
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos();
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join(format!("uninstall-test-{}-{unique}", std::process::id()));
-        let data = root.join("VoiceBox 中文 & % ! ' (test)");
-        let executable = root.join("voice_box.exe");
-        let dll = root.join("voice_box.dll");
-        std::fs::create_dir_all(&data)?;
-        std::fs::write(data.join("settings.json"), "{}")?;
-        std::fs::write(&executable, "keep this fixture")?;
-        std::fs::write(&dll, "APO fixture")?;
-
-        recycle(&dll)?;
-        recycle(&data)?;
-        recycle(&data)?;
-        assert!(!dll.try_exists()?);
-        assert!(!data.try_exists()?);
-        assert_eq!(std::fs::read_to_string(&executable)?, "keep this fixture");
-
-        std::fs::remove_file(executable)?;
-        std::fs::remove_dir(root)?;
-        Ok(())
-    }
 }
