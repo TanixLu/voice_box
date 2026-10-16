@@ -48,3 +48,8 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 windows-core = "0.62.2"
+
+[build-dependencies]
+find-msvc-tools = "0.1"
+image = { version = "0.25", default-features = false, features = ["ico"] }
+resvg = { version = "0.47", default-features = false }

@@ -1,3 +1,5 @@
+<img src="assets/icon.svg" alt="VoiceBox" width="96">
+
 # VoiceBox
 
 VoiceBox是一个极简的麦克风降噪软件，提供单个exe文件，体积小巧，配置简单，运行高效。exe界面仅用于插件安装以及配置，APO插件安装完成后，关闭界面降噪仍旧生效。

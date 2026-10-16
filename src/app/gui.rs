@@ -28,8 +28,11 @@ const LICENSES: &str = concat!(
 
 pub fn run() -> anyhow::Result<()> {
     let settings = Settings::try_load()?;
+    let icon =
+        eframe::icon_data::from_png_bytes(include_bytes!(concat!(env!("OUT_DIR"), "/icon.png")))?;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_icon(icon)
             .with_inner_size([560.0, 760.0])
             .with_min_inner_size([380.0, 340.0]),
         persist_window: true,

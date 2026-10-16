@@ -76,7 +76,7 @@ if errorlevel 1 (
     exit /b 1
 )
 rem Compare content, not timestamps. Source-code edits do not change licenses.
-for %%F in (Cargo.lock Cargo.toml about.toml about.hbs about-crates.hbs build.cmd LICENSE-MIT LICENSE-APACHE assets\ul_unas\README.md assets\ul_unas\LICENSE .cargo\config .cargo\config.toml) do if exist "%%F" (
+for %%F in (Cargo.lock Cargo.toml about.toml about.hbs about-crates.hbs build.cmd scripts\render-licenses.ps1 LICENSE-MIT LICENSE-APACHE assets\ul_unas\README.md assets\ul_unas\LICENSE .cargo\config .cargo\config.toml) do if exist "%%F" (
     >>"%LICENSE_INPUTS%" echo ===== %%F =====
     type "%%F" >>"%LICENSE_INPUTS%"
     if errorlevel 1 exit /b 1
@@ -95,17 +95,21 @@ exit /b 0
 
 :generate_licenses
 echo [licenses] Generating notices from Cargo.lock...
+echo [licenses 1/4] Scanning dependency licenses and rendering notices...
 call :render_licenses "about.hbs" "%LICENSE_TEMP%"
 if errorlevel 1 exit /b 1
+echo [licenses 2/4] Generating dependency list...
 call :render_licenses "about-crates.hbs" "%LICENSE_CRATES%"
 if errorlevel 1 exit /b 1
 
+echo [licenses 3/4] Appending original third-party notices...
 rem Read the generated package list as data; append original notice files byte-for-byte.
 for /f "usebackq tokens=1,* delims=|" %%A in ("%LICENSE_CRATES%") do (
     call :append_notice_files "%%B" "%%A"
     if errorlevel 1 exit /b 1
 )
 
+echo [licenses 4/4] Appending model license and updating notice file...
 >>"%LICENSE_TEMP%" echo.
 >>"%LICENSE_TEMP%" echo ===== UL-UNAS DNS3 model and architecture: MIT =====
 findstr /c:"https://github.com/Xiaobin-Rong/ul-unas/tree/" "assets\ul_unas\README.md" >>"%LICENSE_TEMP%"
@@ -131,18 +135,15 @@ copy /Y "THIRD_PARTY_LICENSES" "%LICENSE_OUTPUT_CACHE%" >nul
 if errorlevel 1 exit /b 1
 copy /Y "%LICENSE_INPUTS%" "%LICENSE_INPUT_CACHE%" >nul
 if errorlevel 1 exit /b 1
+echo [licenses] Notices ready.
 exit /b 0
 
 :render_licenses
 rem cargo-about can warn and fall back after a failed clarification. Reject that
 rem result so a network failure or changed license cannot drop original notices.
-cargo about generate %CARGO_COMMON% --fail --target x86_64-pc-windows-msvc "%~1" -o "%~2" 2>"target\license-report\about.log"
-if errorlevel 1 (
-    type "target\license-report\about.log"
-    exit /b 1
-)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\render-licenses.ps1" -Template "%~1" -OutputFile "%~2"
+if errorlevel 1 exit /b 1
 for %%L in ("target\license-report\about.log") do if %%~zL GTR 0 (
-    type "target\license-report\about.log"
     echo License generation reported diagnostics; THIRD_PARTY_LICENSES was not replaced.
     exit /b 1
 )
@@ -150,6 +151,7 @@ exit /b 0
 
 :append_notice_files
 for /f "delims=" %%N in ('dir /s /b /a-d "%~dp1NOTICE*" "%~dp1COPYRIGHT*" 2^>nul') do (
+    echo [licenses] Appending %~2 / %%~nxN
     >>"%LICENSE_TEMP%" echo.
     >>"%LICENSE_TEMP%" echo ===== Additional notice: %~2 / %%~nxN =====
     type "%%N" >>"%LICENSE_TEMP%"
