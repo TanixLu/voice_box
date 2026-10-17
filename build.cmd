@@ -119,6 +119,10 @@ if errorlevel 1 exit /b 1
 type "assets\ul_unas\LICENSE" >>"%LICENSE_TEMP%"
 if errorlevel 1 exit /b 1
 
+rem Normalize CRLF after all original notices have been appended.
+powershell -NoProfile -Command "$ErrorActionPreference = 'Stop'; $path = $env:LICENSE_TEMP; $encoding = [System.Text.UTF8Encoding]::new($false, $true); $text = [System.IO.File]::ReadAllText($path, $encoding); [System.IO.File]::WriteAllText($path, $text.Replace(([string][char]13 + [char]10), [string][char]10), $encoding)"
+if errorlevel 1 exit /b 1
+
 rem Keep its timestamp if regeneration produced identical text.
 if exist "THIRD_PARTY_LICENSES" (
     fc /b "%LICENSE_TEMP%" "THIRD_PARTY_LICENSES" >nul
