@@ -65,8 +65,7 @@ pub unsafe extern "system" fn VoiceBoxPreviewProcess(
     }
     // Flush the entire latency, including resamplers, STFT/FIFO and limiter,
     // then remove it so A/B playback has the same length and starting point.
-    let delay_frames =
-        (processor.latency_hns() as f64 * f64::from(sample_rate) / 10_000_000.0).ceil() as usize;
+    let delay_frames = processor.latency_frames();
     let delay_samples = delay_frames * channels as usize;
     let mut buffer = unsafe { slice::from_raw_parts(input, samples) }.to_vec();
     buffer.resize(samples + delay_samples, 0.0);

@@ -12,7 +12,6 @@ pub(super) const HOP_SIZE: usize = 256;
 pub(super) const LATENCY_SAMPLES: usize = HOP_SIZE;
 
 pub(super) struct UlUnas {
-    enabled: bool,
     network: Network,
     stft: Stft,
     spectrum: [Complex; 257],
@@ -21,16 +20,9 @@ pub(super) struct UlUnas {
 impl UlUnas {
     pub(super) fn new() -> Self {
         Self {
-            enabled: true,
             network: Network::new(),
             stft: Stft::new(),
             spectrum: [Complex::new(0.0, 0.0); 257],
-        }
-    }
-    pub(super) fn set_enabled(&mut self, enabled: bool) {
-        if self.enabled != enabled {
-            self.network.reset();
-            self.enabled = enabled;
         }
     }
     pub(super) fn reset(&mut self) {
@@ -42,9 +34,7 @@ impl UlUnas {
         debug_assert_eq!(input.len(), HOP_SIZE);
         debug_assert_eq!(output.len(), HOP_SIZE);
         self.stft.analyze(input, &mut self.spectrum);
-        if self.enabled {
-            self.network.enhance(&mut self.spectrum);
-        }
+        self.network.enhance(&mut self.spectrum);
         self.stft.synthesize(&mut self.spectrum, output);
     }
 }
