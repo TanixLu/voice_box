@@ -76,7 +76,7 @@ if errorlevel 1 (
     exit /b 1
 )
 rem Compare content, not timestamps. Source-code edits do not change licenses.
-for %%F in (Cargo.lock Cargo.toml about.toml about.hbs about-crates.hbs build.cmd scripts\render-licenses.ps1 LICENSE-MIT LICENSE-APACHE assets\ul_unas\README.md assets\ul_unas\LICENSE .cargo\config .cargo\config.toml) do if exist "%%F" (
+for %%F in (Cargo.lock Cargo.toml about.toml about.hbs about-crates.hbs build.cmd LICENSE-MIT LICENSE-APACHE assets\ul_unas\README.md assets\ul_unas\LICENSE .cargo\config .cargo\config.toml) do if exist "%%F" (
     >>"%LICENSE_INPUTS%" echo ===== %%F =====
     type "%%F" >>"%LICENSE_INPUTS%"
     if errorlevel 1 exit /b 1
@@ -145,9 +145,14 @@ exit /b 0
 :render_licenses
 rem cargo-about can warn and fall back after a failed clarification. Reject that
 rem result so a network failure or changed license cannot drop original notices.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\render-licenses.ps1" -Template "%~1" -OutputFile "%~2"
-if errorlevel 1 exit /b 1
+echo [licenses] cargo-about: %~1 (network verification may take time)
+cargo about generate --locked --fail --target x86_64-pc-windows-msvc "%~1" -o "%~2" 2>"target\license-report\about.log"
+if errorlevel 1 (
+    type "target\license-report\about.log"
+    exit /b 1
+)
 for %%L in ("target\license-report\about.log") do if %%~zL GTR 0 (
+    type "target\license-report\about.log"
     echo License generation reported diagnostics; THIRD_PARTY_LICENSES was not replaced.
     exit /b 1
 )
