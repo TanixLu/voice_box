@@ -53,7 +53,7 @@ echo   EXE: target\%PROFILE%\voice_box.exe
 if "%RUN_EXE%"=="1" (
     echo.
     echo Running target\%PROFILE%\voice_box.exe...
-    "target\%PROFILE%\voice_box.exe"
+    powershell -NoProfile -Command "$ErrorActionPreference = 'Stop'; $app = Start-Process -FilePath ('target\' + $env:PROFILE + '\voice_box.exe') -Wait -PassThru; exit $app.ExitCode"
     if errorlevel 1 goto :run_failed
 )
 

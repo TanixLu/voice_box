@@ -1,4 +1,4 @@
-//! Bounded application/setup logs; APO diagnostics remain ETW-only.
+//! Bounded application logs; APO diagnostics remain ETW-only.
 use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
@@ -9,33 +9,25 @@ use tracing_subscriber::fmt::MakeWriter;
 
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_EVENT_BYTES: usize = 64 * 1024;
+const LOG_FILE: &str = "voice_box.log";
 
 #[derive(Clone)]
 struct RollingLog {
     directory: PathBuf,
-    name: &'static str,
     mutex: Arc<Mutex<()>>,
 }
 
 impl RollingLog {
     fn append(&self, bytes: &[u8]) -> io::Result<()> {
         let _local = self.mutex.lock().unwrap_or_else(|error| error.into_inner());
-        // Serialize rotation across the normal GUI and elevated/helper processes.
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(self.directory.join("logs.lock"))?;
-        lock.lock()?;
-        let path = self.directory.join(self.name);
+        let path = self.directory.join(LOG_FILE);
         let size = match fs::metadata(&path) {
             Ok(metadata) => metadata.len(),
             Err(error) if error.kind() == io::ErrorKind::NotFound => 0,
             Err(error) => return Err(error),
         };
         if size + bytes.len() as u64 > MAX_FILE_BYTES {
-            let backup = self.directory.join(format!("{}.1", self.name));
+            let backup = self.directory.join(format!("{LOG_FILE}.1"));
             match fs::remove_file(&backup) {
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -47,7 +39,6 @@ impl RollingLog {
         }
         let mut file = OpenOptions::new().create(true).append(true).open(path)?;
         file.write_all(bytes)?;
-        // Drop releases the OS file lock, including all early error paths.
         Ok(())
     }
 }
@@ -87,10 +78,9 @@ impl<'a> MakeWriter<'a> for RollingLog {
     }
 }
 
-pub fn init(helper: bool) -> anyhow::Result<()> {
+pub fn init() -> anyhow::Result<()> {
     let log = RollingLog {
         directory: crate::shared::paths::data_dir()?,
-        name: if helper { "setup.log" } else { "voice_box.log" },
         mutex: Arc::new(Mutex::new(())),
     };
     // Detect inability to open the destination before installing the subscriber.
@@ -107,7 +97,6 @@ pub fn init(helper: bool) -> anyhow::Result<()> {
     }));
     tracing::info!(
         pid = std::process::id(),
-        helper,
         version = env!("CARGO_PKG_VERSION"),
         "VoiceBox started"
     );

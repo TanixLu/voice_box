@@ -35,12 +35,18 @@ fn generate_icons(out: &Path) {
     IcoEncoder::new(ico)
         .encode_images(&frames)
         .expect("Failed to encode icon.ico");
-    fs::write(out.join("voice_box.rc"), "1 ICON \"icon.ico\"\n")
-        .expect("Failed to write icon resource script");
+    fs::write(
+        out.join("voice_box.rc"),
+        "1 ICON \"icon.ico\"\n1 24 \"voice_box.manifest\"\n",
+    )
+    .expect("Failed to write resource script");
+    fs::copy("assets/voice_box.manifest", out.join("voice_box.manifest"))
+        .expect("Failed to copy application manifest");
 }
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/icon.svg");
+    println!("cargo:rerun-if-changed=assets/voice_box.manifest");
 
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     generate_icons(&out);
@@ -75,4 +81,7 @@ fn main() {
         resource
     };
     println!("cargo:rustc-link-arg-bin=voice_box={}", resource.display());
+    if target.ends_with("msvc") {
+        println!("cargo:rustc-link-arg-bin=voice_box=/MANIFEST:NO");
+    }
 }

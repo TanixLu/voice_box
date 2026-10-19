@@ -1,6 +1,5 @@
 use crate::shared::plugin;
 use anyhow::Context;
-use is_elevated::is_elevated;
 use restart_manager::{RestartSession, ShutdownOptions};
 use tracing::info;
 use windows::Win32::Media::KernelStreaming::{
@@ -15,14 +14,9 @@ use winreg::{
 };
 
 use super::{
-    logging,
     registry::{reg_get_value, reg_set_value},
     settings_writer,
 };
-
-const ELEVATED_REG_STR: &str = "--elevated-reg";
-const ELEVATED_UNREG_STR: &str = "--elevated-unreg";
-const ELEVATED_DATA_STR: &str = "--initialize-data";
 
 const DISABLE_PROTECTED_AUDIO_DG_REG_PATH: &str =
     r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio\DisableProtectedAudioDG";
@@ -33,8 +27,8 @@ fn plugin_guid() -> String {
 
 fn common_string_reg_pairs() -> [(String, String); 6] {
     let guid = plugin_guid();
-    let com = format!(r"HKCR\CLSID\{guid}\");
-    let apo = format!(r"HKCR\AudioEngine\AudioProcessingObjects\{guid}\");
+    let com = format!(r"HKLM\SOFTWARE\Classes\CLSID\{guid}\");
+    let apo = format!(r"HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}\");
     let properties = plugin::registration_properties();
     [
         (com.clone(), plugin::NAME.into()),
@@ -54,7 +48,7 @@ fn common_string_reg_pairs() -> [(String, String); 6] {
 
 fn common_u32_reg_pairs() -> [(String, u32); 10] {
     let guid = plugin_guid();
-    let apo = format!(r"HKCR\AudioEngine\AudioProcessingObjects\{guid}\");
+    let apo = format!(r"HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}\");
     let properties = plugin::registration_properties();
     [
         (DISABLE_PROTECTED_AUDIO_DG_REG_PATH.into(), 1),
@@ -115,8 +109,8 @@ pub enum PluginStatus {
     Installed,
 }
 
-// The GUI and setup helper must use this same complete readiness check. An endpoint
-// association alone does not mean the bundled DLL and registration are current.
+// An endpoint association alone does not mean the bundled DLL and registration
+// are current.
 pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     let plugin_guid = plugin_guid();
     let root = RegKey::predef(HKEY_LOCAL_MACHINE);
@@ -181,21 +175,6 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     PluginStatus::Installed
 }
 
-fn elevated_reg(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        is_elevated(),
-        "Elevated operation requested but not running as administrator"
-    );
-
-    with_audio_service_stopped(|| {
-        if uninstall {
-            elevated_unreg_inner(device_guid)
-        } else {
-            elevated_reg_inner(device_guid)
-        }
-    })
-}
-
 pub(super) fn with_audio_service_stopped(
     operation: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
@@ -231,25 +210,7 @@ pub(super) fn with_audio_service_stopped(
     Ok(())
 }
 
-fn elevated_reg_inner(device_guid: &str) -> anyhow::Result<()> {
-    settings_writer::initialize().context("初始化 VoiceBox 数据目录失败")?;
-    anyhow::ensure!(
-        device_guid.len() == 38
-            && device_guid.starts_with('{')
-            && device_guid.ends_with('}')
-            && device_guid.as_bytes()[1..37]
-                .iter()
-                .copied()
-                .enumerate()
-                .all(|(i, byte)| {
-                    if [8, 13, 18, 23].contains(&i) {
-                        byte == b'-'
-                    } else {
-                        byte.is_ascii_hexdigit()
-                    }
-                }),
-        "Invalid device GUID"
-    );
+fn register_device(device_guid: &str) -> anyhow::Result<()> {
     // 更新dll
     if std::fs::read(APO_DLL_PATH).ok().as_deref() != Some(APO_DLL) {
         std::fs::write(APO_DLL_PATH, APO_DLL)?;
@@ -286,10 +247,6 @@ fn delete_optional(key: &RegKey, name: &str) -> std::io::Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         result => result,
     }
-}
-
-fn elevated_unreg_inner(device_guid: &str) -> anyhow::Result<()> {
-    update_device_effects(device_guid, true)
 }
 
 fn update_device_effects(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
@@ -417,67 +374,6 @@ fn delete_tree_transacted(
     root.delete_subkey_transacted_with_flags(path, transaction, KEY_WOW64_64KEY)
 }
 
-pub fn maybe_elevated_setup() -> anyhow::Result<bool> {
-    let args: Vec<String> = std::env::args().collect();
-    if matches!(
-        args.get(1).map(String::as_str),
-        Some(ELEVATED_REG_STR | ELEVATED_UNREG_STR | ELEVATED_DATA_STR)
-    ) {
-        anyhow::ensure!(
-            is_elevated(),
-            "Elevated operation requested but not running as administrator"
-        );
-        settings_writer::initialize()?;
-        logging::init(true)?;
-        info!("Running elevated operation: {}", args[1]);
-        if args[1] == ELEVATED_DATA_STR {
-            return Ok(true);
-        }
-        let device_guid = args.get(2).ok_or_else(|| {
-            anyhow::anyhow!("Missing device GUID argument for elevated registration operation")
-        })?;
-        // Validate before interpolating a device identifier into registry paths.
-        let guid = device_guid.trim_matches(['{', '}']);
-        anyhow::ensure!(
-            device_guid.len() == 38 && windows::core::GUID::try_from(guid).is_ok(),
-            "Invalid device GUID"
-        );
-        elevated_reg(device_guid, args[1] == ELEVATED_UNREG_STR)?;
-        Ok(true)
-    } else {
-        Ok(false)
-    }
-}
-
-pub fn ensure_data_ready() -> anyhow::Result<()> {
-    match settings_writer::initialize() {
-        Ok(()) => Ok(()),
-        Err(error)
-            if !is_elevated()
-                && error.chain().any(|cause| {
-                    cause
-                        .downcast_ref::<std::io::Error>()
-                        .is_some_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
-                        || cause
-                            .downcast_ref::<windows::core::Error>()
-                            .is_some_and(|error| {
-                                error.code() == windows::Win32::Foundation::E_ACCESSDENIED
-                            })
-                }) =>
-        {
-            let status = runas::Command::new(std::env::current_exe()?)
-                .arg(ELEVATED_DATA_STR)
-                .gui(false)
-                .show(false)
-                .status()?;
-            anyhow::ensure!(status.success(), "初始化 VoiceBox 数据目录的管理员操作失败");
-            anyhow::ensure!(settings_writer::ready(), "VoiceBox 数据目录权限检查未通过");
-            Ok(())
-        }
-        Err(error) => Err(error),
-    }
-}
-
 pub fn ensure_device_reg(device_guid: &str) -> anyhow::Result<()> {
     if device_plugin_status(device_guid) != PluginStatus::Installed {
         device_operation(device_guid, false)?;
@@ -496,27 +392,16 @@ pub fn uninstall_device(device_guid: &str) -> anyhow::Result<()> {
 fn device_operation(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
     anyhow::ensure!(
         device_guid.len() == 38
+            && device_guid.starts_with('{')
+            && device_guid.ends_with('}')
             && windows::core::GUID::try_from(device_guid.trim_matches(['{', '}'])).is_ok(),
         "Invalid device GUID"
     );
-    if is_elevated() {
-        elevated_reg(device_guid, uninstall)?;
-    } else {
-        let status = runas::Command::new(std::env::current_exe()?)
-            .arg(if uninstall {
-                ELEVATED_UNREG_STR
-            } else {
-                ELEVATED_REG_STR
-            })
-            .arg(device_guid)
-            .gui(false)
-            .show(false)
-            .status()?;
-        anyhow::ensure!(
-            status.success(),
-            "Failed to execute elevated operation: {:?}",
-            status
-        );
-    }
-    Ok(())
+    with_audio_service_stopped(|| {
+        if uninstall {
+            update_device_effects(device_guid, true)
+        } else {
+            register_device(device_guid)
+        }
+    })
 }

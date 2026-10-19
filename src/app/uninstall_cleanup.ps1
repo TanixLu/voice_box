@@ -2,6 +2,7 @@
 # Open the process handle before signaling readiness; preserve original restore paths.
 $ErrorActionPreference = 'Stop'
 $script:finished = $false
+$script:parentExited = $false
 
 function Show-UninstallResult([string]$message, [bool]$failed) {
     $script:finished = $true
@@ -81,7 +82,14 @@ try {
                 $form.Close()
                 return
             }
-            if (-not $parent.HasExited) { return }
+            if (-not $script:parentExited) {
+                if (-not $parent.HasExited) { return }
+                $parent.Dispose()
+                $script:parentExited = $true
+                # Allow the executable's file lock to clear before recycling.
+                $timer.Interval = 1000
+                return
+            }
             $timer.Stop()
             if (-not $complete.WaitOne(0)) {
                 throw '卸载进程意外退出，请重新打开 VoiceBox 后重试。'

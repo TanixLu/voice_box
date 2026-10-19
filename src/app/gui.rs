@@ -436,11 +436,9 @@ impl VoiceBoxApp {
                 {
                     self.confirm_full_uninstall = false;
                     self.uninstalling = true;
-                    self.begin_job(
-                        ctx,
-                        "正在准备卸载，请完成管理员授权…",
-                        || JobResult::Uninstall(uninstall::run()),
-                    );
+                    self.begin_job(ctx, "正在准备卸载…", || {
+                        JobResult::Uninstall(uninstall::run())
+                    });
                 }
                 if ui.button("取消").clicked() {
                     self.confirm_full_uninstall = false;
@@ -819,9 +817,9 @@ impl VoiceBoxApp {
                         self.begin_job(
                             ui.ctx(),
                             if needs_update {
-                                "正在更新插件，请完成管理员授权…"
+                                "正在更新插件…"
                             } else {
-                                "正在安装插件，请完成管理员授权…"
+                                "正在安装插件…"
                             },
                             move || plugin_operation(guid, guids, false),
                         );
@@ -860,11 +858,9 @@ impl VoiceBoxApp {
                             .iter()
                             .map(|mic| mic.guid.clone())
                             .collect();
-                        self.begin_job(
-                            ui.ctx(),
-                            "正在卸载插件，请完成管理员授权…",
-                            move || plugin_operation(guid, guids, true),
-                        );
+                        self.begin_job(ui.ctx(), "正在卸载插件…", move || {
+                            plugin_operation(guid, guids, true)
+                        });
                     }
                     if ui.button("取消").clicked() {
                         self.confirm_uninstall = false;
@@ -898,8 +894,8 @@ fn plugin_operation(guid: String, guids: Vec<String>, uninstall: bool) -> JobRes
     } else {
         setup::ensure_device_reg(&guid)
     };
-    // Recheck even after failure: the helper can have partially succeeded. All
-    // DLL, registry, ACL and settings reads stay in the background worker.
+    // Recheck even after failure: the operation can have partially succeeded. All
+    // DLL, registry and settings reads stay in the background worker.
     let statuses = guids
         .into_iter()
         .map(|guid| {

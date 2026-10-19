@@ -1039,9 +1039,12 @@ unsafe extern "system" fn process(
         let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
         let params = unsafe { &(*object).params };
         let (enabled, gain) = params.load();
-        let silent =
-            unsafe { (&mut *(*object).dsp.get()).process_with_settings(buffer, gain, enabled) };
-        output_flags = if silent { BUFFER_SILENT } else { BUFFER_VALID };
+        unsafe { (&mut *(*object).dsp.get()).process_with_settings(buffer, gain, enabled) };
+        // The DSP materializes every frame, including startup padding and mute.
+        // Keep these packets valid even when all samples are zero: legacy capture
+        // clients can stop recording when initial packets are BUFFER_SILENT.
+        // Silent input can also yield audio while the model's buffers drain.
+        output_flags = BUFFER_VALID;
     }
     output.u32ValidFrameCount = input.u32ValidFrameCount;
     output.u32BufferFlags = output_flags;

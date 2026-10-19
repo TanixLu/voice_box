@@ -7,7 +7,6 @@ use std::{
 };
 
 use anyhow::{Context, ensure};
-use is_elevated::is_elevated;
 use windows::{
     Win32::{
         Foundation::{HANDLE, WAIT_OBJECT_0},
@@ -18,109 +17,25 @@ use windows::{
             },
             SystemInformation::GetSystemDirectoryW,
             Threading::{
-                CREATE_NO_WINDOW, CreateEventW, EVENT_MODIFY_STATE, INFINITE, OpenEventW,
-                OpenProcess, PROCESS_SYNCHRONIZE, SetEvent, WaitForMultipleObjects,
-                WaitForSingleObject,
+                CREATE_NO_WINDOW, CreateEventW, INFINITE, SetEvent, WaitForMultipleObjects,
             },
         },
-        UI::{
-            Shell::{
-                FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FOF_WANTNUKEWARNING,
-                FOFX_EARLYFAILURE, FOFX_RECYCLEONDELETE, FileOperation, IFileOperation, IShellItem,
-                SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS,
-                SHCreateItemFromParsingName, SHELLEXECUTEINFOW, ShellExecuteExW,
-            },
-            WindowsAndMessaging::SW_HIDE,
+        UI::Shell::{
+            FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FOF_WANTNUKEWARNING, FOFX_EARLYFAILURE,
+            FOFX_RECYCLEONDELETE, FileOperation, IFileOperation, IShellItem,
+            SHCreateItemFromParsingName,
         },
     },
-    core::{Owned, PCWSTR, w},
+    core::{Owned, PCWSTR},
 };
 
-use super::{logging, setup};
+use super::setup;
 use crate::shared::{paths, utils::wide_null};
 
-const ELEVATED_UNINSTALL: &str = "--uninstall-all";
-
-// Runs on a GUI worker thread. The independent progress window is shown before
-// the GUI closes; file recycling still waits for the entire process to exit.
+// The GUI is already elevated; only self-deletion needs a separate process.
 pub fn run() -> anyhow::Result<()> {
-    if is_elevated() {
-        return elevated_uninstall(None);
-    }
-
-    // Keep the GUI visible until the elevated process has shown its progress UI.
-    // The elevated process shares this EXE and takes over only after the GUI exits.
-    let event_name = format!("Local\\VoiceBox.Uninstall.{:?}", unsafe { CoCreateGuid()? });
-    let ready = create_event(&event_name)?;
-    let parameters = wide_null(format!(
-        "{ELEVATED_UNINSTALL} {} {event_name}",
-        std::process::id()
-    ));
-    let executable = wide_null(std::env::current_exe()?);
-    let working_directory = wide_null(std::env::temp_dir());
-    let _apartment = ShellApartment::new()?;
-    let mut launch = SHELLEXECUTEINFOW {
-        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-        fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI,
-        lpVerb: w!("runas"),
-        lpFile: PCWSTR(executable.as_ptr()),
-        lpParameters: PCWSTR(parameters.as_ptr()),
-        lpDirectory: PCWSTR(working_directory.as_ptr()),
-        nShow: SW_HIDE.0,
-        ..Default::default()
-    };
-    unsafe {
-        ShellExecuteExW(&mut launch).context("无法启动管理员卸载操作，或管理员授权已取消")?;
-    }
-    ensure!(!launch.hProcess.is_invalid(), "未取得管理员卸载进程句柄");
-    let child = unsafe { Owned::new(launch.hProcess) };
-    ensure!(
-        unsafe { WaitForMultipleObjects(&[*ready, *child], false, INFINITE) } == WAIT_OBJECT_0,
-        "管理员卸载进程未能接管，请查看错误提示后重试"
-    );
-    Ok(())
-}
-
-pub fn maybe_elevated_uninstall() -> anyhow::Result<bool> {
-    let args: Vec<_> = std::env::args_os().collect();
-    if args.get(1).is_none_or(|arg| arg != ELEVATED_UNINSTALL) {
-        return Ok(false);
-    }
-    ensure!(is_elevated(), "完全卸载需要管理员权限");
-    ensure!(args.len() == 4, "完全卸载参数无效");
-    let parent_id: u32 = args[2].to_str().context("卸载进程参数无效")?.parse()?;
-    let ready_name = wide_null(&args[3]);
-    let ready = unsafe {
-        Owned::new(OpenEventW(
-            EVENT_MODIFY_STATE,
-            false,
-            PCWSTR(ready_name.as_ptr()),
-        )?)
-    };
-    let parent = unsafe {
-        Owned::new(
-            OpenProcess(PROCESS_SYNCHRONIZE, false, parent_id).context("打开原程序进程失败")?,
-        )
-    };
-    elevated_uninstall(Some((*parent, *ready)))?;
-    Ok(true)
-}
-
-fn elevated_uninstall(handoff: Option<(HANDLE, HANDLE)>) -> anyhow::Result<()> {
-    ensure!(is_elevated(), "完全卸载需要管理员权限");
     let directory = paths::data_dir()?;
     let cleanup = start_cleanup(&directory)?;
-    // Close the original GUI only after the independent progress window is shown.
-    // That window also retains the single-instance mutex during the handoff.
-    if let Some((parent, ready)) = handoff {
-        unsafe { SetEvent(ready).context("通知原程序退出失败")? };
-        ensure!(
-            unsafe { WaitForSingleObject(parent, INFINITE) } == WAIT_OBJECT_0,
-            "等待原程序退出失败"
-        );
-    }
-    // Never initialize settings or recreate a missing data directory here.
-    let _ = logging::init(true);
     let _apartment = ShellApartment::new()?;
     setup::with_audio_service_stopped(|| {
         setup::unregister_all()?;
