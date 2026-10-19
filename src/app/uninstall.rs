@@ -1,8 +1,7 @@
 //! Elevated APO removal followed by recycling from a separate system process.
 use std::{
-    ffi::OsString,
-    os::windows::{ffi::OsStringExt, io::AsRawHandle, process::CommandExt},
-    path::{Path, PathBuf},
+    os::windows::{io::AsRawHandle, process::CommandExt},
+    path::Path,
     process::{Command, Stdio},
 };
 
@@ -15,7 +14,6 @@ use windows::{
                 CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateGuid, CoCreateInstance,
                 CoInitializeEx, CoUninitialize,
             },
-            SystemInformation::GetSystemDirectoryW,
             Threading::{
                 CREATE_NO_WINDOW, CreateEventW, INFINITE, SetEvent, WaitForMultipleObjects,
             },
@@ -35,11 +33,12 @@ use crate::shared::{paths, utils::wide_null};
 // The GUI is already elevated; only self-deletion needs a separate process.
 pub fn run() -> anyhow::Result<()> {
     let directory = paths::data_dir()?;
+    let apo_dll = paths::apo_dll_path().context("读取 APO DLL 路径失败")?;
     let cleanup = start_cleanup(&directory)?;
     let _apartment = ShellApartment::new()?;
     setup::with_audio_service_stopped(|| {
         setup::unregister_all()?;
-        recycle(Path::new(setup::APO_DLL_PATH)).context("回收 APO DLL 失败")
+        recycle(&apo_dll).context("回收 APO DLL 失败")
     })?;
     cleanup.finish()
 }
@@ -75,13 +74,7 @@ fn create_event(name: &str) -> anyhow::Result<Owned<HANDLE>> {
 }
 
 fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
-    let mut buffer = vec![0_u16; 32768];
-    let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
-    ensure!(
-        length > 0 && length < buffer.len(),
-        "读取 Windows 系统目录失败"
-    );
-    let system_directory = PathBuf::from(OsString::from_wide(&buffer[..length]));
+    let system_directory = paths::system_dir().context("读取 Windows 系统目录失败")?;
     let event_name = format!("Local\\VoiceBox.Cleanup.{:?}", unsafe { CoCreateGuid()? });
     let ready = create_event(&event_name)?;
     let complete_name = format!("{event_name}.complete");

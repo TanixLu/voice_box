@@ -1,11 +1,41 @@
-//! Machine-wide VoiceBox data paths, resolved identically for users and audiodg.
-use std::{io, path::PathBuf};
+//! Windows directories and machine-wide VoiceBox data paths.
+use std::{ffi::OsString, io, os::windows::ffi::OsStringExt, path::PathBuf};
 use windows::Win32::{
-    System::Com::CoTaskMemFree,
+    System::{
+        Com::CoTaskMemFree,
+        SystemInformation::{GetSystemDirectoryW, GetSystemWindowsDirectoryW},
+    },
     UI::Shell::{FOLDERID_ProgramData, KF_FLAG_DEFAULT, SHGetKnownFolderPath},
 };
 
 pub const SETTINGS_FILE: &str = "settings.json";
+
+pub fn windows_dir() -> io::Result<PathBuf> {
+    directory_from_api(|buffer| unsafe { GetSystemWindowsDirectoryW(Some(buffer)) })
+}
+
+pub fn system_dir() -> io::Result<PathBuf> {
+    directory_from_api(|buffer| unsafe { GetSystemDirectoryW(Some(buffer)) })
+}
+
+pub fn apo_dll_path() -> io::Result<PathBuf> {
+    Ok(system_dir()?.join("voice_box.dll"))
+}
+
+fn directory_from_api(get_directory: impl Fn(&mut [u16]) -> u32) -> io::Result<PathBuf> {
+    let mut buffer = vec![0_u16; 260];
+    loop {
+        let length = get_directory(&mut buffer) as usize;
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if length < buffer.len() {
+            return Ok(PathBuf::from(OsString::from_wide(&buffer[..length])));
+        }
+        // An insufficient buffer returns the required size including the terminator.
+        buffer.resize(length.max(buffer.len() + 1), 0);
+    }
+}
 
 pub fn data_dir() -> io::Result<PathBuf> {
     let folder = unsafe { SHGetKnownFolderPath(&FOLDERID_ProgramData, KF_FLAG_DEFAULT, None) }

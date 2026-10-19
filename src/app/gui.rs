@@ -999,9 +999,9 @@ fn microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
 }
 
 fn install_system_font(ctx: &egui::Context) {
-    let windows = std::env::var_os("WINDIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| "C:\\Windows".into());
+    let Ok(windows) = paths::windows_dir() else {
+        return;
+    };
     for file in ["msyh.ttc", "simsun.ttc", "segoeui.ttf"] {
         if let Ok(data) = std::fs::read(windows.join("Fonts").join(file)) {
             let mut fonts = FontDefinitions::empty();

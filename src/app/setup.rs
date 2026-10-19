@@ -1,6 +1,7 @@
-use crate::shared::plugin;
+use crate::shared::{paths, plugin};
 use anyhow::Context;
 use restart_manager::{RestartSession, ShutdownOptions};
+use std::path::Path;
 use tracing::info;
 use windows::Win32::Media::KernelStreaming::{
     AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS, AUDIO_SIGNALPROCESSINGMODE_DEFAULT,
@@ -25,14 +26,15 @@ fn plugin_guid() -> String {
     format!("{{{:?}}}", plugin::CLSID)
 }
 
-fn common_string_reg_pairs() -> [(String, String); 6] {
+fn common_string_reg_pairs(apo_dll: &Path) -> anyhow::Result<[(String, String); 6]> {
+    let apo_dll = apo_dll.to_str().context("APO DLL 路径不是有效的 Unicode")?;
     let guid = plugin_guid();
     let com = format!(r"HKLM\SOFTWARE\Classes\CLSID\{guid}\");
     let apo = format!(r"HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}\");
     let properties = plugin::registration_properties();
-    [
+    Ok([
         (com.clone(), plugin::NAME.into()),
-        (format!(r"{com}InprocServer32\"), APO_DLL_PATH.into()),
+        (format!(r"{com}InprocServer32\"), apo_dll.into()),
         (
             format!(r"{com}InprocServer32\ThreadingModel"),
             "Both".into(),
@@ -43,7 +45,7 @@ fn common_string_reg_pairs() -> [(String, String); 6] {
             format!("{apo}APOInterface0"),
             format!("{{{:?}}}", properties.iidAPOInterfaceList[0]),
         ),
-    ]
+    ])
 }
 
 fn common_u32_reg_pairs() -> [(String, u32); 10] {
@@ -99,7 +101,6 @@ const DISABLE_APO_GUID: &str = "{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5";
 pub(super) const APO_DLL: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/target/voice_box.dll"));
 
-pub(super) const APO_DLL_PATH: &str = r"C:\Windows\System32\voice_box.dll";
 const AUDIO_SERVICE_NAME: &str = "AudioSrv";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,12 +134,18 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
         return PluginStatus::NeedsUpdate;
     }
     // 检测dll是否需要更新
-    if std::fs::read(APO_DLL_PATH).ok().as_deref() != Some(APO_DLL) {
+    let Ok(apo_dll) = paths::apo_dll_path() else {
+        return PluginStatus::NeedsUpdate;
+    };
+    if std::fs::read(&apo_dll).ok().as_deref() != Some(APO_DLL) {
         return PluginStatus::NeedsUpdate;
     }
 
     // 检测注册表是否需要更新
-    for (reg_path, expected_value) in common_string_reg_pairs() {
+    let Ok(string_pairs) = common_string_reg_pairs(&apo_dll) else {
+        return PluginStatus::NeedsUpdate;
+    };
+    for (reg_path, expected_value) in string_pairs {
         if reg_get_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str()) {
             return PluginStatus::NeedsUpdate;
         }
@@ -211,14 +218,16 @@ pub(super) fn with_audio_service_stopped(
 }
 
 fn register_device(device_guid: &str) -> anyhow::Result<()> {
+    let apo_dll = paths::apo_dll_path().context("读取 APO DLL 路径失败")?;
+    let string_pairs = common_string_reg_pairs(&apo_dll)?;
     // 更新dll
-    if std::fs::read(APO_DLL_PATH).ok().as_deref() != Some(APO_DLL) {
-        std::fs::write(APO_DLL_PATH, APO_DLL)?;
-        info!("Updated APO DLL at {}", APO_DLL_PATH);
+    if std::fs::read(&apo_dll).ok().as_deref() != Some(APO_DLL) {
+        std::fs::write(&apo_dll, APO_DLL)?;
+        info!("Updated APO DLL at {}", apo_dll.display());
     }
 
     // 更新注册表
-    for (reg_path, expected_value) in common_string_reg_pairs() {
+    for (reg_path, expected_value) in string_pairs {
         if reg_get_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str()) {
             reg_set_value(&reg_path, &expected_value)?;
             info!("Updated registry key {} to {}", reg_path, expected_value);

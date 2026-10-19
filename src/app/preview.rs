@@ -13,25 +13,23 @@ use windows::{
     core::{PCSTR, PCWSTR},
 };
 
-use super::{
-    audio_test::Recording,
-    setup::{APO_DLL, APO_DLL_PATH},
-};
-use crate::shared::{preview, settings::Settings, utils::wide_null};
+use super::{audio_test::Recording, setup::APO_DLL};
+use crate::shared::{paths, preview, settings::Settings, utils::wide_null};
 
 struct PreviewDll(HMODULE);
 
 impl PreviewDll {
     fn load() -> anyhow::Result<Self> {
+        let apo_dll = paths::apo_dll_path().context("读取试听组件路径失败")?;
         // The unversioned ABI requires the installed DLL to match this EXE.
         ensure!(
-            fs::read(APO_DLL_PATH)
+            fs::read(&apo_dll)
                 .context("无法读取试听组件，请先安装或更新插件")?
                 .as_slice()
                 == APO_DLL,
             "已安装的试听组件与当前程序不一致，请先更新插件"
         );
-        let path = wide_null(APO_DLL_PATH);
+        let path = wide_null(&apo_dll);
         let module = unsafe {
             LoadLibraryExW(
                 PCWSTR(path.as_ptr()),
