@@ -5,6 +5,7 @@ pushd "%~dp0"
 set "PROFILE=debug"
 set "CARGO_ARGS="
 set "RUN_EXE=0"
+set "SKIP_LICENSES=0"
 
 :parse_args
 if "%~1"=="" goto :build
@@ -22,16 +23,26 @@ if /I "%~1"=="--run" (
     goto :parse_args
 )
 
+if /I "%~1"=="--skip-licenses" (
+    set "SKIP_LICENSES=1"
+    shift
+    goto :parse_args
+)
+
 echo Unknown argument: %~1
-echo Usage: build.cmd [--release] [--run]
+echo Usage: build.cmd [--release] [--run] [--skip-licenses]
 popd
 exit /b 2
 
 :build
 set "CARGO_COMMON=--locked"
 
-call :update_licenses
-if errorlevel 1 goto :failed
+if "%SKIP_LICENSES%"=="1" (
+    echo [licenses] Skipping notice update.
+) else (
+    call :update_licenses
+    if errorlevel 1 goto :failed
+)
 echo [1/3] Building DLL (%PROFILE%)...
 cargo build --lib %CARGO_ARGS% %CARGO_COMMON%
 if errorlevel 1 goto :failed
