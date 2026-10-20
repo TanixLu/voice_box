@@ -164,13 +164,28 @@ exit /b 0
 
 :append_notice_files
 for /f "delims=" %%N in ('dir /s /b /a-d "%~dp1NOTICE*" "%~dp1COPYRIGHT*" 2^>nul') do (
-    echo [licenses] Appending %~2 / %%~nxN
-    >>"%LICENSE_TEMP%" echo.
-    >>"%LICENSE_TEMP%" echo ===== Additional notice: %~2 / %%~nxN =====
-    type "%%N" >>"%LICENSE_TEMP%"
-    if errorlevel 1 exit /b 1
-    >>"%LICENSE_TEMP%" echo.
+    set "NOTICE_FILE=%%N"
+    rem Compare the complete notice, normalizing line endings and outer whitespace.
+    rem Exit code 2 means the notice is already included or empty; 1 means failure.
+    powershell -NoProfile -Command ^
+        "$ErrorActionPreference = 'Stop'; $encoding = [System.Text.UTF8Encoding]::new($false, $true);" ^
+        "$notice = [System.IO.File]::ReadAllText($env:NOTICE_FILE, $encoding).Replace(([string][char]13 + [char]10), [string][char]10).Trim();" ^
+        "$report = [System.IO.File]::ReadAllText($env:LICENSE_TEMP, $encoding).Replace(([string][char]13 + [char]10), [string][char]10);" ^
+        "if ($notice.Length -eq 0 -or $report.Contains($notice)) { exit 2 }"
+    if errorlevel 3 exit /b 1
+    if errorlevel 2 (
+        echo [licenses] Skipping already included or empty notice: %~2 / %%~nxN
+    ) else (
+        if errorlevel 1 exit /b 1
+        echo [licenses] Appending %~2 / %%~nxN
+        >>"%LICENSE_TEMP%" echo.
+        >>"%LICENSE_TEMP%" echo ===== Additional notice: %~2 / %%~nxN =====
+        type "%%N" >>"%LICENSE_TEMP%"
+        if errorlevel 1 exit /b 1
+        >>"%LICENSE_TEMP%" echo.
+    )
 )
+rem A skipped final notice must not leave errorlevel 2 set for the caller.
 exit /b 0
 
 :failed

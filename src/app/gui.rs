@@ -421,7 +421,7 @@ impl VoiceBoxApp {
             return;
         }
         let available = ctx.content_rect().size();
-        let response = egui::Modal::new(egui::Id::new("full_uninstall")).show(ctx, |ui| {
+        let response = egui::Modal::new(egui::Id::unique("full_uninstall")).show(ctx, |ui| {
             ui.set_width((available.x - 64.0).clamp(180.0, 400.0));
             ui.heading("卸载 VoiceBox");
             ui.add(egui::Label::new("将卸载 VoiceBox 的所有组件及配置。\n\n确定要继续吗？").wrap());
@@ -455,7 +455,7 @@ impl VoiceBoxApp {
             return;
         }
         let available = ctx.content_rect().size();
-        let response = egui::Modal::new(egui::Id::new("copyright_notice")).show(ctx, |ui| {
+        let response = egui::Modal::new(egui::Id::unique("copyright_notice")).show(ctx, |ui| {
             ui.set_width((available.x - 64.0).clamp(180.0, 760.0));
             ui.heading("版权声明");
             ui.label(concat!(

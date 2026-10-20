@@ -12,8 +12,8 @@ crate-type = ["cdylib"]
 panic = "abort"
 
 [dependencies]
-egui = { version = "0.36", default-features = false }
-eframe = { version = "0.36", default-features = false, features = [
+egui = { version = "0.37", default-features = false }
+eframe = { version = "0.37", default-features = false, features = [
     "glow",
     "links",
     "persistence",
@@ -22,13 +22,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1.0.104"
 atomic-write-file = "0.3.1"
-ul_unas_rs = "0.1.0"
+ul_unas_rs = "0.1.1"
 rubato = { version = "5.0", default-features = false }
 restart-manager = "0.1.0"
 single-instance = "0.3.3"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
-wasapi = "0.24.0"
+wasapi = "0.26.0"
 winreg = { version = "0.56.0", features = ["transactions"] }
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
@@ -51,4 +51,4 @@ windows-core = "0.62.2"
 [build-dependencies]
 find-msvc-tools = "0.1"
 image = { version = "0.25", default-features = false, features = ["ico"] }
-resvg = { version = "0.47", default-features = false }
+resvg = { version = "0.48.1", default-features = false }

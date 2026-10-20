@@ -643,7 +643,6 @@ Third-party terms remain in effect independently of VoiceBox's dual license.
 - windows-result 0.4.1: https://github.com/microsoft/windows-rs
 - windows-strings 0.5.1: https://github.com/microsoft/windows-rs
 - windows-sys 0.52.0: https://github.com/microsoft/windows-rs
-- windows-sys 0.59.0: https://github.com/microsoft/windows-rs
 - windows-sys 0.61.2: https://github.com/microsoft/windows-rs
 - windows-targets 0.52.6: https://github.com/microsoft/windows-rs
 - windows-threading 0.2.1: https://github.com/microsoft/windows-rs
@@ -854,7 +853,7 @@ Third-party terms remain in effect independently of VoiceBox's dual license.
 
 
 ===== Apache License 2.0 (Apache-2.0) =====
-- zerocopy 0.8.61: https://github.com/google/zerocopy
+- zerocopy 0.8.63: https://github.com/google/zerocopy
 
                                  Apache License
                            Version 2.0, January 2004
@@ -2719,21 +2718,20 @@ Third-party terms remain in effect independently of VoiceBox's dual license.
 - ahash 0.8.12: https://github.com/tkaitchuck/ahash
 - arrayvec 0.7.8: https://github.com/bluss/arrayvec
 - autocfg 1.5.1: https://github.com/cuviper/autocfg
-- base64 0.22.1: https://github.com/marshallpierce/rust-base64
-- bitflags 2.13.1: https://github.com/bitflags/bitflags
-- cfg-if 1.0.4: https://github.com/rust-lang/cfg-if
+- bitflags 2.13.2: https://github.com/bitflags/bitflags
+- cfg-if 1.0.5: https://github.com/rust-lang/cfg-if
 - data-url 0.3.2: https://github.com/servo/rust-url
 - displaydoc 0.2.7: https://github.com/yaahc/displaydoc
-- either 1.18.0: https://github.com/rayon-rs/either
+- either 1.19.0: https://github.com/rayon-rs/either
 - euclid 0.22.14: https://github.com/servo/euclid
-- find-msvc-tools 0.1.13: https://github.com/rust-lang/cc-rs
+- find-msvc-tools 0.1.15: https://github.com/rust-lang/cc-rs
 - flate2 1.1.10: https://github.com/rust-lang/flate2-rs
 - form_urlencoded 1.2.2: https://github.com/servo/rust-url
 - hashbrown 0.17.1: https://github.com/rust-lang/hashbrown
 - idna 1.1.0: https://github.com/servo/rust-url/
 - idna_adapter 1.2.2: https://github.com/hsivonen/idna_adapter
 - itertools 0.15.0: https://github.com/rust-itertools/itertools
-- lazy_static 1.5.0: https://github.com/rust-lang-nursery/lazy-static.rs
+- lazy_static 1.5.1: https://github.com/rust-lang-nursery/lazy-static.rs
 - lock_api 0.4.14: https://github.com/Amanieu/parking_lot
 - log 0.4.34: https://github.com/rust-lang/log
 - num-integer 0.1.47: https://github.com/rust-num/num-integer
@@ -2747,14 +2745,15 @@ Third-party terms remain in effect independently of VoiceBox's dual license.
 - roxmltree 0.21.1: https://github.com/RazrFalcon/roxmltree
 - scopeguard 1.2.0: https://github.com/bluss/scopeguard
 - simplecss 0.2.2: https://github.com/linebender/simplecss
-- smallvec 1.16.1: https://github.com/servo/rust-smallvec
+- smallvec 1.16.3: https://github.com/servo/rust-smallvec
 - smol_str 0.2.2: https://github.com/rust-analyzer/smol_str
 - stable_deref_trait 1.2.1: https://github.com/storyyeller/stable_deref_trait
 - svgtypes 0.16.1: https://github.com/linebender/svgtypes
 - thread_local 1.1.10: https://github.com/Amanieu/thread_local-rs
+- unicode-properties 0.1.4: https://github.com/unicode-rs/unicode-properties
 - unicode-segmentation 1.13.3: https://github.com/unicode-rs/unicode-segmentation
 - url 2.5.8: https://github.com/servo/rust-url
-- uuid 1.27.0: https://github.com/uuid-rs/uuid
+- uuid 1.28.0: https://github.com/uuid-rs/uuid
 - version_check 0.9.5: https://github.com/SergioBenitez/version_check
 
                               Apache License
@@ -4377,7 +4376,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ===== Apache License 2.0 (Apache-2.0) =====
-- font-types 0.12.6: https://github.com/googlefonts/fontations
+- font-types 0.12.7: https://github.com/googlefonts/fontations
 - read-fonts 0.41.0: https://github.com/googlefonts/fontations
 - skrifa 0.44.0: https://github.com/googlefonts/fontations
 
@@ -4932,20 +4931,19 @@ limitations under the License.
 
 
 ===== Apache License 2.0 (Apache-2.0) =====
-- accesskit 0.24.1: https://github.com/AccessKit/accesskit
+- accesskit 0.25.1: https://github.com/AccessKit/accesskit
 - anyhow 1.0.104: https://github.com/dtolnay/anyhow
-- arboard 3.6.1: https://github.com/1Password/arboard
 - audio-codec-algorithms 0.8.1: https://github.com/karip/audio-codec-algorithms
 - color 0.3.3: https://github.com/linebender/color
 - document-features 0.2.12: https://github.com/slint-ui/document-features
-- ecolor 0.36.2: https://github.com/emilk/egui
-- eframe 0.36.2: https://github.com/emilk/egui/tree/main/crates/eframe
-- egui-winit 0.36.2: https://github.com/emilk/egui/tree/main/crates/egui-winit
-- egui 0.36.2: https://github.com/emilk/egui
-- egui_glow 0.36.2: https://github.com/emilk/egui/tree/main/crates/egui_glow
-- emath 0.36.2: https://github.com/emilk/egui/tree/main/crates/emath
+- ecolor 0.37.0: https://github.com/emilk/egui
+- eframe 0.37.0: https://github.com/emilk/egui/tree/main/crates/eframe
+- egui-winit 0.37.0: https://github.com/emilk/egui/tree/main/crates/egui-winit
+- egui 0.37.0: https://github.com/emilk/egui
+- egui_glow 0.37.0: https://github.com/emilk/egui/tree/main/crates/egui_glow
+- emath 0.37.0: https://github.com/emilk/egui/tree/main/crates/emath
 - enumn 0.1.14: https://github.com/dtolnay/enumn
-- epaint 0.36.2: https://github.com/emilk/egui/tree/main/crates/epaint
+- epaint 0.37.0: https://github.com/emilk/egui/tree/main/crates/epaint
 - fdeflate 0.3.7: https://github.com/image-rs/fdeflate
 - fearless_simd 0.4.1: https://github.com/linebender/fearless_simd
 - gl_generator 0.14.0: https://github.com/brendanzab/gl-rs/
@@ -4954,7 +4952,7 @@ limitations under the License.
 - itoa 1.0.18: https://github.com/dtolnay/itoa
 - khronos_api 3.1.0: https://github.com/brendanzab/gl-rs/
 - linebender_resource_handle 0.1.1: https://github.com/linebender/raw_resource_handle
-- litrs 1.0.0: https://github.com/LukasKalbertodt/litrs
+- litrs 1.0.1: https://github.com/LukasKalbertodt/litrs
 - miniz_oxide 0.8.9: https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
 - miniz_oxide 0.9.1: https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
 - pin-project-lite 0.2.17: https://github.com/taiki-e/pin-project-lite
@@ -4963,22 +4961,22 @@ limitations under the License.
 - quote 1.0.47: https://github.com/dtolnay/quote
 - rand 0.10.3: https://github.com/rust-random/rand
 - raw-window-handle 0.6.2: https://github.com/rust-windowing/raw-window-handle
-- resvg 0.47.0: https://github.com/linebender/resvg
+- resvg 0.48.1: https://github.com/linebender/resvg
 - serde 1.0.229: https://github.com/serde-rs/serde
 - serde_core 1.0.229: https://github.com/serde-rs/serde
 - serde_derive 1.0.229: https://github.com/serde-rs/serde
-- serde_json 1.0.151: https://github.com/serde-rs/json
+- serde_json 1.0.154: https://github.com/serde-rs/json
 - syn 2.0.119: https://github.com/dtolnay/syn
-- syn 3.0.5: https://github.com/dtolnay/syn
+- syn 3.0.9: https://github.com/dtolnay/syn
 - thiserror-impl 1.0.69: https://github.com/dtolnay/thiserror
-- thiserror-impl 2.0.20: https://github.com/dtolnay/thiserror
+- thiserror-impl 2.0.21: https://github.com/dtolnay/thiserror
 - thiserror 1.0.69: https://github.com/dtolnay/thiserror
-- thiserror 2.0.20: https://github.com/dtolnay/thiserror
+- thiserror 2.0.21: https://github.com/dtolnay/thiserror
 - typeid 1.0.3: https://github.com/dtolnay/typeid
-- unicode-ident 1.0.24: https://github.com/dtolnay/unicode-ident
-- usvg 0.47.0: https://github.com/linebender/resvg
-- vello_common 0.1.0: https://github.com/linebender/vello
-- vello_cpu 0.1.0: https://github.com/linebender/vello
+- unicode-ident 1.0.27: https://github.com/dtolnay/unicode-ident
+- usvg 0.48.1: https://github.com/linebender/resvg
+- vello_common 0.2.0: https://github.com/linebender/vello
+- vello_cpu 0.2.0: https://github.com/linebender/vello
 
 Apache License
 Version 2.0, January 2004
@@ -5149,46 +5147,6 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-
-===== Boost Software License 1.0 (BSL-1.0) =====
-- error-code 3.4.0: https://github.com/DoumanAsh/error-code
-
-Boost Software License - Version 1.0 - August 17th, 2003
-
-Permission is hereby granted, free of charge, to any person or organization
-obtaining a copy of the software and accompanying documentation covered by
-this license (the "Software") to use, reproduce, display, distribute,
-execute, and transmit the Software, and to prepare derivative works of the
-Software, and to permit third-parties to whom the Software is furnished to
-do so, all subject to the following:
-
-The copyright notices in the Software and this entire statement, including
-the above license grant, this restriction and the following disclaimer,
-must be included in all copies of the Software, in whole or in part, and
-all derivative works of the Software, unless such copies or derivative
-works are solely in the form of machine-executable object code generated by
-a source language processor.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. IN NO EVENT
-SHALL THE COPYRIGHT HOLDERS OR ANYONE DISTRIBUTING THE SOFTWARE BE LIABLE
-FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
-ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-
-===== Boost Software License 1.0 (BSL-1.0) =====
-- clipboard-win 5.4.1: https://github.com/DoumanAsh/clipboard-win
-
-Boost Software License - Version 1.0 - August 17th, 2003
-
-Permission is hereby granted, free of charge, to any person or organization obtaining a copy of the software and accompanying documentation covered by this license (the "Software") to use, reproduce, display, distribute, execute, and transmit the Software, and to prepare derivative works of the Software, and to permit third-parties to whom the Software is furnished to do so, all subject to the following:
-
-The copyright notices in the Software and this entire statement, including the above license grant, this restriction and the following disclaimer, must be included in all copies of the Software, in whole or in part, and all derivative works of the Software, unless such copies or derivative works are solely in the form of machine-executable object code generated by a source language processor.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR ANYONE DISTRIBUTING THE SOFTWARE BE LIABLE FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 ===== ISC License (ISC) =====
@@ -5371,7 +5329,7 @@ THE SOFTWARE.
 
 
 ===== MIT License (MIT) =====
-- wasapi 0.24.0: https://github.com/HEnquist/wasapi-rs
+- wasapi 0.26.0: https://github.com/HEnquist/wasapi-rs
 
 Copyright (c) 2020 Henrik Enquist
 
@@ -5477,6 +5435,32 @@ SOFTWARE.
 
 
 ===== MIT License (MIT) =====
+- imagesize 0.15.0: https://github.com/Roughsketch/imagesize
+
+MIT License
+
+Copyright (c) 2017 Maiddog
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+===== MIT License (MIT) =====
 - single-instance 0.3.3: https://github.com/WLBF/single-instance
 
 MIT License
@@ -5543,7 +5527,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 
 ===== MIT License (MIT) =====
-- ul_unas_rs 0.1.0: 
+- ul_unas_rs 0.1.1: https://github.com/TanixLu/ul_unas_rs
 
 MIT License
 
@@ -5574,32 +5558,6 @@ SOFTWARE.
 MIT License
 
 Copyright (c) [2021] [Marvin Countryman]
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-
-===== MIT License (MIT) =====
-- imagesize 0.14.0: https://github.com/Roughsketch/imagesize
-
-MIT License
-
-Copyright (c) 2017 Maiddog
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -5728,32 +5686,6 @@ THE SOFTWARE.
 
 
 ===== MIT License (MIT) =====
-- xmlwriter 0.1.0: https://github.com/RazrFalcon/xmlwriter
-
-The MIT License (MIT)
-
-Copyright (c) 2019 Reizner Evgeniy
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-
-===== MIT License (MIT) =====
 - harfrust 0.12.0: https://github.com/harfbuzz/harfrust
 
 The MIT License (MIT)
@@ -5863,8 +5795,55 @@ have been licensed under extremely permissive terms.
 ------------------------------------------------------------------------------
 
 
+===== MIT License (MIT) =====
+- ul_unas_rs 0.1.1: https://github.com/TanixLu/ul_unas_rs
+
+ul_unas_rs
+==========
+
+Copyright (c) 2026 Tanix
+Licensed under the MIT License. See LICENSE for the full license text.
+
+Model
+-----
+
+The UL-UNAS architecture and trained DNS3 parameters originate from:
+  https://github.com/Xiaobin-Rong/ul-unas
+  Commit: 00f7c700da43d38347f30a6ccebd86fcbc798e07
+
+Copyright (c) 2026 Xiaobin Rong
+Licensed under the MIT License reproduced below.
+
+The bundled weights/dns3.f32 contains the unchanged FP32 tensors extracted
+from checkpoints/model_trained_on_dns3.tar (epoch 191)
+in the ul-unas repository identified above.
+These upstream copyright notices and license terms apply to the respective
+components.
+
+Upstream MIT License
+--------------------
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
 ===== Unicode License v3 (Unicode-3.0) =====
-- unicode-ident 1.0.24: https://github.com/dtolnay/unicode-ident
+- unicode-ident 1.0.27: https://github.com/dtolnay/unicode-ident
 
 UNICODE LICENSE V3
 
@@ -5999,35 +5978,6 @@ the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 
 
-===== Additional notice: cfg_aliases 0.2.2 / NOTICES.md =====
-# 3rd Party Notices
-
-The `cfg_aliases!` macro uses a lot of the code from [`tectonic_cfg_support::target_cfg!`] macro which is under the following license:
-
-[`tectonic_cfg_support::target_cfg!`]: https://github.com/tectonic-typesetting/tectonic/blob/f2439b936470ad27bdf92882064bc4702ee01899/cfg_support/src/lib.rs#L166
-
-    tectonic_cfg_support is licensed under the MIT License.
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the “Software”), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
----
-
-
 ===== Additional notice: euclid 0.22.14 / COPYRIGHT =====
 Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -6051,75 +6001,7 @@ The Rand project includes code from the Rust project
 published under these same licenses.
 
 
-===== Additional notice: rand_core 0.10.1 / COPYRIGHT =====
-Copyrights in the Rand project are retained by their contributors. No
-copyright assignment is required to contribute to the Rand project.
-
-For full authorship information, see the version control history.
-
-Except as otherwise noted (below and/or in individual files), Rand is
-licensed under the Apache License, Version 2.0 <LICENSE-APACHE> or
-<http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-<LICENSE-MIT> or <http://opensource.org/licenses/MIT>, at your option.
-
-
-===== Additional notice: ul_unas_rs 0.1.0 / NOTICE =====
-ul_unas_rs
-==========
-
-Copyright (c) 2026 Tanix
-Licensed under the MIT License. See LICENSE for the full license text.
-
-Upstream code
--------------
-
-The native Rust network and tensor descriptions were extracted from VoiceBox:
-  Commit: d80859feb47a01eb40883c7020e840a6a20a9c1c
-  src/apo/dsp/ul_unas/{network,weights,mod,spectral}.rs
-  src/apo/dsp/simd.rs
-
-Copyright (c) 2026 Tanix
-Licensed under the MIT License reproduced below.
-
-Model
------
-
-The UL-UNAS architecture and trained DNS3 parameters originate from:
-  https://github.com/Xiaobin-Rong/ul-unas
-  Commit: 00f7c700da43d38347f30a6ccebd86fcbc798e07
-
-Copyright (c) 2026 Xiaobin Rong
-Licensed under the MIT License reproduced below.
-
-The bundled weights/dns3.f32 contains the unchanged FP32 tensors copied from
-VoiceBox's assets/ul_unas/dns3.f32, derived from the upstream checkpoint
-checkpoints/model_trained_on_dns3.tar (epoch 191).
-These upstream copyright notices and license terms apply to the respective
-components.
-
-Upstream MIT License
---------------------
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-
-===== Additional notice: unicode-segmentation 1.13.3 / COPYRIGHT =====
+===== Additional notice: unicode-properties 0.1.4 / COPYRIGHT =====
 Licensed under the Apache License, Version 2.0
 <LICENSE-APACHE or
 http://www.apache.org/licenses/LICENSE-2.0> or the MIT
