@@ -87,7 +87,7 @@ if errorlevel 1 (
     exit /b 1
 )
 rem Compare content, not timestamps. Source-code edits do not change licenses.
-for %%F in (Cargo.lock Cargo.toml about.toml about.hbs about-crates.hbs build.cmd LICENSE-MIT LICENSE-APACHE assets\ul_unas\README.md assets\ul_unas\LICENSE .cargo\config .cargo\config.toml) do if exist "%%F" (
+for %%F in (Cargo.lock Cargo.toml about.toml about.hbs about-crates.hbs build.cmd LICENSE-MIT LICENSE-APACHE .cargo\config .cargo\config.toml) do if exist "%%F" (
     >>"%LICENSE_INPUTS%" echo ===== %%F =====
     type "%%F" >>"%LICENSE_INPUTS%"
     if errorlevel 1 exit /b 1
@@ -120,15 +120,8 @@ for /f "usebackq tokens=1,* delims=|" %%A in ("%LICENSE_CRATES%") do (
     if errorlevel 1 exit /b 1
 )
 
-echo [licenses 4/4] Appending model license and updating notice file...
->>"%LICENSE_TEMP%" echo.
->>"%LICENSE_TEMP%" echo ===== UL-UNAS DNS3 model and architecture: MIT =====
-findstr /c:"https://github.com/Xiaobin-Rong/ul-unas/tree/" "assets\ul_unas\README.md" >>"%LICENSE_TEMP%"
-if errorlevel 1 exit /b 1
->>"%LICENSE_TEMP%" echo VoiceBox includes converted DNS3 checkpoint weights and a native Rust implementation adapted from the upstream streaming architecture.
->>"%LICENSE_TEMP%" echo.
-type "assets\ul_unas\LICENSE" >>"%LICENSE_TEMP%"
-if errorlevel 1 exit /b 1
+echo [licenses 4/4] Updating notice file...
+rem ul_unas_rs supplies the upstream model attribution in its NOTICE, appended above.
 
 rem Normalize CRLF after all original notices have been appended.
 powershell -NoProfile -Command "$ErrorActionPreference = 'Stop'; $path = $env:LICENSE_TEMP; $encoding = [System.Text.UTF8Encoding]::new($false, $true); $text = [System.IO.File]::ReadAllText($path, $encoding); [System.IO.File]::WriteAllText($path, $text.Replace(([string][char]13 + [char]10), [string][char]10), $encoding)"

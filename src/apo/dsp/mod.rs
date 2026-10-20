@@ -2,26 +2,24 @@
 
 mod high_pass;
 mod limiter;
-mod simd;
-mod ul_unas;
 
 pub use crate::shared::audio::SampleFormat;
 use crate::shared::resample::Resampler;
 use high_pass::HighPass;
 use limiter::Limiter;
-use ul_unas::{HOP_SIZE, LATENCY_SAMPLES, SAMPLE_RATE, UlUnas};
+use ul_unas_rs::{ALGORITHM_DELAY, Denoiser, FRAME_SIZE, SAMPLE_RATE};
 
 pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
 pub const MAX_SAMPLE_RATE: f64 = 192_000.0;
 pub const MAX_CHANNELS: usize = 32;
 
 struct Channel {
-    model: Box<UlUnas>,
+    model: Box<Denoiser>,
     high_pass: HighPass,
     down: Resampler,
     up: Resampler,
-    input: [f32; HOP_SIZE],
-    output: [f32; HOP_SIZE],
+    input: [f32; FRAME_SIZE],
+    output: [f32; FRAME_SIZE],
     pending: usize,
     queue: Vec<f32>,
     read: usize,
@@ -35,16 +33,16 @@ impl Channel {
         let rate = f64::from(SAMPLE_RATE);
         let down = Resampler::new(sample_rate, rate);
         let up = Resampler::new(rate, sample_rate);
-        let prefill = ((HOP_SIZE + up.input_chunk()) as f64 * sample_rate / rate).ceil() as usize
+        let prefill = ((FRAME_SIZE + up.input_chunk()) as f64 * sample_rate / rate).ceil() as usize
             + down.input_chunk()
             + 2;
         let mut channel = Self {
-            model: Box::new(UlUnas::new()),
+            model: Box::new(Denoiser::new()),
             high_pass: HighPass::new(rate),
             down,
             up,
-            input: [0.0; HOP_SIZE],
-            output: [0.0; HOP_SIZE],
+            input: [0.0; FRAME_SIZE],
+            output: [0.0; FRAME_SIZE],
             pending: 0,
             queue: vec![0.0; 2 * prefill + 8],
             read: 0,
@@ -58,7 +56,7 @@ impl Channel {
 
     fn delay_frames(&self, sample_rate: f64) -> f64 {
         self.prefill as f64
-            + LATENCY_SAMPLES as f64 * sample_rate / f64::from(SAMPLE_RATE)
+            + ALGORITHM_DELAY as f64 * sample_rate / f64::from(SAMPLE_RATE)
             + (self.down.delay_seconds() + self.up.delay_seconds()) * sample_rate
     }
 
@@ -81,7 +79,7 @@ impl Channel {
         while let Some(sample) = self.down.next() {
             self.input[self.pending] = self.high_pass.process_sample(sample);
             self.pending += 1;
-            if self.pending == HOP_SIZE {
+            if self.pending == FRAME_SIZE {
                 self.model.process(&self.input, &mut self.output);
                 self.pending = 0;
                 for &sample in &self.output {
