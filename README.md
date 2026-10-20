@@ -6,5 +6,7 @@ VoiceBox是一个极简的麦克风降噪软件，提供单个exe文件，体积
 
 ## 开源协议
 
-本项目原创代码采用 [MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE) 协议，使用者可任选其一。
-降噪通过 `ul_unas_rs` 使用 UL-UNAS DNS3 模型，第三方组件和模型声明见 [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES)，也可在程序的“其他 → 版权声明”中查看。
+本项目采用 [MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE) 协议，
+降噪使用 [UL-UNAS](https://github.com/Xiaobin-Rong/ul-unas) 模型，
+第三方组件和模型声明见 [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES)，
+也可在程序的“其他 → 版权声明”中查看。
