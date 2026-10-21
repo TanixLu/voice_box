@@ -1,0 +1,185 @@
+use super::soundboard_panel::format_duration;
+use crate::app::soundboard::Soundboard;
+use anyhow::{Context, ensure};
+use egui::{Color32, FontId, Rect, Vec2, pos2, vec2};
+use windows::{
+    Win32::{
+        Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
+        UI::{
+            HiDpi::GetDpiForSystem,
+            Shell::{DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass},
+            WindowsAndMessaging::{
+                FindWindowW, GetWindowThreadProcessId, SPI_GETWORKAREA, SWP_FRAMECHANGED,
+                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowPos, SystemParametersInfoW,
+                WM_NCCALCSIZE, WM_NCDESTROY,
+            },
+        },
+    },
+    core::w,
+};
+
+const SIZE: Vec2 = vec2(360.0, 72.0);
+
+pub(super) fn show(ctx: &egui::Context, model: &Soundboard) -> anyhow::Result<bool> {
+    let Some(sound) = model
+        .active
+        .and_then(|index| model.library().sounds.get(index))
+    else {
+        return Ok(false);
+    };
+    let mut work = RECT::default();
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            Some((&mut work as *mut RECT).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+        .context("读取主屏工作区失败")?;
+    }
+    let scale = unsafe { GetDpiForSystem() } as f32 / 96.0 * ctx.zoom_factor();
+    ensure!(
+        scale > 0.0 && work.right > work.left && work.bottom > work.top,
+        "主屏显示参数无效"
+    );
+    let work = Rect::from_min_max(
+        pos2(work.left as f32, work.top as f32) / scale,
+        pos2(work.right as f32, work.bottom as f32) / scale,
+    );
+    let size = SIZE.min(work.size());
+    let position = pos2(
+        work.center().x - size.x / 2.0,
+        (work.bottom() - size.y - 24.0).max(work.top()),
+    );
+    let name = sound.name().to_owned();
+    let elapsed = model.elapsed;
+    let duration = model.duration.or(sound.duration);
+    let repeat = model.options().repeat;
+    let id = egui::ViewportId::from_hash_of("sound_playback_overlay");
+    ctx.show_viewport_deferred(
+        id,
+        egui::ViewportBuilder::default()
+            .with_title("VoiceBox 播放浮层")
+            .with_inner_size(size)
+            .with_position(position)
+            .with_transparent(true)
+            .with_decorations(false)
+            .with_resizable(false)
+            .with_active(false)
+            .with_taskbar(false)
+            .with_mouse_passthrough(true)
+            .with_always_on_top(),
+        move |ui, _| draw(ui, &name, elapsed, duration, repeat),
+    );
+    ctx.request_repaint_of(id);
+    Ok(true)
+}
+
+fn draw(ui: &mut egui::Ui, name: &str, elapsed: f64, duration: Option<f64>, repeat: bool) {
+    if let Err(error) = remove_native_frame() {
+        tracing::warn!("Failed to remove overlay window frame: {error:#}");
+    }
+    let rect = ui.max_rect();
+    let painter = ui.painter();
+    painter.rect_filled(rect, 12, Color32::from_rgba_unmultiplied(24, 26, 32, 230));
+    let duration = duration.filter(|d| d.is_finite() && *d > 0.0);
+    let elapsed = match duration {
+        Some(duration) if repeat => elapsed.max(0.0) % duration,
+        Some(duration) => elapsed.max(0.0).min(duration),
+        None => elapsed.max(0.0),
+    };
+    let time = match duration {
+        Some(duration) => format!(
+            "{} / {}",
+            format_duration(elapsed),
+            format_duration(duration)
+        ),
+        None => format_duration(elapsed),
+    };
+    painter.text(
+        rect.min + vec2(12.0, 32.0),
+        egui::Align2::LEFT_TOP,
+        time,
+        FontId::proportional(12.0),
+        Color32::from_gray(190),
+    );
+    if let Some(duration) = duration {
+        let bar = Rect::from_min_size(
+            pos2(rect.left() + 12.0, rect.bottom() - 10.0),
+            vec2((rect.width() - 24.0).max(0.0), 3.0),
+        );
+        painter.rect_filled(bar, 2, Color32::from_white_alpha(35));
+        let filled = Rect::from_min_size(
+            bar.min,
+            vec2(bar.width() * (elapsed / duration) as f32, bar.height()),
+        );
+        painter.rect_filled(filled, 2, Color32::from_rgb(114, 180, 255));
+    }
+    ui.scope_builder(
+        egui::UiBuilder::new().max_rect(Rect::from_min_size(
+            rect.min + vec2(12.0, 8.0),
+            vec2((rect.width() - 24.0).max(0.0), 20.0),
+        )),
+        |ui| {
+            ui.horizontal(|ui| {
+                if repeat {
+                    ui.label(
+                        egui::RichText::new("循环")
+                            .size(12.0)
+                            .color(Color32::from_rgb(114, 180, 255)),
+                    );
+                }
+                ui.add(
+                    egui::Label::new(egui::RichText::new(name).size(15.0).color(Color32::WHITE))
+                        .truncate(),
+                );
+            });
+        },
+    );
+}
+
+fn remove_native_frame() -> anyhow::Result<()> {
+    unsafe {
+        let window = FindWindowW(None, w!("VoiceBox 播放浮层"))?;
+        let mut process_id = 0;
+        GetWindowThreadProcessId(window, Some(&mut process_id));
+        ensure!(process_id == std::process::id(), "浮层窗口不属于当前进程");
+        let mut data = 0;
+        if !GetWindowSubclass(window, Some(overlay_window_proc), 0, Some(&mut data)).as_bool() {
+            SetWindowSubclass(window, Some(overlay_window_proc), 0, 0)
+                .ok()
+                .context("安装浮层窗口回调失败")?;
+            SetWindowPos(
+                window,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+unsafe extern "system" fn overlay_window_proc(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    subclass_id: usize,
+    _data: usize,
+) -> LRESULT {
+    // Bypass winit's shadow workaround, which reserves a 1px non-client strip at the top.
+    if message == WM_NCCALCSIZE {
+        return LRESULT(0);
+    }
+    unsafe {
+        if message == WM_NCDESTROY {
+            let _ = RemoveWindowSubclass(window, Some(overlay_window_proc), subclass_id);
+        }
+        DefSubclassProc(window, message, wparam, lparam)
+    }
+}

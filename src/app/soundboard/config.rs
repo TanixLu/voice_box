@@ -22,6 +22,8 @@ pub(in crate::app) struct Options {
     pub hold: Option<Hotkey>,
     pub stop_hotkey: Option<Hotkey>,
     pub random_hotkey: Option<Hotkey>,
+    #[serde(default = "Options::default_show_overlay")]
+    pub show_overlay: bool,
     pub repeat: bool,
 }
 impl Default for Options {
@@ -33,11 +35,16 @@ impl Default for Options {
             hold: None,
             stop_hotkey: None,
             random_hotkey: None,
+            show_overlay: Self::default_show_overlay(),
             repeat: false,
         }
     }
 }
 impl Options {
+    fn default_show_overlay() -> bool {
+        true
+    }
+
     pub(super) fn validate_binding(
         &self,
         library: &Library,

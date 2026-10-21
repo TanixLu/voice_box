@@ -7,6 +7,7 @@ mod dialogs;
 mod hotkey_binding;
 mod jobs;
 mod microphone;
+mod overlay;
 mod picker;
 mod soundboard_panel;
 mod style;
@@ -84,6 +85,7 @@ struct VoiceBoxApp {
     uninstalling: bool,
     uninstall_requested: bool,
     show_licenses: bool,
+    overlay_visible: bool,
 }
 
 impl VoiceBoxApp {
@@ -115,6 +117,7 @@ impl VoiceBoxApp {
             uninstalling: false,
             uninstall_requested: false,
             show_licenses: false,
+            overlay_visible: false,
         };
         app.microphones.refresh(ctx, &mut app.jobs);
         app
@@ -312,6 +315,14 @@ impl eframe::App for VoiceBoxApp {
         if self.uninstall_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        // Bootstrap the child while minimized; visible children keep UI passes running.
+        if self.soundboard.model.options().show_overlay
+            && self.soundboard.model.playing()
+            && !self.overlay_visible
+            && ctx.input(|input| input.viewport().visible() == Some(false))
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
+        }
         // Keep completions moving even when eframe skips painting a hidden window.
         if self.jobs.busy() || self.voice.session.busy() || self.soundboard.model.busy() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -333,5 +344,23 @@ impl eframe::App for VoiceBoxApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
+        self.overlay_visible = false;
+        if self.soundboard.model.options().show_overlay
+            && !self.uninstalling
+            && !self.uninstall_requested
+        {
+            match overlay::show(ui.ctx(), &self.soundboard.model) {
+                Ok(visible) => self.overlay_visible = visible,
+                Err(error) => {
+                    tracing::warn!("Failed to show playback overlay: {error:#}");
+                    self.soundboard
+                        .model
+                        .error(format!("显示播放浮层失败：{error:#}"));
+                }
+            }
+        }
+    }
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
     }
 }

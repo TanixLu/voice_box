@@ -463,6 +463,7 @@ impl SoundboardPanel {
                             playback_volume(ui, "麦克风输出", &mut options.send_volume);
                             playback_volume(ui, "扬声器输出", &mut options.monitor_volume);
                             ui.checkbox(&mut options.microphone, "音效播放时保持收音");
+                            ui.checkbox(&mut options.show_overlay, "显示播放浮层");
                             ui.checkbox(&mut options.repeat, "循环播放");
                             if hotkey_editor(
                                 ui,
@@ -587,7 +588,7 @@ impl SoundboardPanel {
     }
 }
 
-fn format_duration(seconds: f64) -> String {
+pub(super) fn format_duration(seconds: f64) -> String {
     let total_seconds = seconds.max(0.0) as u64;
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
