@@ -20,9 +20,9 @@ use windows::{
     core::PCWSTR,
 };
 
-static ACTIVE: AtomicU32 = AtomicU32::new(0);
-pub(super) fn active() -> u32 {
-    ACTIVE.load(Ordering::Acquire)
+static ACTIVE_WORKERS: AtomicU32 = AtomicU32::new(0);
+pub(super) fn active_count() -> u32 {
+    ACTIVE_WORKERS.load(Ordering::Acquire)
 }
 
 struct ModuleRef(HMODULE);
@@ -52,13 +52,13 @@ impl Drop for ModuleRef {
     }
 }
 
-struct Start {
+struct WorkerContext {
     action: Option<Box<dyn FnOnce() + Send>>,
     module: Option<ModuleRef>,
 }
-impl Drop for Start {
+impl Drop for WorkerContext {
     fn drop(&mut self) {
-        ACTIVE.fetch_sub(1, Ordering::AcqRel);
+        ACTIVE_WORKERS.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -68,8 +68,8 @@ pub(super) fn spawn(
 ) -> windows::core::Result<()> {
     let module = ModuleRef::acquire()?;
     let action = Box::new(action);
-    ACTIVE.fetch_add(1, Ordering::AcqRel);
-    let start = Box::into_raw(Box::new(Start {
+    ACTIVE_WORKERS.fetch_add(1, Ordering::AcqRel);
+    let start = Box::into_raw(Box::new(WorkerContext {
         action: Some(action),
         module: Some(module),
     }));
@@ -100,7 +100,7 @@ pub(super) fn spawn(
 }
 
 unsafe extern "system" fn entry(raw: *mut c_void) -> u32 {
-    let mut start = unsafe { Box::from_raw(raw.cast::<Start>()) };
+    let mut start = unsafe { Box::from_raw(raw.cast::<WorkerContext>()) };
     let action = start.action.take().expect("owned worker action");
     if catch_unwind(AssertUnwindSafe(action)).is_err() {
         etw::apo_log!(etw::ERROR, etw::LIFECYCLE, "APO background worker panicked");

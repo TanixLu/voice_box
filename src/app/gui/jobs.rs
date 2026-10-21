@@ -1,6 +1,6 @@
 use super::VoiceBoxApp;
 use crate::{
-    app::devices::{Microphone, PluginOperation},
+    app::devices::{Microphone, PluginOperationResult},
     shared::settings::Settings,
 };
 use std::sync::mpsc;
@@ -8,7 +8,7 @@ use std::sync::mpsc;
 pub(super) enum JobResult {
     Uninstall(anyhow::Result<()>),
     Microphones(anyhow::Result<(Vec<Microphone>, usize)>),
-    Plugin(PluginOperation),
+    Plugin(PluginOperationResult),
     Saved {
         settings: Settings,
         result: anyhow::Result<()>,
@@ -45,7 +45,7 @@ impl Jobs {
                 match &result {
                     JobResult::Uninstall(Err(error))
                     | JobResult::Microphones(Err(error))
-                    | JobResult::Plugin(PluginOperation {
+                    | JobResult::Plugin(PluginOperationResult {
                         result: Err(error), ..
                     })
                     | JobResult::Saved {
@@ -96,7 +96,7 @@ impl VoiceBoxApp {
                 self.microphones.replace_devices(microphones, selected);
                 self.jobs.status.clear();
             }
-            JobResult::Plugin(PluginOperation { result, statuses }) => {
+            JobResult::Plugin(PluginOperationResult { result, statuses }) => {
                 self.microphones.apply_statuses(statuses);
                 self.jobs.status.clear();
                 if let Err(error) = result {

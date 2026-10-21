@@ -15,18 +15,19 @@ use windows::Win32::{
 
 const SIMULATED_INPUT_TAG: usize = 0x5642_4b59;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub(super) struct Hotkey {
-    pub key: u16,
+    pub virtual_key_code: u16,
     pub modifiers: u32,
 }
 
 impl Hotkey {
     pub fn valid(self) -> bool {
-        self.valid_for_hold() && !is_modifier(self.key)
+        self.valid_for_hold() && !is_modifier(self.virtual_key_code)
     }
     pub fn valid_for_hold(self) -> bool {
-        key_name(self.key).is_some() && self.modifiers & !0xf == 0
+        key_name(self.virtual_key_code).is_some() && self.modifiers & !0xf == 0
     }
     pub fn label(self) -> String {
         let mut parts = Vec::new();
@@ -35,7 +36,7 @@ impl Hotkey {
                 parts.push(name.to_owned());
             }
         }
-        parts.push(key_name(self.key).unwrap_or_else(|| "无效按键".into()));
+        parts.push(key_name(self.virtual_key_code).unwrap_or_else(|| "无效按键".into()));
         parts.join(" + ")
     }
     pub fn pressed() -> Option<Self> {
@@ -45,13 +46,19 @@ impl Hotkey {
             .fold(0, |flags, (_, flag)| flags | flag);
         (8..=0xfe)
             .find(|&key| !is_modifier(key) && key_name(key).is_some() && down(key))
-            .map(|key| Self { key, modifiers })
+            .map(|virtual_key_code| Self {
+                virtual_key_code,
+                modifiers,
+            })
     }
     pub fn pressed_modifier() -> Option<Self> {
         [0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0x5b, 0x5c]
             .into_iter()
             .find(|&key| down(key))
-            .map(|key| Self { key, modifiers: 0 })
+            .map(|virtual_key_code| Self {
+                virtual_key_code,
+                modifiers: 0,
+            })
     }
 }
 
@@ -119,7 +126,7 @@ const WM_COMMAND: u32 = WM_APP + 1;
 struct Registration(Hotkey);
 impl Registration {
     fn id(key: Hotkey) -> i32 {
-        i32::from(key.key) | ((key.modifiers as i32) << 8)
+        i32::from(key.virtual_key_code) | ((key.modifiers as i32) << 8)
     }
 
     fn new(key: Hotkey) -> anyhow::Result<Self> {
@@ -129,7 +136,7 @@ impl Registration {
                 None,
                 Self::id(key),
                 HOT_KEY_MODIFIERS(key.modifiers) | MOD_NOREPEAT,
-                u32::from(key.key),
+                u32::from(key.virtual_key_code),
             )
         }
         .with_context(|| format!("无法注册 {}，可能已被其他程序占用或由系统保留", key.label()))?;
@@ -308,7 +315,7 @@ impl HeldKeys {
                 keys.push(vk);
             }
         }
-        keys.push(key.key);
+        keys.push(key.virtual_key_code);
         for vk in keys {
             // Never release a key the user was already holding themselves.
             if !down(vk) {

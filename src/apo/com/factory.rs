@@ -152,7 +152,7 @@ pub extern "system" fn DllCanUnloadNow() -> HRESULT {
     if LIVE_OBJECTS.load(Ordering::Acquire) == 0
         && SERVER_LOCKS.load(Ordering::Acquire) == 0
         && FACTORY_REFS.load(Ordering::Acquire) == 1
-        && crate::apo::worker::active() == 0
+        && crate::apo::worker::active_count() == 0
     {
         etw::unregister();
         S_OK

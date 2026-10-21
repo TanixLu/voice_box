@@ -53,14 +53,14 @@ pub fn run() -> anyhow::Result<()> {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct UiPreferences {
-    selected_microphone: Option<String>,
+    selected_microphone_guid: Option<String>,
     zoom_factor: f32,
 }
 
 impl Default for UiPreferences {
     fn default() -> Self {
         Self {
-            selected_microphone: None,
+            selected_microphone_guid: None,
             zoom_factor: 1.0,
         }
     }
@@ -107,7 +107,7 @@ impl VoiceBoxApp {
         let mut app = Self {
             tab: Tab::Voice,
             zoom_factor: ctx.zoom_factor(),
-            microphones: MicrophonePanel::new(preferences.selected_microphone),
+            microphones: MicrophonePanel::new(preferences.selected_microphone_guid),
             voice: VoicePanel::new(settings),
             soundboard: SoundboardPanel::new(soundboard_config),
             hotkeys: HotkeyBinding::new(ctx),
@@ -128,7 +128,7 @@ impl VoiceBoxApp {
         self.hotkeys.poll_capture(
             ui.ctx(),
             &mut self.soundboard.model,
-            self.soundboard.options.as_mut(),
+            self.soundboard.draft_options.as_mut(),
         );
         if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
             self.soundboard.cancel_rename();
@@ -336,7 +336,7 @@ impl eframe::App for VoiceBoxApp {
             storage,
             "voice_box.ui",
             &UiPreferences {
-                selected_microphone: self.microphones.preferred_guid(),
+                selected_microphone_guid: self.microphones.preferred_guid(),
                 zoom_factor: self.zoom_factor,
             },
         );
@@ -355,7 +355,7 @@ impl eframe::App for VoiceBoxApp {
                     tracing::warn!("Failed to show playback overlay: {error:#}");
                     self.soundboard
                         .model
-                        .error(format!("显示播放浮层失败：{error:#}"));
+                        .set_error(format!("显示播放浮层失败：{error:#}"));
                 }
             }
         }

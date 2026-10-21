@@ -147,8 +147,8 @@ impl VoicePanel {
             if ui
                 .add_enabled(
                     !stopping
-                        && (activity == Some(Activity::Record) || (idle && microphone.is_some())),
-                    egui::Button::new(if activity == Some(Activity::Record) {
+                        && (activity == Some(Activity::Recording) || (idle && microphone.is_some())),
+                    egui::Button::new(if activity == Some(Activity::Recording) {
                         "结束录音"
                     } else {
                         "开始录音"
@@ -156,7 +156,7 @@ impl VoicePanel {
                 )
                 .clicked()
             {
-                if activity == Some(Activity::Record) {
+                if activity == Some(Activity::Recording) {
                     self.session.stop();
                 } else if let Some(mic) = microphone {
                     self.session
@@ -166,9 +166,9 @@ impl VoicePanel {
             if ui
                 .add_enabled(
                     !stopping
-                        && (activity == Some(Activity::Original)
+                        && (activity == Some(Activity::PlayingOriginal)
                             || (idle && self.session.has_recording())),
-                    egui::Button::new(if activity == Some(Activity::Original) {
+                    egui::Button::new(if activity == Some(Activity::PlayingOriginal) {
                         "停止播放"
                     } else {
                         "播放原音频"
@@ -176,7 +176,7 @@ impl VoicePanel {
                 )
                 .clicked()
             {
-                if activity == Some(Activity::Original) {
+                if activity == Some(Activity::PlayingOriginal) {
                     self.session.stop();
                 } else {
                     self.session.play(None, super::wake_ui(ui.ctx().clone()));
@@ -184,7 +184,7 @@ impl VoicePanel {
             }
             // Place processed playback at the right on normal window sizes;
             // wrapped layout keeps every button reachable in a narrow window.
-            let processed_label = if activity == Some(Activity::Processed) {
+            let processed_label = if activity == Some(Activity::PlayingProcessed) {
                 "停止播放"
             } else {
                 "播放处理后声音"
@@ -208,13 +208,13 @@ impl VoicePanel {
             if ui
                 .add_enabled(
                     !stopping
-                        && (activity == Some(Activity::Processed)
+                        && (activity == Some(Activity::PlayingProcessed)
                             || (idle && self.session.has_recording())),
                     egui::Button::new(processed_label),
                 )
                 .clicked()
             {
-                if activity == Some(Activity::Processed) {
+                if activity == Some(Activity::PlayingProcessed) {
                     self.session.stop();
                 } else {
                     self.session.play(
@@ -226,7 +226,7 @@ impl VoicePanel {
         });
         if stopping {
             hint(ui, "正在停止…");
-        } else if let Some(elapsed) = self.session.elapsed() {
+        } else if let Some(elapsed) = self.session.recording_elapsed() {
             ui.label(format!("正在录音：{elapsed:.1} 秒"));
         } else if let Some((elapsed, duration)) = self.session.playback_progress() {
             ui.label(format!("正在播放 {elapsed:.1} / {duration:.1} 秒"));

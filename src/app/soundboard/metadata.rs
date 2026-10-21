@@ -1,4 +1,4 @@
-use super::{decoder::MusicDecoder, library::Library};
+use super::{decoder::SoundDecoder, library::Library};
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -9,24 +9,24 @@ use std::{
     },
 };
 
-struct MetadataJob {
+struct DurationJob {
     receiver: mpsc::Receiver<(PathBuf, Result<f64, String>)>,
     stop: Arc<AtomicBool>,
 }
 
-impl Drop for MetadataJob {
+impl Drop for DurationJob {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
     }
 }
 
 #[derive(Default)]
-pub(super) struct MetadataReader {
-    job: Option<MetadataJob>,
+pub(super) struct DurationReader {
+    job: Option<DurationJob>,
     checked: HashSet<PathBuf>,
 }
 
-impl MetadataReader {
+impl DurationReader {
     pub(super) fn invalidate(&mut self, path: &Path) {
         self.checked.remove(path);
     }
@@ -83,7 +83,7 @@ impl MetadataReader {
                     if worker_stop.load(Ordering::Relaxed) {
                         break;
                     }
-                    let result = MusicDecoder::probe_duration(&path, &worker_stop)
+                    let result = SoundDecoder::probe_duration(&path, &worker_stop)
                         .map_err(|error| format!("{error:#}"));
                     if events.send((path, result)).is_err() {
                         break;
@@ -93,7 +93,7 @@ impl MetadataReader {
             }) {
             Ok(_) => {
                 self.checked.extend(paths);
-                self.job = Some(MetadataJob { receiver, stop });
+                self.job = Some(DurationJob { receiver, stop });
             }
             Err(error) => errors.push(format!("无法读取音效时长：{error}")),
         }

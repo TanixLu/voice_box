@@ -65,7 +65,7 @@ impl Resampler {
     pub(crate) fn delay_seconds(&self) -> f64 {
         self.delay_seconds
     }
-    pub(crate) fn input_chunk(&self) -> usize {
+    pub(crate) fn input_chunk_size(&self) -> usize {
         if self.engine.is_some() {
             self.input.len()
         } else {

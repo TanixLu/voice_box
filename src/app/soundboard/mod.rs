@@ -14,7 +14,7 @@ mod playback;
 
 use config::{BindingTarget, Config, Options};
 use library::{ImportedSounds, Library, import_files, valid_file_name};
-use metadata::MetadataReader;
+use metadata::DurationReader;
 use playback::{Command, Event};
 
 struct Job {
@@ -36,7 +36,7 @@ pub(super) struct Soundboard {
     job: Option<Job>,
     pending: Option<(usize, Option<String>)>,
     import_job: Option<mpsc::Receiver<anyhow::Result<ImportedSounds>>>,
-    metadata: MetadataReader,
+    duration_reader: DurationReader,
 }
 impl Soundboard {
     pub fn new(config: Config) -> Self {
@@ -50,7 +50,7 @@ impl Soundboard {
             Err(error) => {
                 let mut result = Self::default();
                 result.options = options;
-                result.error(format!("读取音效库目录失败：{error}"));
+                result.set_error(format!("读取音效库目录失败：{error}"));
                 return result;
             }
         };
@@ -74,7 +74,7 @@ impl Soundboard {
         }
         .save()?;
         self.options = options;
-        self.configure();
+        self.update_playback_options();
         Ok(())
     }
     fn save(&self) -> anyhow::Result<()> {
@@ -87,7 +87,7 @@ impl Soundboard {
     fn save_library(&mut self) {
         if let Err(error) = self.save() {
             tracing::error!("Failed to save soundboard: {error:#}");
-            self.error(format!("{error:#}"));
+            self.set_error(format!("{error:#}"));
         }
     }
     pub fn library(&self) -> &Library {
@@ -123,7 +123,7 @@ impl Soundboard {
             BindingTarget::Hold | BindingTarget::Stop | BindingTarget::Random => {
                 let options = draft.context("请先打开音效设置")?;
                 match target {
-                    BindingTarget::Hold => options.hold = key,
+                    BindingTarget::Hold => options.hold_hotkey = key,
                     BindingTarget::Stop => options.stop_hotkey = key,
                     BindingTarget::Random => options.random_hotkey = key,
                     BindingTarget::Sound(_) => unreachable!(),
@@ -157,10 +157,10 @@ impl Soundboard {
                 wake();
             }) {
             Ok(_) => self.import_job = Some(rx),
-            Err(e) => self.error(format!("打开文件选择器失败：{e}")),
+            Err(e) => self.set_error(format!("打开文件选择器失败：{e}")),
         }
     }
-    pub fn error(&mut self, message: String) {
+    pub fn set_error(&mut self, message: String) {
         self.failed = true;
         self.message = message;
     }
@@ -178,7 +178,7 @@ impl Soundboard {
             self.library.sounds.push(sound);
         }
         if !imported.errors.is_empty() {
-            self.error(imported.errors.join("\n"));
+            self.set_error(imported.errors.join("\n"));
         } else {
             self.failed = false;
             self.message.clear();
@@ -202,8 +202,8 @@ impl Soundboard {
             }
             .save()
         });
-        self.metadata.invalidate(&original_path);
-        self.metadata.invalidate(&self.library.sounds[index].path);
+        self.duration_reader.invalidate(&original_path);
+        self.duration_reader.invalidate(&self.library.sounds[index].path);
         result
     }
     pub fn remove(&mut self, index: usize) {
@@ -220,7 +220,7 @@ impl Soundboard {
         let sound = match self.library.remove(index) {
             Ok(sound) => sound,
             Err(error) => {
-                self.error(format!("删除音效文件失败：{error}"));
+                self.set_error(format!("删除音效文件失败：{error}"));
                 return;
             }
         };
@@ -230,15 +230,15 @@ impl Soundboard {
             *active -= 1;
         }
         self.pending = None;
-        self.metadata.invalidate(&sound.path);
+        self.duration_reader.invalidate(&sound.path);
         self.save_library();
     }
     pub fn play(&mut self, index: usize, guid: Option<&str>, wake: impl Fn() + Send + 'static) {
         let Some(sound) = self.library.sounds.get(index) else {
             return;
         };
-        if self.options.monitor_volume == 0.0 && self.options.send_volume == 0.0 {
-            self.error("麦克风和扬声器音量均为 0，未开始播放".into());
+        if self.options.monitor_volume == 0.0 && self.options.microphone_output_volume == 0.0 {
+            self.set_error("麦克风和扬声器音量均为 0，未开始播放".into());
             return;
         }
         wake();
@@ -250,15 +250,15 @@ impl Soundboard {
         let path = sound.path.clone();
         let microphone_available = guid.is_some();
         let options = self.options.for_output(microphone_available);
-        if options.monitor_volume == 0.0 && options.send_volume == 0.0 {
-            self.error("麦克风插件未就绪，且扬声器音量为 0，没有可用的播放输出".into());
+        if options.monitor_volume == 0.0 && options.microphone_output_volume == 0.0 {
+            self.set_error("麦克风插件未就绪，且扬声器音量为 0，没有可用的播放输出".into());
             return;
         }
         let transport = match transport_path(guid.unwrap_or("00000000-0000-0000-0000-000000000000"))
         {
             Ok(path) => path,
             Err(e) => {
-                self.error(e.to_string());
+                self.set_error(e.to_string());
                 return;
             }
         };
@@ -287,7 +287,7 @@ impl Soundboard {
                     microphone_available,
                 });
             }
-            Err(e) => self.error(format!("无法开始播放：{e}")),
+            Err(e) => self.set_error(format!("无法开始播放：{e}")),
         }
     }
     pub fn stop(&mut self) {
@@ -296,7 +296,7 @@ impl Soundboard {
             let _ = job.sender.send(Command::Stop);
         }
     }
-    pub fn configure(&self) {
+    pub fn update_playback_options(&self) {
         if let Some(job) = &self.job {
             let _ = job.sender.send(Command::Configure(
                 self.options.for_output(job.microphone_available),
@@ -304,8 +304,8 @@ impl Soundboard {
         }
     }
     pub fn poll(&mut self, wake: impl Fn() + Clone + Send + 'static) {
-        for error in self.metadata.poll(&mut self.library, wake.clone()) {
-            self.error(error);
+        for error in self.duration_reader.poll(&mut self.library, wake.clone()) {
+            self.set_error(error);
         }
         if let Some(import_job) = &self.import_job {
             match import_job.try_recv() {
@@ -313,12 +313,12 @@ impl Soundboard {
                     self.import_job = None;
                     match result {
                         Ok(imported) => self.finish_import(imported),
-                        Err(e) => self.error(format!("选择文件失败：{e:#}")),
+                        Err(e) => self.set_error(format!("选择文件失败：{e:#}")),
                     }
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.import_job = None;
-                    self.error("文件选择器意外退出".into());
+                    self.set_error("文件选择器意外退出".into());
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
@@ -337,14 +337,14 @@ impl Soundboard {
                     self.message.clear();
                 }
                 Ok(Event::Progress(elapsed)) => self.elapsed = elapsed,
-                Ok(Event::MonitorError(error)) => self.error(error),
+                Ok(Event::MonitorError(error)) => self.set_error(error),
                 Ok(Event::Finished(result)) => {
                     if let Some(job) = self.job.take() {
                         let _ = job.thread.join();
                     }
                     self.active = None;
                     if let Err(e) = result {
-                        self.error(format!("播放失败：{e:#}"));
+                        self.set_error(format!("播放失败：{e:#}"));
                     }
                     break;
                 }
@@ -354,7 +354,7 @@ impl Soundboard {
                         let _ = job.thread.join();
                     }
                     self.active = None;
-                    self.error("播放线程意外退出".into());
+                    self.set_error("播放线程意外退出".into());
                     break;
                 }
             }

@@ -22,10 +22,10 @@ use windows::{
     core::PCWSTR,
 };
 
-pub const RATE: u32 = 48_000;
+pub const SAMPLE_RATE: u32 = 48_000;
 pub const MAX_VOLUME: f32 = 2.0;
-pub const CAPACITY: usize = 32_768;
-pub const LEAD: u64 = 12_000; // 250 ms of decoded audio, bounded independently of file length.
+pub const BUFFER_CAPACITY_FRAMES: usize = 32_768;
+pub const DECODE_AHEAD_FRAMES: u64 = 12_000; // 250 ms of decoded audio, bounded independently of file length.
 const MAGIC: u64 = u64::from_le_bytes(*b"VBPCM\0\0\0");
 
 #[derive(Clone, Copy)]
@@ -47,7 +47,7 @@ impl Clock {
         if unsafe { QueryPerformanceCounter(&mut ticks) }.is_err() {
             return 0;
         }
-        (i128::from(ticks.max(0)) * i128::from(RATE) / i128::from(self.frequency)) as u64
+        (i128::from(ticks.max(0)) * i128::from(SAMPLE_RATE) / i128::from(self.frequency)) as u64
     }
 }
 
@@ -74,15 +74,15 @@ impl Slot {
             return [0.0; 2];
         }
         [
-            finite(f32::from_bits(bits as u32)),
-            finite(f32::from_bits((bits >> 32) as u32)),
+            sanitize_sample(f32::from_bits(bits as u32)),
+            sanitize_sample(f32::from_bits((bits >> 32) as u32)),
         ]
     }
 }
 fn tag(frame: u64, generation: u64) -> u64 {
     (frame << 16) | (generation & 0xffff)
 }
-pub fn finite(value: f32) -> f32 {
+pub fn sanitize_sample(value: f32) -> f32 {
     if value.is_finite() {
         value.clamp(-1.0, 1.0)
     } else {
@@ -118,7 +118,7 @@ pub struct Mapping {
 }
 impl Mapping {
     pub fn open(path: &Path, writer: bool) -> anyhow::Result<Self> {
-        let bytes = size_of::<Header>() + CAPACITY * size_of::<Slot>();
+        let bytes = size_of::<Header>() + BUFFER_CAPACITY_FRAMES * size_of::<Slot>();
         let file = OpenOptions::new()
             .read(true)
             .write(writer)
@@ -194,7 +194,7 @@ impl Mapping {
                 .cast::<u8>()
                 .add(size_of::<Header>())
                 .cast::<Slot>()
-                .add(frame as usize % CAPACITY)
+                .add(frame as usize % BUFFER_CAPACITY_FRAMES)
         }
     }
     pub fn write(&self, frame: u64, generation: u64, samples: [f32; 2]) {
@@ -204,7 +204,7 @@ impl Mapping {
         self.slot(frame).read(frame, generation)
     }
     pub fn publish(&self, generation: u64, end: u64, gain: f32, mute_microphone: bool, now: u64) {
-        let gain = volume_gain(gain);
+        let gain = sanitize_gain(gain);
         self.header().gain.store(u64::from(gain.to_bits()), SeqCst);
         self.header().end.store(end, SeqCst);
         self.header()
@@ -216,10 +216,10 @@ impl Mapping {
     pub fn status(&self, now: u64) -> (u64, u64, f32, bool) {
         let h = self.header();
         let heartbeat = h.heartbeat.load(SeqCst);
-        if now.abs_diff(heartbeat) > u64::from(RATE) / 2 {
+        if now.abs_diff(heartbeat) > u64::from(SAMPLE_RATE) / 2 {
             return (0, 0, 0.0, false);
         }
-        let gain = volume_gain(f32::from_bits(h.gain.load(SeqCst) as u32));
+        let gain = sanitize_gain(f32::from_bits(h.gain.load(SeqCst) as u32));
         (
             h.generation.load(SeqCst),
             h.end.load(SeqCst),
@@ -232,7 +232,7 @@ impl Mapping {
     }
 }
 
-fn volume_gain(gain: f32) -> f32 {
+fn sanitize_gain(gain: f32) -> f32 {
     if gain.is_finite() {
         gain.clamp(0.0, MAX_VOLUME)
     } else {

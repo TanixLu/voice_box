@@ -5,7 +5,7 @@ use super::{
 };
 use crate::shared::{
     audio::SampleFormat,
-    pcm_transport::{Clock, Mapping, RATE, Slot},
+    pcm_transport::{Clock, Mapping, SAMPLE_RATE, Slot},
 };
 use std::{
     f64::consts::PI,
@@ -104,7 +104,7 @@ impl Drop for Resident {
 }
 
 fn kernels(rate: f64) -> Box<[[f32; TAPS]]> {
-    let cutoff = (rate / f64::from(RATE)).min(1.0) * 0.90;
+    let cutoff = (rate / f64::from(SAMPLE_RATE)).min(1.0) * 0.90;
     (0..PHASES)
         .map(|phase| {
             let mut row = [0.0; TAPS];
@@ -137,7 +137,7 @@ pub(super) struct Injection {
     channels: usize,
     format: SampleFormat,
     limiter_gain: f32,
-    release: f32,
+    release_step: f32,
     stop: Arc<AtomicBool>,
 }
 impl Injection {
@@ -159,11 +159,11 @@ impl Injection {
             state,
             clock,
             position: 0.0,
-            step: f64::from(RATE) / rate,
+            step: f64::from(SAMPLE_RATE) / rate,
             channels,
             format,
             limiter_gain: 1.0,
-            release: (1.0 - (-1.0 / (rate * 0.05)).exp()) as f32,
+            release_step: (1.0 - (-1.0 / (rate * 0.05)).exp()) as f32,
             stop,
         })
     }
@@ -173,7 +173,7 @@ impl Injection {
     pub fn mix(&mut self, buffer: &mut [u8]) {
         let now = self.clock.frame();
         let generation = self.state.generation.load(Acquire);
-        if self.position == 0.0 || (self.position - now as f64).abs() > f64::from(RATE) * 0.02 {
+        if self.position == 0.0 || (self.position - now as f64).abs() > f64::from(SAMPLE_RATE) * 0.02 {
             self.position = now as f64;
         }
         let live = generation != 0 && now < self.state.deadline.load(Acquire);
@@ -189,17 +189,17 @@ impl Injection {
                 [0.0; 2]
             };
             self.position += self.step;
-            let music = [stereo[0] * gain, stereo[1] * gain];
+            let sound_samples = [stereo[0] * gain, stereo[1] * gain];
             // Preserve native bypass sample bytes exactly whenever the music and
             // limiter tail are both absent. No extra delay is added to the mic.
-            if !mute_microphone && music == [0.0; 2] && self.limiter_gain == 1.0 {
+            if !mute_microphone && sound_samples == [0.0; 2] && self.limiter_gain == 1.0 {
                 continue;
             }
             for (i, sample) in frame.chunks_exact(bytes).enumerate() {
-                let song = if self.channels == 1 {
-                    (music[0] + music[1]) * 0.5
+                let sound_sample = if self.channels == 1 {
+                    (sound_samples[0] + sound_samples[1]) * 0.5
                 } else if i < 2 {
-                    music[i]
+                    sound_samples[i]
                 } else {
                     0.0
                 };
@@ -208,12 +208,12 @@ impl Injection {
                 } else {
                     self.format.decode(sample) as f32
                 };
-                values[i] = microphone + song;
+                values[i] = microphone + sound_sample;
             }
             let peak = values[..self.channels]
                 .iter()
                 .fold(0.0_f32, |p, x| p.max(x.abs()));
-            let safe = if peak > 0.891_250_9 {
+            let safe_gain = if peak > 0.891_250_9 {
                 0.891_250_9 / peak
             } else {
                 1.0
@@ -221,8 +221,8 @@ impl Injection {
             // Linked-channel peak limiter: immediate attack, 50 ms release. The
             // existing speech lookahead limiter remains intact before this mixer.
             self.limiter_gain =
-                (self.limiter_gain + (1.0 - self.limiter_gain) * self.release).min(safe);
-            if safe == 1.0 && (1.0 - self.limiter_gain) < 1e-5 {
+                (self.limiter_gain + (1.0 - self.limiter_gain) * self.release_step).min(safe_gain);
+            if safe_gain == 1.0 && (1.0 - self.limiter_gain) < 1e-5 {
                 self.limiter_gain = 1.0;
             }
             for (sample, &value) in frame.chunks_exact_mut(bytes).zip(&values[..self.channels]) {
@@ -248,7 +248,7 @@ fn receive(path: PathBuf, state: &Resident, stop: &AtomicBool, clock: Clock) {
         if mapping.is_none() && now >= retry_at {
             mapping = Mapping::open(&path, false).ok();
             // Discover a new transport before playback's 100 ms startup lead ends.
-            retry_at = now + u64::from(RATE) / 100;
+            retry_at = now + u64::from(SAMPLE_RATE) / 100;
         }
         if let Some(mapping) = &mapping {
             let (generation, end, gain, mute_microphone) = mapping.status(now);
@@ -272,7 +272,7 @@ fn receive(path: PathBuf, state: &Resident, stop: &AtomicBool, clock: Clock) {
                 if generation == 0 {
                     0
                 } else {
-                    end.min(now + u64::from(RATE) / 2)
+                    end.min(now + u64::from(SAMPLE_RATE) / 2)
                 },
                 Release,
             );

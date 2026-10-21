@@ -1,7 +1,7 @@
-use super::{config::Options, decoder::MusicDecoder};
+use super::{config::Options, decoder::SoundDecoder};
 use crate::{
     app::{audio::monitor::Monitor, hotkeys::HeldKeys},
-    shared::pcm_transport::{Clock, LEAD, Mapping, RATE},
+    shared::pcm_transport::{Clock, DECODE_AHEAD_FRAMES, Mapping, SAMPLE_RATE},
 };
 use anyhow::{Context, ensure};
 use std::{
@@ -29,13 +29,13 @@ pub(super) fn run(
     commands: &mpsc::Receiver<Command>,
     events: &mpsc::Sender<Event>,
 ) -> anyhow::Result<()> {
-    let mut decoder = MusicDecoder::open(&path)?;
+    let mut decoder = SoundDecoder::open(&path)?;
     let duration = decoder.duration;
     let clock = Clock::new()?;
     let mapping = Mapping::open(&transport, true).context("创建播放传输缓冲区失败")?;
     let generation = (clock.frame() & 0xffff).max(1);
     let mut base = clock.frame() + 4800;
-    let mut pending = VecDeque::with_capacity(LEAD as usize);
+    let mut pending = VecDeque::with_capacity(DECODE_AHEAD_FRAMES as usize);
     let mut played = 0_u64;
     let mut decoded = 0_u64;
     let mut eof = false;
@@ -65,24 +65,24 @@ pub(super) fn run(
                 Err(mpsc::TryRecvError::Empty) => break,
             }
         }
-        if options.send_volume == 0.0 && options.monitor_volume == 0.0 {
+        if options.microphone_output_volume == 0.0 && options.monitor_volume == 0.0 {
             return Ok(());
         }
-        if options.hold != held_binding {
+        if options.hold_hotkey != held_binding {
             drop(held);
-            held = if let Some(key) = options.hold {
+            held = if let Some(key) = options.hold_hotkey {
                 HeldKeys::press(key)?
             } else {
                 HeldKeys::default()
             };
-            held_binding = options.hold;
+            held_binding = options.hold_hotkey;
         }
         if eof && options.repeat {
-            decoder = MusicDecoder::open(&path)?;
+            decoder = SoundDecoder::open(&path)?;
             decoded = 0;
             eof = false;
         }
-        let fill_end = (now + LEAD).min(base + pending.len() as u64 + 2400);
+        let fill_end = (now + DECODE_AHEAD_FRAMES).min(base + pending.len() as u64 + 2400);
         while !eof && base + (pending.len() as u64) < fill_end {
             // Decode at most 50 ms per pass so stop/configuration stay responsive.
             match decoder.next()? {
@@ -92,7 +92,7 @@ pub(super) fn run(
                     decoded += 1;
                 }
                 None if options.repeat && decoded > 0 => {
-                    decoder = MusicDecoder::open(&path)?;
+                    decoder = SoundDecoder::open(&path)?;
                     decoded = 0;
                 }
                 None => {
@@ -107,8 +107,8 @@ pub(super) fn run(
         mapping.publish(
             generation,
             base + pending.len() as u64,
-            options.send_volume,
-            !options.microphone,
+            options.microphone_output_volume,
+            !options.include_microphone_audio,
             now,
         );
         if options.monitor_volume > 0.0 && !monitor_failed {
@@ -125,7 +125,7 @@ pub(super) fn run(
                 })
             })();
             if let Err(error) = result {
-                if options.send_volume == 0.0 {
+                if options.microphone_output_volume == 0.0 {
                     return Err(error.context("扬声器播放失败"));
                 }
                 monitor = None;
@@ -141,7 +141,7 @@ pub(super) fn run(
             break;
         }
         if progress.elapsed() >= Duration::from_millis(100) {
-            let mut elapsed = played as f64 / f64::from(RATE);
+            let mut elapsed = played as f64 / f64::from(SAMPLE_RATE);
             if options.repeat
                 && let Some(duration) = duration.filter(|&d| d > 0.0)
             {
@@ -152,7 +152,7 @@ pub(super) fn run(
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    let _ = events.send(Event::Progress(played as f64 / f64::from(RATE)));
+    let _ = events.send(Event::Progress(played as f64 / f64::from(SAMPLE_RATE)));
     std::thread::sleep(Duration::from_millis(30));
     Ok(())
 }

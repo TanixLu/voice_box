@@ -33,8 +33,8 @@ impl Channel {
         let rate = f64::from(SAMPLE_RATE);
         let down = Resampler::new(sample_rate, rate);
         let up = Resampler::new(rate, sample_rate);
-        let prefill = ((FRAME_SIZE + up.input_chunk()) as f64 * sample_rate / rate).ceil() as usize
-            + down.input_chunk()
+        let prefill = ((FRAME_SIZE + up.input_chunk_size()) as f64 * sample_rate / rate).ceil() as usize
+            + down.input_chunk_size()
             + 2;
         let mut channel = Self {
             model: Box::new(Denoiser::new()),
@@ -116,7 +116,7 @@ impl Enhancement {
         let channels: Vec<_> = (0..channels).map(|_| Channel::new(sample_rate)).collect();
         let limiter = Limiter::new(sample_rate, channels.len());
         let latency_frames = (channels[0].delay_frames(sample_rate)
-            + limiter.latency_samples() as f64)
+            + limiter.latency_frames() as f64)
             .ceil() as usize;
         Self {
             channels,

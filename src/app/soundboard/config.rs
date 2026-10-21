@@ -15,14 +15,14 @@ pub(in crate::app) enum BindingTarget {
 }
 
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub(in crate::app) struct Options {
     pub monitor_volume: f32,
-    pub send_volume: f32,
-    pub microphone: bool,
-    pub hold: Option<Hotkey>,
+    pub microphone_output_volume: f32,
+    pub include_microphone_audio: bool,
+    pub hold_hotkey: Option<Hotkey>,
     pub stop_hotkey: Option<Hotkey>,
     pub random_hotkey: Option<Hotkey>,
-    #[serde(default = "Options::default_show_overlay")]
     pub show_overlay: bool,
     pub repeat: bool,
 }
@@ -30,21 +30,17 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             monitor_volume: 1.0,
-            send_volume: 1.0,
-            microphone: false,
-            hold: None,
+            microphone_output_volume: 1.0,
+            include_microphone_audio: false,
+            hold_hotkey: None,
             stop_hotkey: None,
             random_hotkey: None,
-            show_overlay: Self::default_show_overlay(),
+            show_overlay: true,
             repeat: false,
         }
     }
 }
 impl Options {
-    fn default_show_overlay() -> bool {
-        true
-    }
-
     pub(super) fn validate_binding(
         &self,
         library: &Library,
@@ -70,19 +66,20 @@ impl Options {
             key.label()
         );
         let overlaps_hold = match target {
-            BindingTarget::Sound(_) | BindingTarget::Stop | BindingTarget::Random => {
-                self.hold.is_some_and(|hold| hold.key == key.key)
-            }
+            BindingTarget::Sound(_) | BindingTarget::Stop | BindingTarget::Random => self
+                .hold_hotkey
+                .is_some_and(|hold| hold.virtual_key_code == key.virtual_key_code),
             BindingTarget::Hold => {
                 self.stop_hotkey
-                    .is_some_and(|shortcut| shortcut.key == key.key)
+                    .is_some_and(|shortcut| shortcut.virtual_key_code == key.virtual_key_code)
                     || self
                         .random_hotkey
-                        .is_some_and(|shortcut| shortcut.key == key.key)
-                    || library
-                        .sounds
-                        .iter()
-                        .any(|sound| sound.hotkey.is_some_and(|shortcut| shortcut.key == key.key))
+                        .is_some_and(|shortcut| shortcut.virtual_key_code == key.virtual_key_code)
+                    || library.sounds.iter().any(|sound| {
+                        sound.hotkey.is_some_and(|shortcut| {
+                            shortcut.virtual_key_code == key.virtual_key_code
+                        })
+                    })
             }
         };
         ensure!(
@@ -94,13 +91,13 @@ impl Options {
 
     pub(super) fn validate(&self, library: &Library) -> anyhow::Result<()> {
         ensure!(
-            [self.monitor_volume, self.send_volume]
+            [self.monitor_volume, self.microphone_output_volume]
                 .iter()
                 .all(|volume| { volume.is_finite() && (0.0..=MAX_VOLUME).contains(volume) }),
             "播放音量无效"
         );
         for (target, key) in [
-            (BindingTarget::Hold, self.hold),
+            (BindingTarget::Hold, self.hold_hotkey),
             (BindingTarget::Stop, self.stop_hotkey),
             (BindingTarget::Random, self.random_hotkey),
         ] {
@@ -112,28 +109,29 @@ impl Options {
     }
 
     pub(super) fn sanitize(&mut self) {
-        for volume in [&mut self.monitor_volume, &mut self.send_volume] {
+        for volume in [&mut self.monitor_volume, &mut self.microphone_output_volume] {
             *volume = if volume.is_finite() {
                 volume.clamp(0.0, MAX_VOLUME)
             } else {
                 1.0
             };
         }
-        self.hold = self.hold.filter(|key| key.valid_for_hold());
+        self.hold_hotkey = self.hold_hotkey.filter(|key| key.valid_for_hold());
         self.stop_hotkey = self.stop_hotkey.filter(|key| key.valid());
         self.random_hotkey = self.random_hotkey.filter(|key| key.valid());
     }
     pub(super) fn for_output(&self, microphone_available: bool) -> Self {
         let mut options = self.clone();
         if !microphone_available {
-            options.send_volume = 0.0;
-            options.microphone = true;
+            options.microphone_output_volume = 0.0;
+            options.include_microphone_audio = true;
         }
         options
     }
 }
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub(in crate::app) struct Config {
     pub options: Options,
     pub library: Library,

@@ -39,7 +39,7 @@ impl SoundRename {
 
 pub(super) struct SoundboardPanel {
     pub(super) model: Soundboard,
-    pub(super) options: Option<Options>,
+    pub(super) draft_options: Option<Options>,
     filter: String,
     rename: Option<SoundRename>,
     confirm_delete: Option<usize>,
@@ -50,7 +50,7 @@ impl SoundboardPanel {
         Self {
             model: Soundboard::new(config),
             filter: String::new(),
-            options: None,
+            draft_options: None,
             rename: None,
             confirm_delete: None,
         }
@@ -66,7 +66,7 @@ impl SoundboardPanel {
     }
 
     fn save_sound_settings(&mut self, jobs: &mut Jobs, hotkeys: &HotkeyBinding) {
-        let Some(options) = self.options.clone() else {
+        let Some(options) = self.draft_options.clone() else {
             return;
         };
         let result = [options.stop_hotkey, options.random_hotkey]
@@ -110,13 +110,13 @@ impl SoundboardPanel {
         hotkeys: &mut HotkeyBinding,
         guid: Option<&str>,
     ) {
-        let available = !jobs.busy() && !session_busy && self.options.is_none();
+        let available = !jobs.busy() && !session_busy && self.draft_options.is_none();
         ui.add_enabled_ui(available, |ui| {
             ui.horizontal(|ui| {
                 ui.strong(format!("音效库 · {} 个", self.model.library().sounds.len()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("设置").clicked() {
-                        self.options = Some(self.model.options().clone());
+                        self.draft_options = Some(self.model.options().clone());
                         jobs.status.clear();
                         jobs.failed = false;
                     }
@@ -327,7 +327,7 @@ impl SoundboardPanel {
                     .bind_hotkey(BindingTarget::Sound(index), None, None)
             {
                 tracing::error!("Failed to clear hotkey: {error:#}");
-                self.model.error(format!("{error:#}"));
+                self.model.set_error(format!("{error:#}"));
             }
             if let Some(edit) = &mut self.rename
                 && !rename_visible
@@ -434,7 +434,7 @@ impl SoundboardPanel {
         jobs: &mut Jobs,
         hotkeys: &mut HotkeyBinding,
     ) {
-        if self.options.is_none() {
+        if self.draft_options.is_none() {
             return;
         }
         let available = ctx.content_rect().size();
@@ -459,16 +459,16 @@ impl SoundboardPanel {
                     .max_height((available.y - 230.0).max(80.0))
                     .show(ui, |ui| {
                         ui.add_enabled_ui(idle, |ui| {
-                            let options = self.options.as_mut().unwrap();
-                            playback_volume(ui, "麦克风输出", &mut options.send_volume);
+                            let options = self.draft_options.as_mut().unwrap();
+                            playback_volume(ui, "麦克风输出", &mut options.microphone_output_volume);
                             playback_volume(ui, "扬声器输出", &mut options.monitor_volume);
-                            ui.checkbox(&mut options.microphone, "音效播放时保持收音");
+                            ui.checkbox(&mut options.include_microphone_audio, "音效播放时保持收音");
                             ui.checkbox(&mut options.show_overlay, "显示播放浮层");
                             ui.checkbox(&mut options.repeat, "循环播放");
                             if hotkey_editor(
                                 ui,
                                 "播放时自动按住",
-                                &mut options.hold,
+                                &mut options.hold_hotkey,
                                 BindingTarget::Hold,
                                 capture_target,
                             ) {
@@ -499,7 +499,7 @@ impl SoundboardPanel {
                     });
                 ui.add_space(12.0);
                 let dirty = self
-                    .options
+                    .draft_options
                     .as_ref()
                     .is_some_and(|options| options != self.model.options());
                 ui.horizontal(|ui| {
@@ -510,7 +510,7 @@ impl SoundboardPanel {
                         .add_enabled(idle && !capturing && dirty, egui::Button::new("撤销修改"))
                         .clicked()
                     {
-                        self.options = Some(self.model.options().clone());
+                        self.draft_options = Some(self.model.options().clone());
                         hotkeys.message.clear();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -518,20 +518,20 @@ impl SoundboardPanel {
                             .add_enabled(
                                 idle && !capturing
                                     && self
-                                        .options
+                                        .draft_options
                                         .as_ref()
                                         .is_some_and(|options| *options != Options::default()),
                                 egui::Button::new("恢复默认"),
                             )
                             .clicked()
                         {
-                            self.options = Some(Options::default());
+                            self.draft_options = Some(Options::default());
                             hotkeys.message.clear();
                         }
                     });
                 });
                 if self
-                    .options
+                    .draft_options
                     .as_ref()
                     .is_some_and(|options| options != self.model.options())
                 {
@@ -549,7 +549,7 @@ impl SoundboardPanel {
                 }
             });
         if close || (response.should_close() && !capturing && idle) {
-            self.options = None;
+            self.draft_options = None;
             hotkeys.cancel_capture();
         } else if save {
             self.save_sound_settings(jobs, hotkeys);
@@ -567,7 +567,7 @@ impl SoundboardPanel {
         let Some(edit) = &mut self.rename else {
             return;
         };
-        if !edit.request_focus && (!active || self.options.is_some()) {
+        if !edit.request_focus && (!active || self.draft_options.is_some()) {
             edit.save_requested = true;
         }
         // Stopping playback is asynchronous; keep the edit until the file is released.
@@ -581,7 +581,7 @@ impl SoundboardPanel {
                 Err(error) => {
                     edit.save_requested = false;
                     edit.request_focus = true;
-                    self.model.error(format!("{error:#}"));
+                    self.model.set_error(format!("{error:#}"));
                 }
             }
         }

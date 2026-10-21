@@ -1,6 +1,6 @@
 //! Bounded packet decoding and stereo sinc conversion; never runs on an APO thread.
 use crate::shared::{
-    pcm_transport::{RATE, finite},
+    pcm_transport::{SAMPLE_RATE, sanitize_sample},
     resample::Resampler,
 };
 use anyhow::{Context, ensure};
@@ -16,7 +16,7 @@ use symphonia::core::{
     io::MediaSourceStream,
 };
 
-pub(super) struct MusicDecoder {
+pub(super) struct SoundDecoder {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
     track: u32,
@@ -32,7 +32,7 @@ pub(super) struct MusicDecoder {
     pub duration: Option<f64>,
 }
 
-impl MusicDecoder {
+impl SoundDecoder {
     /// Reads container timing, scanning packets only when the header lacks it.
     pub fn probe_duration(path: &Path, stop: &AtomicBool) -> anyhow::Result<f64> {
         let mut format = open_format(path)?;
@@ -98,10 +98,10 @@ impl MusicDecoder {
         let duration = track.num_frames.map(|n| n as f64 / f64::from(rate));
         let id = track.id;
         let converters = [
-            Resampler::new(f64::from(rate), f64::from(RATE)),
-            Resampler::new(f64::from(rate), f64::from(RATE)),
+            Resampler::new(f64::from(rate), f64::from(SAMPLE_RATE)),
+            Resampler::new(f64::from(rate), f64::from(SAMPLE_RATE)),
         ];
-        let skip = (converters[0].delay_seconds().max(0.0) * f64::from(RATE)).round() as usize;
+        let skip = (converters[0].delay_seconds().max(0.0) * f64::from(SAMPLE_RATE)).round() as usize;
         Ok(Self {
             format,
             decoder,
@@ -129,7 +129,7 @@ impl MusicDecoder {
             if self.skip > 0 {
                 self.skip -= 1;
             } else {
-                self.output.push_back([finite(left), finite(right)]);
+                self.output.push_back([sanitize_sample(left), sanitize_sample(right)]);
             }
         }
     }
@@ -137,7 +137,7 @@ impl MusicDecoder {
         loop {
             if self.eof
                 && self.output_frames
-                    >= (self.input_frames as f64 * f64::from(RATE) / f64::from(self.rate)).round()
+                    >= (self.input_frames as f64 * f64::from(SAMPLE_RATE) / f64::from(self.rate)).round()
                         as usize
             {
                 return Ok(None);
@@ -154,7 +154,7 @@ impl MusicDecoder {
                 self.eof = true;
                 // Flush the converter's filter and partial chunk, but never append
                 // its padding to the musical duration.
-                let padding = (self.rate / 20) as usize + self.converters[0].input_chunk();
+                let padding = (self.rate / 20) as usize + self.converters[0].input_chunk_size();
                 for _ in 0..padding {
                     self.push([0.0; 2]);
                 }
@@ -177,9 +177,9 @@ impl MusicDecoder {
             audio.copy_to_slice_interleaved(&mut self.samples);
             self.input_frames += self.samples.len() / self.channels;
             for i in (0..self.samples.len()).step_by(self.channels) {
-                let l = finite(self.samples[i]);
+                let l = sanitize_sample(self.samples[i]);
                 let r = if self.channels == 2 {
-                    finite(self.samples[i + 1])
+                    sanitize_sample(self.samples[i + 1])
                 } else {
                     l
                 };

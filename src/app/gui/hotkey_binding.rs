@@ -151,7 +151,7 @@ impl HotkeyBinding {
         };
         let target = capture.target;
         self.capture = None;
-        if key.key == 0x1b {
+        if key.virtual_key_code == 0x1b {
             return;
         }
         let result = if target == BindingTarget::Hold {

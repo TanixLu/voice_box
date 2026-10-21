@@ -17,7 +17,7 @@ pub(super) enum PluginAction {
     Uninstall,
 }
 
-pub(super) struct PluginOperation {
+pub(super) struct PluginOperationResult {
     pub result: anyhow::Result<()>,
     pub statuses: Vec<(String, PluginStatus)>,
 }
@@ -58,15 +58,15 @@ pub(super) fn microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
     Ok((microphones, selected))
 }
 
-pub(super) fn operate_plugin(
+pub(super) fn execute_plugin_action(
     guid: String,
     guids: Vec<String>,
     action: PluginAction,
-) -> PluginOperation {
+) -> PluginOperationResult {
     let result = if matches!(action, PluginAction::Uninstall) {
-        setup::uninstall_device(&guid)
+        setup::uninstall_device_plugin(&guid)
     } else {
-        setup::ensure_device_reg(&guid)
+        setup::ensure_device_plugin_installed(&guid)
     };
     // Recheck even after failure: the operation can have partially succeeded. All
     // DLL and registry reads stay in the background worker.
@@ -78,5 +78,5 @@ pub(super) fn operate_plugin(
         })
         .collect();
 
-    PluginOperation { result, statuses }
+    PluginOperationResult { result, statuses }
 }

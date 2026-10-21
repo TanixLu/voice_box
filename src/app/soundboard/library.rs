@@ -6,7 +6,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub(in crate::app) struct Sound {
     pub file_name: String,
     #[serde(skip)]
@@ -26,6 +27,7 @@ impl Sound {
     }
 }
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub(in crate::app) struct Library {
     pub sounds: Vec<Sound>,
 }

@@ -57,7 +57,7 @@ impl Limiter {
         self.gain = 1.0;
     }
 
-    pub(super) fn latency_samples(&self) -> usize {
+    pub(super) fn latency_frames(&self) -> usize {
         self.delay_frames
     }
 

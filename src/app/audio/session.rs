@@ -15,19 +15,19 @@ use std::{
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum Activity {
-    Record,
-    Original,
-    Processed,
+    Recording,
+    PlayingOriginal,
+    PlayingProcessed,
 }
 
-struct Processed {
+struct ProcessedRecording {
     settings: Settings,
     samples: Arc<Vec<f32>>,
 }
 
 enum Outcome {
     Recorded(Arc<Recording>),
-    Played(Option<Processed>),
+    Played(Option<ProcessedRecording>),
 }
 
 enum Event {
@@ -46,7 +46,7 @@ struct Job {
 pub(in crate::app) struct AudioSession {
     job: Option<Job>,
     recording: Option<Arc<Recording>>,
-    processed: Option<Processed>,
+    processed: Option<ProcessedRecording>,
     pub message: String,
     pub failed: bool,
 }
@@ -66,16 +66,16 @@ impl AudioSession {
             .as_ref()
             .is_some_and(|job| job.stop.load(Ordering::Relaxed))
     }
-    pub fn elapsed(&self) -> Option<f64> {
+    pub fn recording_elapsed(&self) -> Option<f64> {
         self.job
             .as_ref()
-            .filter(|job| job.activity == Activity::Record)
+            .filter(|job| job.activity == Activity::Recording)
             .and_then(|job| job.started)
             .map(|started| started.elapsed().as_secs_f64())
     }
     pub fn playback_progress(&self) -> Option<(f64, f64)> {
         let job = self.job.as_ref()?;
-        if job.activity == Activity::Record {
+        if job.activity == Activity::Recording {
             return None;
         }
         let started = job.started?;
@@ -135,7 +135,7 @@ impl AudioSession {
     pub fn record(&mut self, device_id: String, wake: impl Fn() + Send + 'static) {
         self.begin(
             wake,
-            Activity::Record,
+            Activity::Recording,
             "正在打开麦克风…",
             move |stop, started| {
                 capture(&device_id, stop, started)
@@ -155,9 +155,9 @@ impl AudioSession {
                 .map(|processed| Arc::clone(&processed.samples))
         });
         let activity = if settings.is_some() {
-            Activity::Processed
+            Activity::PlayingProcessed
         } else {
-            Activity::Original
+            Activity::PlayingOriginal
         };
         self.begin(
             wake,
@@ -173,7 +173,7 @@ impl AudioSession {
                         Some(samples) => samples,
                         None => Arc::new(super::preview::process(&recording, &settings)?),
                     };
-                    Some(Processed { settings, samples })
+                    Some(ProcessedRecording { settings, samples })
                 } else {
                     None
                 };
@@ -209,8 +209,8 @@ impl AudioSession {
                 Event::Started => {
                     job.started = Some(Instant::now());
                     self.message = match job.activity {
-                        Activity::Record => "正在录音…",
-                        Activity::Original | Activity::Processed => "正在播放…",
+                        Activity::Recording => "正在录音…",
+                        Activity::PlayingOriginal | Activity::PlayingProcessed => "正在播放…",
                     }
                     .into();
                 }

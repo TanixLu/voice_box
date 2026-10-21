@@ -42,7 +42,7 @@ impl PreviewDll {
         Ok(Self(module))
     }
 
-    fn process(&self) -> anyhow::Result<preview::Process> {
+    fn resolve_process_function(&self) -> anyhow::Result<preview::Process> {
         let address = unsafe { GetProcAddress(self.0, PCSTR(preview::PROCESS_SYMBOL.as_ptr())) }
             .ok_or_else(|| anyhow!("试听组件缺少处理接口，请更新 VoiceBox"))?;
         // Matching DLL bytes above ensure this shared signature is compatible.
@@ -72,7 +72,7 @@ pub(super) fn process(recording: &Recording, settings: &Settings) -> anyhow::Res
         "录音数据无效"
     );
     let dll = PreviewDll::load()?;
-    let process = dll.process()?;
+    let process = dll.resolve_process_function()?;
     let mut output = vec![0.0; recording.samples.len()];
     unsafe {
         process(

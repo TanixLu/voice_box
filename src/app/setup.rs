@@ -82,8 +82,8 @@ fn common_u32_reg_pairs() -> [(String, u32); 10] {
     ]
 }
 
-const COMPOSITE_MFX_GUID: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},14";
-const MFX_PROCESSING_MODES: &str = "{d3993a3f-99c2-4402-b5ec-a92a0367664b},6";
+const COMPOSITE_MFX_PROPERTY_KEY: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},14";
+const MFX_PROCESSING_MODES_PROPERTY_KEY: &str = "{d3993a3f-99c2-4402-b5ec-a92a0367664b},6";
 
 fn default_processing_modes() -> Vec<String> {
     [
@@ -97,7 +97,7 @@ fn default_processing_modes() -> Vec<String> {
     .collect()
 }
 
-const DISABLE_APO_GUID: &str = "{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5";
+const DISABLE_APO_PROPERTY_KEY: &str = "{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5";
 
 const AUDIO_SERVICE_NAME: &str = "AudioSrv";
 
@@ -120,7 +120,7 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
         return PluginStatus::NotInstalled;
     };
     let effects = fx
-        .get_value::<Vec<String>, _>(COMPOSITE_MFX_GUID)
+        .get_value::<Vec<String>, _>(COMPOSITE_MFX_PROPERTY_KEY)
         .unwrap_or_default();
     if !effects
         .iter()
@@ -165,13 +165,13 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
         return PluginStatus::NeedsUpdate;
     }
     if !fx
-        .get_value::<Vec<String>, _>(MFX_PROCESSING_MODES)
+        .get_value::<Vec<String>, _>(MFX_PROCESSING_MODES_PROPERTY_KEY)
         .is_ok_and(|modes| modes.iter().any(|mode| !mode.is_empty()))
     {
         return PluginStatus::NeedsUpdate;
     }
     if fx
-        .get_value::<u32, _>(DISABLE_APO_GUID)
+        .get_value::<u32, _>(DISABLE_APO_PROPERTY_KEY)
         .is_ok_and(|value| value != 0)
     {
         return PluginStatus::NeedsUpdate;
@@ -215,7 +215,7 @@ pub(super) fn with_audio_service_stopped(
     Ok(())
 }
 
-fn register_device(device_guid: &str) -> anyhow::Result<()> {
+fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     let apo_dll = paths::apo_dll_path().context("读取 APO DLL 路径失败")?;
     let string_pairs = common_string_reg_pairs(&apo_dll)?;
     // 更新dll
@@ -284,7 +284,7 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
     let plugin_guid = plugin_guid();
     // Only an absent value means an empty list. Refuse to overwrite invalid types
     // or unreadable values, since they may contain another APO's settings.
-    let mut effects: Vec<String> = optional_value(fx, COMPOSITE_MFX_GUID)
+    let mut effects: Vec<String> = optional_value(fx, COMPOSITE_MFX_PROPERTY_KEY)
         .context("读取 Composite MFX APO 列表失败")?
         .unwrap_or_default();
     if uninstall {
@@ -292,22 +292,22 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
         effects.retain(|effect| !effect.eq_ignore_ascii_case(&plugin_guid));
         if effects.len() != count {
             if effects.is_empty() {
-                delete_optional(fx, COMPOSITE_MFX_GUID)?;
+                delete_optional(fx, COMPOSITE_MFX_PROPERTY_KEY)?;
             } else {
-                fx.set_value(COMPOSITE_MFX_GUID, &effects)?;
+                fx.set_value(COMPOSITE_MFX_PROPERTY_KEY, &effects)?;
             }
         }
     } else {
         effects.retain(|effect| !effect.eq_ignore_ascii_case(&plugin_guid));
         effects.insert(0, plugin_guid);
-        fx.set_value(COMPOSITE_MFX_GUID, &effects)?;
-        let modes: Vec<String> = optional_value(fx, MFX_PROCESSING_MODES)
+        fx.set_value(COMPOSITE_MFX_PROPERTY_KEY, &effects)?;
+        let modes: Vec<String> = optional_value(fx, MFX_PROCESSING_MODES_PROPERTY_KEY)
             .context("读取 MFX 处理模式失败")?
             .unwrap_or_default();
         if modes.iter().all(String::is_empty) {
-            fx.set_value(MFX_PROCESSING_MODES, &default_processing_modes())?;
+            fx.set_value(MFX_PROCESSING_MODES_PROPERTY_KEY, &default_processing_modes())?;
         }
-        delete_optional(fx, DISABLE_APO_GUID)?;
+        delete_optional(fx, DISABLE_APO_PROPERTY_KEY)?;
     }
     Ok(())
 }
@@ -381,9 +381,9 @@ fn delete_tree_transacted(
     root.delete_subkey_transacted_with_flags(path, transaction, KEY_WOW64_64KEY)
 }
 
-pub fn ensure_device_reg(device_guid: &str) -> anyhow::Result<()> {
+pub fn ensure_device_plugin_installed(device_guid: &str) -> anyhow::Result<()> {
     if device_plugin_status(device_guid) != PluginStatus::Installed {
-        device_operation(device_guid, false)?;
+        run_device_plugin_operation(device_guid, false)?;
         anyhow::ensure!(
             device_plugin_status(device_guid) == PluginStatus::Installed,
             "安装操作已结束，但插件检查未通过，请刷新后重试"
@@ -392,11 +392,11 @@ pub fn ensure_device_reg(device_guid: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn uninstall_device(device_guid: &str) -> anyhow::Result<()> {
-    device_operation(device_guid, true)
+pub fn uninstall_device_plugin(device_guid: &str) -> anyhow::Result<()> {
+    run_device_plugin_operation(device_guid, true)
 }
 
-fn device_operation(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
+fn run_device_plugin_operation(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
     anyhow::ensure!(
         device_guid.len() == 38
             && device_guid.starts_with('{')
@@ -408,7 +408,7 @@ fn device_operation(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
         if uninstall {
             update_device_effects(device_guid, true)
         } else {
-            register_device(device_guid)
+            install_device_plugin(device_guid)
         }
     })
 }

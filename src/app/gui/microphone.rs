@@ -187,7 +187,7 @@ impl MicrophonePanel {
                                 "正在安装插件…"
                             },
                             move || {
-                                JobResult::Plugin(devices::operate_plugin(
+                                JobResult::Plugin(devices::execute_plugin_action(
                                     guid,
                                     guids,
                                     PluginAction::Install,
@@ -226,7 +226,7 @@ impl MicrophonePanel {
                         let guid = self.devices[self.selected].guid.clone();
                         let guids = self.devices.iter().map(|mic| mic.guid.clone()).collect();
                         jobs.begin(ui.ctx(), "正在卸载插件…", move || {
-                            JobResult::Plugin(devices::operate_plugin(
+                            JobResult::Plugin(devices::execute_plugin_action(
                                 guid,
                                 guids,
                                 PluginAction::Uninstall,
