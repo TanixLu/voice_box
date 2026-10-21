@@ -21,8 +21,10 @@ pub(super) enum PlaybackAction {
 pub(super) struct HotkeyBinding {
     listener: Option<Hotkeys>,
     bindings: Vec<Option<Hotkey>>,
+    attempted: Vec<Option<Hotkey>>,
     revision: u64,
     capture: Option<KeyCapture>,
+    registration_error: String,
     pub(super) message: String,
 }
 impl HotkeyBinding {
@@ -34,16 +36,31 @@ impl HotkeyBinding {
         Self {
             listener,
             bindings: Vec::new(),
+            attempted: Vec::new(),
             revision: 0,
             capture: None,
+            registration_error: String::new(),
             message,
         }
     }
     pub(super) fn target(&self) -> Option<BindingTarget> {
         self.capture.as_ref().map(|capture| capture.target)
     }
+    pub(super) fn error(&self) -> &str {
+        if self.message.is_empty() {
+            &self.registration_error
+        } else {
+            &self.message
+        }
+    }
     pub(super) fn cancel_capture(&mut self) {
         self.capture = None;
+    }
+    pub(super) fn validate(&self, key: Hotkey) -> anyhow::Result<()> {
+        self.listener
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("全局快捷键服务不可用"))?
+            .validate(key)
     }
     pub(super) fn poll(&mut self, enabled: bool, soundboard: &Soundboard) -> Vec<PlaybackAction> {
         let enabled = enabled && self.capture.is_none();
@@ -65,14 +82,21 @@ impl HotkeyBinding {
                     {
                         triggers.push(index)
                     }
-                    hotkeys::Event::Error(error) => self.message = error,
+                    hotkeys::Event::Error(error) => self.registration_error = error,
                     _ => {}
                 }
             }
-            if changed {
-                self.revision = self.revision.wrapping_add(1);
-                hotkeys.configure(self.revision, bindings.clone());
-                self.bindings = bindings;
+            if bindings != self.attempted {
+                let revision = self.revision.wrapping_add(1);
+                match hotkeys.configure(revision, bindings.clone()) {
+                    Ok(()) => {
+                        self.revision = revision;
+                        self.bindings = bindings.clone();
+                        self.registration_error.clear();
+                    }
+                    Err(error) => self.registration_error = format!("{error:#}"),
+                }
+                self.attempted = bindings;
             }
         }
 
@@ -104,6 +128,7 @@ impl HotkeyBinding {
         };
         ctx.request_repaint_after(std::time::Duration::from_millis(20));
         if !ctx.input(|input| input.focused) {
+            self.cancel_capture();
             return;
         }
         let pressed = Hotkey::pressed();
@@ -129,7 +154,13 @@ impl HotkeyBinding {
         if key.key == 0x1b {
             return;
         }
-        match soundboard.bind_hotkey(target, Some(key), draft) {
+        let result = if target == BindingTarget::Hold {
+            Ok(())
+        } else {
+            self.validate(key)
+        }
+        .and_then(|()| soundboard.bind_hotkey(target, Some(key), draft));
+        match result {
             Ok(()) => self.message.clear(),
             Err(error) => {
                 tracing::error!("Failed to bind hotkey: {error:#}");

@@ -65,11 +65,16 @@ impl SoundboardPanel {
         self.confirm_delete = None;
     }
 
-    fn save_sound_settings(&mut self, jobs: &mut Jobs) {
+    fn save_sound_settings(&mut self, jobs: &mut Jobs, hotkeys: &HotkeyBinding) {
         let Some(options) = self.options.clone() else {
             return;
         };
-        match self.model.save_options(options) {
+        let result = [options.stop_hotkey, options.random_hotkey]
+            .into_iter()
+            .flatten()
+            .try_for_each(|key| hotkeys.validate(key))
+            .and_then(|()| self.model.save_options(options));
+        match result {
             Ok(()) => {
                 jobs.status.clear();
                 jobs.failed = false;
@@ -388,8 +393,8 @@ impl SoundboardPanel {
                 {
                     self.model.stop();
                 }
-                let error = if !hotkeys.message.is_empty() {
-                    Some(hotkeys.message.as_str())
+                let error = if !hotkeys.error().is_empty() {
+                    Some(hotkeys.error())
                 } else if self.model.failed {
                     Some(self.model.message.as_str())
                 } else {
@@ -486,8 +491,8 @@ impl SoundboardPanel {
                             ) {
                                 capture = Some(BindingTarget::Random);
                             }
-                            if !hotkeys.message.is_empty() {
-                                warning(ui, &hotkeys.message);
+                            if !hotkeys.error().is_empty() {
+                                warning(ui, hotkeys.error());
                             }
                         });
                     });
@@ -546,7 +551,7 @@ impl SoundboardPanel {
             self.options = None;
             hotkeys.cancel_capture();
         } else if save {
-            self.save_sound_settings(jobs);
+            self.save_sound_settings(jobs, hotkeys);
         } else if let Some(target) = capture {
             if capture_target == Some(target) {
                 hotkeys.cancel_capture();

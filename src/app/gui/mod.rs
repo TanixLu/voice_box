@@ -122,31 +122,11 @@ impl VoiceBoxApp {
 
     fn show(&mut self, ui: &mut egui::Ui) {
         self.zoom_factor = ui.ctx().zoom_factor();
-        self.poll_job();
-        self.voice.session.poll();
-        self.soundboard.model.poll(wake_ui(ui.ctx().clone()));
         self.hotkeys.poll_capture(
             ui.ctx(),
             &mut self.soundboard.model,
             self.soundboard.options.as_mut(),
         );
-        let shortcuts_enabled = !self.jobs.busy()
-            && !self.voice.session.busy()
-            && !self.soundboard.model.importing()
-            && !self.uninstalling
-            && !self.uninstall_requested
-            && !self.confirm_full_uninstall
-            && !self.soundboard.renaming()
-            && !(ui.input(|input| input.focused) && ui.ctx().text_edit_focused());
-        let actions = self.hotkeys.poll(shortcuts_enabled, &self.soundboard.model);
-        for action in actions {
-            let guid = self.microphones.installed_guid();
-            match action {
-                PlaybackAction::Stop => self.soundboard.model.stop(),
-                PlaybackAction::Random => self.soundboard.play_random_sound(ui.ctx(), guid),
-                PlaybackAction::Play(index) => self.soundboard.play_sound(ui.ctx(), index, guid),
-            }
-        }
         if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
             self.soundboard.cancel_rename();
         }
@@ -186,25 +166,15 @@ impl VoiceBoxApp {
                     ui.label(&self.jobs.status);
                 });
             });
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(100));
             return;
         }
-        if self.voice.session.busy() || self.soundboard.model.busy() {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(100));
-        }
-        let busy = self.jobs.busy();
-        // Also repaint if the worker exits unexpectedly without sending a result.
-        if busy {
+        if self.jobs.busy() {
             // An elevated GUI can stop the audio service itself; let registration
             // finish and restart the service before allowing the process to exit.
             if ui.ctx().input(|input| input.viewport().close_requested()) {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::CancelClose);
             }
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(100));
         }
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(20))
@@ -314,6 +284,39 @@ impl VoiceBoxApp {
 }
 
 impl eframe::App for VoiceBoxApp {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_job();
+        self.voice.session.poll();
+        self.soundboard.model.poll(wake_ui(ctx.clone()));
+        let focused = ctx.input(|input| {
+            input.viewport().focused == Some(true) && input.viewport().minimized != Some(true)
+        });
+        if !focused {
+            self.hotkeys.cancel_capture();
+        }
+        let shortcuts_enabled = !self.jobs.busy()
+            && !self.voice.session.busy()
+            && !self.soundboard.model.importing()
+            && !self.uninstalling
+            && !self.uninstall_requested
+            && !self.confirm_full_uninstall
+            && !(focused && (self.soundboard.renaming() || ctx.text_edit_focused()));
+        for action in self.hotkeys.poll(shortcuts_enabled, &self.soundboard.model) {
+            let guid = self.microphones.installed_guid();
+            match action {
+                PlaybackAction::Stop => self.soundboard.model.stop(),
+                PlaybackAction::Random => self.soundboard.play_random_sound(ctx, guid),
+                PlaybackAction::Play(index) => self.soundboard.play_sound(ctx, index, guid),
+            }
+        }
+        if self.uninstall_requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        // Keep completions moving even when eframe skips painting a hidden window.
+        if self.jobs.busy() || self.voice.session.busy() || self.soundboard.model.busy() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.soundboard.model.stop();
     }
