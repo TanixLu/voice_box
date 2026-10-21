@@ -1,5 +1,5 @@
 //! Cancellable background recording, DLL preview and playback.
-use super::audio::{
+use super::{
     capture::{Recording, capture},
     playback::playback,
 };
@@ -14,7 +14,7 @@ use std::{
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Activity {
+pub(in crate::app) enum Activity {
     Record,
     Original,
     Processed,
@@ -43,7 +43,7 @@ struct Job {
 }
 
 #[derive(Default)]
-pub(super) struct AudioSession {
+pub(in crate::app) struct AudioSession {
     job: Option<Job>,
     recording: Option<Arc<Recording>>,
     processed: Option<Processed>,
@@ -90,7 +90,7 @@ impl AudioSession {
 
     fn begin(
         &mut self,
-        ctx: &egui::Context,
+        wake: impl Fn() + Send + 'static,
         activity: Activity,
         message: &str,
         operation: impl FnOnce(&AtomicBool, &dyn Fn()) -> anyhow::Result<Outcome> + Send + 'static,
@@ -101,7 +101,6 @@ impl AudioSession {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
         let (sender, receiver) = mpsc::channel();
-        let ctx = ctx.clone();
         self.message = message.into();
         self.failed = false;
         match std::thread::Builder::new()
@@ -109,14 +108,14 @@ impl AudioSession {
             .spawn(move || {
                 let started = || {
                     let _ = sender.send(Event::Started);
-                    ctx.request_repaint();
+                    wake();
                 };
                 let result = operation(&worker_stop, &started);
                 if let Err(error) = &result {
                     tracing::error!("Audio session failed: {error:#}");
                 }
                 let _ = sender.send(Event::Finished(result));
-                ctx.request_repaint();
+                wake();
             }) {
             Ok(_) => {
                 self.job = Some(Job {
@@ -133,9 +132,9 @@ impl AudioSession {
         }
     }
 
-    pub fn record(&mut self, ctx: &egui::Context, device_id: String) {
+    pub fn record(&mut self, device_id: String, wake: impl Fn() + Send + 'static) {
         self.begin(
-            ctx,
+            wake,
             Activity::Record,
             "正在打开麦克风…",
             move |stop, started| {
@@ -145,7 +144,7 @@ impl AudioSession {
         );
     }
 
-    pub fn play(&mut self, ctx: &egui::Context, settings: Option<Settings>) {
+    pub fn play(&mut self, settings: Option<Settings>, wake: impl Fn() + Send + 'static) {
         let Some(recording) = self.recording.clone() else {
             return;
         };
@@ -161,7 +160,7 @@ impl AudioSession {
             Activity::Original
         };
         self.begin(
-            ctx,
+            wake,
             activity,
             if settings.is_some() {
                 "正在准备处理后的声音…"

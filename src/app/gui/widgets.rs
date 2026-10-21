@@ -2,6 +2,7 @@ pub(super) const ICON_BUTTON_SIZE: f32 = 30.0;
 
 #[derive(Clone, Copy)]
 pub(super) enum ButtonIcon {
+    Close,
     ClearHotkey,
     Delete,
     ConfirmDelete,
@@ -9,6 +10,9 @@ pub(super) enum ButtonIcon {
 
 pub(super) fn icon_button(ui: &mut egui::Ui, enabled: bool, icon: ButtonIcon) -> egui::Response {
     let mut button = egui::Button::new("").min_size(egui::Vec2::splat(ICON_BUTTON_SIZE));
+    if matches!(icon, ButtonIcon::Close) {
+        button = button.frame_when_inactive(false);
+    }
     let confirming = matches!(icon, ButtonIcon::ConfirmDelete);
     if confirming {
         let color = ui.visuals().error_fg_color;
@@ -27,10 +31,14 @@ pub(super) fn icon_button(ui: &mut egui::Ui, enabled: bool, icon: ButtonIcon) ->
     let point = |x, y| center + egui::vec2(x, y);
     let painter = ui.painter();
     let (label, tooltip) = match icon {
-        ButtonIcon::ClearHotkey => {
+        ButtonIcon::Close | ButtonIcon::ClearHotkey => {
             painter.line_segment([point(-4.0, -4.0), point(4.0, 4.0)], stroke);
             painter.line_segment([point(-4.0, 4.0), point(4.0, -4.0)], stroke);
-            ("清除快捷键", "清除快捷键")
+            if matches!(icon, ButtonIcon::Close) {
+                ("关闭音效设置", "关闭，放弃未保存的修改")
+            } else {
+                ("清除快捷键", "清除快捷键")
+            }
         }
         ButtonIcon::Delete => {
             painter.line_segment([point(-6.0, -4.0), point(6.0, -4.0)], stroke);

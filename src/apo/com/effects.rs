@@ -144,7 +144,7 @@ fn soundboard_path(
     unsafe {
         CoTaskMemFree(Some(text.0.cast()));
     }
-    crate::shared::soundboard::transport_path(&guid.ok()?).ok()
+    crate::shared::pcm_transport::transport_path(&guid.ok()?).ok()
 }
 
 fn processing_mode_name(mode: &GUID) -> &'static str {

@@ -1,4 +1,4 @@
-//! Shared WASAPI streams and thread-local COM lifetime.
+//! WASAPI capture and playback, offline preview and session coordination.
 use anyhow::bail;
 use wasapi::WaveFormat;
 use windows::Win32::{
@@ -17,6 +17,8 @@ use windows::Win32::{
 pub(super) mod capture;
 pub(super) mod monitor;
 pub(super) mod playback;
+mod preview;
+pub(super) mod session;
 
 pub(super) struct Apartment;
 impl Apartment {

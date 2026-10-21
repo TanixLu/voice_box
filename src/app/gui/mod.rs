@@ -7,6 +7,7 @@ mod dialogs;
 mod hotkey_binding;
 mod jobs;
 mod microphone;
+mod picker;
 mod soundboard_panel;
 mod style;
 mod voice;
@@ -19,6 +20,10 @@ use soundboard_panel::SoundboardPanel;
 use style::{apply_style, install_system_font};
 use voice::VoicePanel;
 use widgets::section;
+
+fn wake_ui(ctx: egui::Context) -> impl Fn() + Clone + Send + 'static {
+    move || ctx.request_repaint()
+}
 
 pub fn run() -> anyhow::Result<()> {
     let settings = Settings::try_load()?;
@@ -119,7 +124,7 @@ impl VoiceBoxApp {
         self.zoom_factor = ui.ctx().zoom_factor();
         self.poll_job();
         self.voice.session.poll();
-        self.soundboard.model.poll(ui.ctx());
+        self.soundboard.model.poll(wake_ui(ui.ctx().clone()));
         self.hotkeys.poll_capture(
             ui.ctx(),
             &mut self.soundboard.model,
@@ -127,7 +132,7 @@ impl VoiceBoxApp {
         );
         let shortcuts_enabled = !self.jobs.busy()
             && !self.voice.session.busy()
-            && !self.soundboard.model.choosing()
+            && !self.soundboard.model.importing()
             && !self.uninstalling
             && !self.uninstall_requested
             && !self.confirm_full_uninstall

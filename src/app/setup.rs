@@ -15,6 +15,7 @@ use winreg::{
 };
 
 use super::{
+    APO_DLL,
     registry::{reg_get_value, reg_set_value},
     settings_writer,
 };
@@ -97,9 +98,6 @@ fn default_processing_modes() -> Vec<String> {
 }
 
 const DISABLE_APO_GUID: &str = "{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5";
-
-pub(super) const APO_DLL: &[u8] =
-    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/target/voice_box.dll"));
 
 const AUDIO_SERVICE_NAME: &str = "AudioSrv";
 

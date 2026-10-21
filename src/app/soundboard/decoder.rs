@@ -1,7 +1,7 @@
 //! Bounded packet decoding and stereo sinc conversion; never runs on an APO thread.
 use crate::shared::{
+    pcm_transport::{RATE, finite},
     resample::Resampler,
-    soundboard::{RATE, finite},
 };
 use anyhow::{Context, ensure};
 use std::{

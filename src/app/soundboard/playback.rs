@@ -1,7 +1,7 @@
-use super::config::Options;
+use super::{config::Options, decoder::MusicDecoder};
 use crate::{
-    app::{audio::monitor::Monitor, hotkeys::HeldKeys, music_decoder::MusicDecoder},
-    shared::soundboard::{Clock, LEAD, Mapping, RATE},
+    app::{audio::monitor::Monitor, hotkeys::HeldKeys},
+    shared::pcm_transport::{Clock, LEAD, Mapping, RATE},
 };
 use anyhow::{Context, ensure};
 use std::{

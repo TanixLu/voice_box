@@ -243,10 +243,9 @@ pub(super) struct Hotkeys {
     thread: Option<JoinHandle<()>>,
 }
 impl Hotkeys {
-    pub fn new(ctx: &egui::Context) -> anyhow::Result<Self> {
+    pub fn new(wake: impl Fn() + Send + 'static) -> anyhow::Result<Self> {
         let (sender, commands) = mpsc::channel::<(u64, Vec<Option<Hotkey>>)>();
         let (events, receiver) = mpsc::channel();
-        let ctx = ctx.clone();
         let thread = std::thread::Builder::new()
             .name("VoiceBoxHotkeys".into())
             .spawn(move || {
@@ -255,7 +254,7 @@ impl Hotkeys {
                     Ok(hook) => hook,
                     Err(error) => {
                         let _ = events.send(Event::Error(format!("无法监听全局快捷键：{error}")));
-                        ctx.request_repaint();
+                        wake();
                         return;
                     }
                 };
@@ -280,7 +279,7 @@ impl Hotkeys {
                         }
                     }
                     if repaint {
-                        ctx.request_repaint();
+                        wake();
                     }
                     // Process input against its current revision first. Changing
                     // bindings never treats a held key as a fresh key press.
@@ -306,7 +305,7 @@ impl Hotkeys {
                     if result == WAIT_FAILED {
                         let error = windows::core::Error::from_thread();
                         let _ = events.send(Event::Error(format!("等待全局键盘事件失败：{error}")));
-                        ctx.request_repaint();
+                        wake();
                         break;
                     }
                 }

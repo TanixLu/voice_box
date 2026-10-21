@@ -5,7 +5,7 @@ use super::{
 };
 use crate::shared::{
     audio::SampleFormat,
-    soundboard::{Clock, Mapping, RATE, Slot},
+    pcm_transport::{Clock, Mapping, RATE, Slot},
 };
 use std::{
     f64::consts::PI,

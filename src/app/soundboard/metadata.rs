@@ -1,5 +1,4 @@
-use super::library::Library;
-use crate::app::music_decoder::MusicDecoder;
+use super::{decoder::MusicDecoder, library::Library};
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -31,7 +30,11 @@ impl MetadataReader {
     pub(super) fn invalidate(&mut self, path: &Path) {
         self.checked.remove(path);
     }
-    pub(super) fn poll(&mut self, library: &mut Library, ctx: &egui::Context) -> Vec<String> {
+    pub(super) fn poll(
+        &mut self,
+        library: &mut Library,
+        wake: impl Fn() + Send + 'static,
+    ) -> Vec<String> {
         let mut errors = Vec::new();
         if let Some(job) = &self.job {
             loop {
@@ -73,7 +76,6 @@ impl MetadataReader {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
         let worker_paths = paths.clone();
-        let ctx = ctx.clone();
         match std::thread::Builder::new()
             .name("VoiceBoxSoundMetadata".into())
             .spawn(move || {
@@ -86,7 +88,7 @@ impl MetadataReader {
                     if events.send((path, result)).is_err() {
                         break;
                     }
-                    ctx.request_repaint();
+                    wake();
                 }
             }) {
             Ok(_) => {

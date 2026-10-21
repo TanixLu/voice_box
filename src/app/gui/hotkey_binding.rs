@@ -1,18 +1,14 @@
 use super::widgets::{ButtonIcon, ICON_BUTTON_SIZE, icon_button};
 use crate::app::{
     hotkeys::{self, Hotkey, Hotkeys},
-    soundboard::{Soundboard, config::Options},
+    soundboard::{
+        Soundboard,
+        config::{BindingTarget, Options},
+    },
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum CaptureTarget {
-    Sound(usize),
-    Hold,
-    Stop,
-    Random,
-}
 struct KeyCapture {
-    target: CaptureTarget,
+    target: BindingTarget,
     armed: bool,
     modifier: Option<Hotkey>,
 }
@@ -31,7 +27,7 @@ pub(super) struct HotkeyBinding {
 }
 impl HotkeyBinding {
     pub(super) fn new(ctx: &egui::Context) -> Self {
-        let (listener, message) = match Hotkeys::new(ctx) {
+        let (listener, message) = match Hotkeys::new(super::wake_ui(ctx.clone())) {
             Ok(listener) => (Some(listener), String::new()),
             Err(error) => (None, format!("无法启用全局快捷键：{error}")),
         };
@@ -43,7 +39,7 @@ impl HotkeyBinding {
             message,
         }
     }
-    pub(super) fn target(&self) -> Option<CaptureTarget> {
+    pub(super) fn target(&self) -> Option<BindingTarget> {
         self.capture.as_ref().map(|capture| capture.target)
     }
     pub(super) fn cancel_capture(&mut self) {
@@ -52,9 +48,9 @@ impl HotkeyBinding {
     pub(super) fn poll(&mut self, enabled: bool, soundboard: &Soundboard) -> Vec<PlaybackAction> {
         let enabled = enabled && self.capture.is_none();
         let bindings: Vec<_> = if enabled {
-            std::iter::once(soundboard.options.stop_hotkey)
-                .chain(std::iter::once(soundboard.options.random_hotkey))
-                .chain(soundboard.library.sounds.iter().map(|sound| sound.hotkey))
+            std::iter::once(soundboard.options().stop_hotkey)
+                .chain(std::iter::once(soundboard.options().random_hotkey))
+                .chain(soundboard.library().sounds.iter().map(|sound| sound.hotkey))
                 .collect()
         } else {
             Vec::new()
@@ -116,7 +112,7 @@ impl HotkeyBinding {
             capture.armed = pressed.is_none() && modifier.is_none();
             return;
         }
-        let pressed = if capture.target == CaptureTarget::Hold && pressed.is_none() {
+        let pressed = if capture.target == BindingTarget::Hold && pressed.is_none() {
             if modifier.is_some() {
                 capture.modifier = modifier;
                 return;
@@ -133,63 +129,16 @@ impl HotkeyBinding {
         if key.key == 0x1b {
             return;
         }
-        let options = draft.as_deref().unwrap_or(&soundboard.options);
-
-        let duplicate = (target != CaptureTarget::Stop && options.stop_hotkey == Some(key))
-            || (target != CaptureTarget::Random && options.random_hotkey == Some(key))
-            || soundboard
-                .library
-                .sounds
-                .iter()
-                .enumerate()
-                .any(|(index, sound)| {
-                    target != CaptureTarget::Sound(index) && sound.hotkey == Some(key)
-                });
-        let overlaps_hold =
-            match target {
-                CaptureTarget::Sound(_) | CaptureTarget::Stop | CaptureTarget::Random => {
-                    options.hold.is_some_and(|hold| hold.key == key.key)
-                }
-                CaptureTarget::Hold => {
-                    options
-                        .stop_hotkey
-                        .is_some_and(|shortcut| shortcut.key == key.key)
-                        || options
-                            .random_hotkey
-                            .is_some_and(|shortcut| shortcut.key == key.key)
-                        || soundboard.library.sounds.iter().any(|sound| {
-                            sound.hotkey.is_some_and(|shortcut| shortcut.key == key.key)
-                        })
-                }
-            };
-        if duplicate && target != CaptureTarget::Hold {
-            self.message = format!("{} 已绑定其他操作，请使用另一个快捷键", key.label());
-        } else if overlaps_hold {
-            self.message = "自动按键不能与播放或停止快捷键使用同一个主键".into();
-        } else {
-            match target {
-                CaptureTarget::Sound(index) => {
-                    if let Some(sound) = soundboard.library.sounds.get_mut(index) {
-                        sound.hotkey = Some(key);
-                        soundboard.save_library();
-                    }
-                }
-                CaptureTarget::Hold | CaptureTarget::Stop | CaptureTarget::Random => {
-                    if let Some(options) = draft {
-                        match target {
-                            CaptureTarget::Hold => options.hold = Some(key),
-                            CaptureTarget::Stop => options.stop_hotkey = Some(key),
-                            CaptureTarget::Random => options.random_hotkey = Some(key),
-                            CaptureTarget::Sound(_) => unreachable!(),
-                        }
-                    }
-                }
+        match soundboard.bind_hotkey(target, Some(key), draft) {
+            Ok(()) => self.message.clear(),
+            Err(error) => {
+                tracing::error!("Failed to bind hotkey: {error:#}");
+                self.message = format!("{error:#}");
             }
-            self.message.clear();
         }
     }
 
-    pub(super) fn begin_capture(&mut self, target: CaptureTarget, soundboard: &mut Soundboard) {
+    pub(super) fn begin_capture(&mut self, target: BindingTarget, soundboard: &mut Soundboard) {
         soundboard.stop();
         self.capture = Some(KeyCapture {
             target,
@@ -240,8 +189,8 @@ pub(super) fn hotkey_editor(
     ui: &mut egui::Ui,
     label: &str,
     key: &mut Option<Hotkey>,
-    target: CaptureTarget,
-    capture_target: Option<CaptureTarget>,
+    target: BindingTarget,
+    capture_target: Option<BindingTarget>,
 ) -> bool {
     let binding = capture_target == Some(target);
     let enabled = capture_target.is_none() || binding;

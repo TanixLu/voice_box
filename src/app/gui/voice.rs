@@ -1,7 +1,7 @@
 use super::widgets::{hint, warning};
 use crate::{
     app::{
-        audio_session::{Activity, AudioSession},
+        audio::session::{Activity, AudioSession},
         devices::Microphone,
     },
     shared::settings::{MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB, Settings},
@@ -159,7 +159,8 @@ impl VoicePanel {
                 if activity == Some(Activity::Record) {
                     self.session.stop();
                 } else if let Some(mic) = microphone {
-                    self.session.record(ui.ctx(), mic.device_id.clone());
+                    self.session
+                        .record(mic.device_id.clone(), super::wake_ui(ui.ctx().clone()));
                 }
             }
             if ui
@@ -178,7 +179,7 @@ impl VoicePanel {
                 if activity == Some(Activity::Original) {
                     self.session.stop();
                 } else {
-                    self.session.play(ui.ctx(), None);
+                    self.session.play(None, super::wake_ui(ui.ctx().clone()));
                 }
             }
             // Place processed playback at the right on normal window sizes;
@@ -216,7 +217,10 @@ impl VoicePanel {
                 if activity == Some(Activity::Processed) {
                     self.session.stop();
                 } else {
-                    self.session.play(ui.ctx(), Some(self.settings.clone()));
+                    self.session.play(
+                        Some(self.settings.clone()),
+                        super::wake_ui(ui.ctx().clone()),
+                    );
                 }
             }
         });

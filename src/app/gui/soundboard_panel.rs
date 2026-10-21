@@ -1,11 +1,11 @@
 use super::{
-    hotkey_binding::{CaptureTarget, HotkeyBinding, hotkey_badge, hotkey_editor},
+    hotkey_binding::{HotkeyBinding, hotkey_badge, hotkey_editor},
     jobs::Jobs,
     widgets::{ButtonIcon, hint, icon_button, play_button, warning},
 };
 use crate::app::soundboard::{
     Soundboard,
-    config::{Config, Options},
+    config::{BindingTarget, Config, Options},
 };
 
 struct SoundRename {
@@ -83,12 +83,12 @@ impl SoundboardPanel {
     }
 
     pub(super) fn play_sound(&mut self, ctx: &egui::Context, index: usize, guid: Option<&str>) {
-        self.model.play(ctx, index, guid);
+        self.model.play(index, guid, super::wake_ui(ctx.clone()));
     }
 
     pub(super) fn play_random_sound(&mut self, ctx: &egui::Context, guid: Option<&str>) {
         use std::hash::{BuildHasher, RandomState};
-        let count = self.model.library.sounds.len();
+        let count = self.model.library().sounds.len();
         if count == 0 {
             return;
         }
@@ -108,20 +108,23 @@ impl SoundboardPanel {
         let available = !jobs.busy() && !session_busy && self.options.is_none();
         ui.add_enabled_ui(available, |ui| {
             ui.horizontal(|ui| {
-                ui.strong(format!("音效库 · {} 个", self.model.library.sounds.len()));
+                ui.strong(format!("音效库 · {} 个", self.model.library().sounds.len()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("设置").clicked() {
-                        self.options = Some(self.model.options.clone());
+                        self.options = Some(self.model.options().clone());
                         jobs.status.clear();
                         jobs.failed = false;
                     }
                     if ui
-                        .add_enabled(!self.model.choosing(), egui::Button::new("导入"))
+                        .add_enabled(!self.model.importing(), egui::Button::new("导入"))
                         .clicked()
                     {
-                        self.model.choose(ui.ctx());
+                        self.model.import(
+                            super::picker::choose_files,
+                            super::wake_ui(ui.ctx().clone()),
+                        );
                     }
-                    if self.model.choosing() {
+                    if self.model.importing() {
                         ui.spinner();
                     }
                 });
@@ -139,7 +142,7 @@ impl SoundboardPanel {
             let filter = self.filter.to_lowercase();
             let indices: Vec<_> = self
                 .model
-                .library
+                .library()
                 .sounds
                 .iter()
                 .enumerate()
@@ -157,7 +160,7 @@ impl SoundboardPanel {
             let mut delete_clicked = false;
             let mut capture = None;
             let mut rename = None;
-            let mut library_changed = false;
+            let mut clear_hotkey = None;
             let mut rename_visible = false;
             let renaming = self.rename.is_some();
             let capture_target = hotkeys.target();
@@ -176,7 +179,7 @@ impl SoundboardPanel {
                         for row in rows {
                             let index = indices[row];
                             let active = self.model.active == Some(index);
-                            let sound = &mut self.model.library.sounds[index];
+                            let sound = &self.model.library().sounds[index];
                             ui.push_id(index, |ui| {
                                 ui.horizontal(|ui| {
                                     if play_button(ui, !capturing && !renaming, active)
@@ -241,8 +244,7 @@ impl SoundboardPanel {
                                                 )
                                                 .clicked()
                                                 {
-                                                    sound.hotkey = None;
-                                                    library_changed = true;
+                                                    clear_hotkey = Some(index);
                                                 }
                                                 let max_width =
                                                     (ui.available_width() - 74.0).max(24.0);
@@ -251,7 +253,7 @@ impl SoundboardPanel {
                                                 let width = (ui.available_width() - 74.0)
                                                     .clamp(24.0, 132.0);
                                                 let binding = capture_target
-                                                    == Some(CaptureTarget::Sound(index));
+                                                    == Some(BindingTarget::Sound(index));
                                                 let label = if binding {
                                                     "请按键…"
                                                 } else {
@@ -275,7 +277,7 @@ impl SoundboardPanel {
                                                     })
                                                     .clicked()
                                                 {
-                                                    capture = Some(CaptureTarget::Sound(index));
+                                                    capture = Some(BindingTarget::Sound(index));
                                                 }
                                             }
                                             if let Some(edit) = &mut self.rename
@@ -314,8 +316,13 @@ impl SoundboardPanel {
                         }
                     });
             });
-            if library_changed {
-                self.model.save_library();
+            if let Some(index) = clear_hotkey
+                && let Err(error) = self
+                    .model
+                    .bind_hotkey(BindingTarget::Sound(index), None, None)
+            {
+                tracing::error!("Failed to clear hotkey: {error:#}");
+                self.model.error(format!("{error:#}"));
             }
             if let Some(edit) = &mut self.rename
                 && !rename_visible
@@ -328,7 +335,7 @@ impl SoundboardPanel {
             }
             if indices.is_empty() {
                 // The empty message is painted inside the list's reserved space.
-                let text = if self.model.library.sounds.is_empty() {
+                let text = if self.model.library().sounds.is_empty() {
                     "点击「导入」添加音效，可一次选择多个文件"
                 } else {
                     "没有匹配的音效"
@@ -371,7 +378,7 @@ impl SoundboardPanel {
             ui.horizontal(|ui| {
                 let key = self
                     .model
-                    .options
+                    .options()
                     .stop_hotkey
                     .map(|key| format!("停止播放 · {}", key.label()))
                     .unwrap_or_else(|| "停止播放".into());
@@ -399,7 +406,7 @@ impl SoundboardPanel {
                 } else if let Some(index) = self.model.active {
                     let name = self
                         .model
-                        .library
+                        .library()
                         .sounds
                         .get(index)
                         .map(|sound| sound.name())
@@ -434,42 +441,65 @@ impl SoundboardPanel {
         let mut close = false;
         let response = egui::Modal::new(egui::Id::unique("sound_settings")).show(ctx, |ui| {
             ui.set_width((available.x - 64.0).clamp(240.0, 460.0));
-            ui.heading("音效设置");
+            ui.horizontal(|ui| {
+                ui.strong("音效设置");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    close = icon_button(ui, idle, ButtonIcon::Close).clicked();
+                });
+            });
             egui::ScrollArea::vertical()
                 .max_height((available.y - 230.0).max(80.0))
                 .show(ui, |ui| {
                     ui.add_enabled_ui(idle, |ui| {
                         let options = self.options.as_mut().unwrap();
-                        hint(ui, "以下设置对全部音效生效，音量为 0 时关闭对应输出。");
-                        playback_volume(ui, "麦克风音量", &mut options.send_volume);
-                        playback_volume(ui, "扬声器音量", &mut options.monitor_volume);
-                        ui.checkbox(&mut options.microphone, "播放音效时麦克风继续收音");
+                        playback_volume(ui, "麦克风输出", &mut options.send_volume);
+                        playback_volume(ui, "扬声器输出", &mut options.monitor_volume);
+                        ui.checkbox(&mut options.microphone, "音效播放时保持收音");
                         ui.checkbox(&mut options.repeat, "循环播放");
-                        ui.separator();
-                        if hotkey_editor(ui, "播放时自动按住", &mut options.hold, CaptureTarget::Hold, capture_target) {
-                            capture = Some(CaptureTarget::Hold);
+                        if hotkey_editor(ui, "播放时自动按住", &mut options.hold, BindingTarget::Hold, capture_target) {
+                            capture = Some(BindingTarget::Hold);
                         }
-                        hint(
-                            ui,
-                            "用于游戏内按键说话，播放结束、停止或退出时自动松开。支持单键和组合键。",
-                        );
-                        if hotkey_editor(ui, "停止播放快捷键", &mut options.stop_hotkey, CaptureTarget::Stop, capture_target) {
-                            capture = Some(CaptureTarget::Stop);
+                        if hotkey_editor(ui, "停止播放快捷键", &mut options.stop_hotkey, BindingTarget::Stop, capture_target) {
+                            capture = Some(BindingTarget::Stop);
                         }
-                        if hotkey_editor(ui, "随机播放快捷键", &mut options.random_hotkey, CaptureTarget::Random, capture_target) {
-                            capture = Some(CaptureTarget::Random);
+                        if hotkey_editor(ui, "随机播放快捷键", &mut options.random_hotkey, BindingTarget::Random, capture_target) {
+                            capture = Some(BindingTarget::Random);
                         }
                         if !hotkeys.message.is_empty() {
                             warning(ui, &hotkeys.message);
                         }
-                        ui.separator();
-                        hint(ui, "支持 MP3、WAV、FLAC、OGG/Vorbis。");
                     });
                 });
-            ui.separator();
             let dirty = self.options.as_ref()
-                .is_some_and(|options| *options != self.model.options);
-            if dirty {
+                .is_some_and(|options| options != self.model.options());
+            ui.horizontal(|ui| {
+                save = ui
+                    .add_enabled(idle && !capturing && dirty, egui::Button::new("保存设置"))
+                    .clicked();
+                if ui
+                    .add_enabled(idle && !capturing && dirty, egui::Button::new("撤销修改"))
+                    .clicked()
+                {
+                    self.options = Some(self.model.options().clone());
+                    hotkeys.message.clear();
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_enabled(
+                            idle && !capturing && self.options.as_ref()
+                                .is_some_and(|options| *options != Options::default()),
+                            egui::Button::new("恢复默认"),
+                        )
+                        .clicked()
+                    {
+                        self.options = Some(Options::default());
+                        hotkeys.message.clear();
+                    }
+                });
+            });
+            if self.options.as_ref()
+                .is_some_and(|options| options != self.model.options())
+            {
                 warning(ui, "有未保存的修改，保存后生效；关闭将放弃未保存的修改。");
             } else {
                 hint(ui, "当前设置已生效。");
@@ -482,13 +512,6 @@ impl SoundboardPanel {
             } else if jobs.failed {
                 warning(ui, &jobs.status);
             }
-            ui.horizontal(|ui| {
-                save = ui.add_enabled(
-                    idle && !capturing && dirty,
-                    egui::Button::new("保存设置"),
-                ).clicked();
-                close = ui.add_enabled(idle, egui::Button::new("关闭")).clicked();
-            });
         });
         if close || (response.should_close() && !capturing && idle) {
             self.options = None;
