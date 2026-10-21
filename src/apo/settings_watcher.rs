@@ -38,7 +38,7 @@ impl Default for RtParams {
 impl RtParams {
     pub(crate) fn store(&self, settings: Settings) {
         let gain = settings.linear_gain();
-        let bits = if settings.enable_denoising {
+        let bits = if settings.denoising_enabled {
             ENABLED_BIT
         } else {
             0
@@ -50,7 +50,7 @@ impl RtParams {
             .unwrap_or_else(|error| error.into_inner());
         let previous = self.bits.swap(bits, Ordering::AcqRel);
         let was_enabled = previous & ENABLED_BIT != 0;
-        if was_enabled != settings.enable_denoising {
+        if was_enabled != settings.denoising_enabled {
             for event in effects.iter().flatten() {
                 unsafe {
                     let _ = SetEvent(event.handle());

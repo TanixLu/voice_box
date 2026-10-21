@@ -28,7 +28,7 @@ impl VoicePanel {
         let mut save_requested = false;
         ui.strong("语音设置");
         ui.add_enabled_ui(!busy, |ui| {
-            ui.checkbox(&mut self.settings.enable_denoising, "启用降噪");
+            ui.checkbox(&mut self.settings.denoising_enabled, "启用降噪");
             let mut gain_db = self.settings.gain_millidb as f64 / 1000.0;
             let mut changed = false;
             ui.horizontal(|ui| {

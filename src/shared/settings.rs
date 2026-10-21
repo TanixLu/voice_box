@@ -13,14 +13,14 @@ const MAX_SETTINGS_BYTES: usize = 16_384;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    pub enable_denoising: bool,
+    pub denoising_enabled: bool,
     pub gain_millidb: i32,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            enable_denoising: true,
+            denoising_enabled: true,
             gain_millidb: 0,
         }
     }

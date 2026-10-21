@@ -57,7 +57,7 @@ impl Library {
         let sound = self.sounds.get_mut(index).context("音效不存在")?;
         let name = name.trim();
         ensure!(
-            valid_file_name(name),
+            is_valid_file_name(name),
             "名称不能为空，也不能包含路径、控制字符或 Windows 文件名保留字符"
         );
         let mut file_name = PathBuf::from(name);
@@ -69,7 +69,7 @@ impl Library {
             .into_os_string()
             .into_string()
             .map_err(|_| anyhow::anyhow!("音效名称无效"))?;
-        ensure!(valid_file_name(&file_name), "音效名称无效");
+        ensure!(is_valid_file_name(&file_name), "音效名称无效");
         if file_name == sound.file_name {
             return save(self);
         }
@@ -117,7 +117,7 @@ pub(super) struct ImportedSounds {
     pub(super) errors: Vec<String>,
 }
 
-pub(super) fn valid_file_name(name: &str) -> bool {
+pub(super) fn is_valid_file_name(name: &str) -> bool {
     if name.is_empty()
         || name.ends_with(['.', ' '])
         || name
@@ -165,7 +165,7 @@ pub(super) fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSoun
                 .file_name()
                 .and_then(|name| name.to_str())
                 .context("音频文件名无效")?;
-            ensure!(valid_file_name(original_name), "音频文件名无效");
+            ensure!(is_valid_file_name(original_name), "音频文件名无效");
             let (file_name, path) = if source.parent() == Some(canonical_directory.as_path()) {
                 (original_name.to_owned(), directory.join(original_name))
             } else {

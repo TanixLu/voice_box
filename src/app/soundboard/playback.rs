@@ -65,17 +65,17 @@ pub(super) fn run(
                 Err(mpsc::TryRecvError::Empty) => break,
             }
         }
-        if options.microphone_output_volume == 0.0 && options.monitor_volume == 0.0 {
+        if options.microphone_output_volume == 0.0 && options.speaker_output_volume == 0.0 {
             return Ok(());
         }
-        if options.hold_hotkey != held_binding {
+        if options.auto_hold_hotkey != held_binding {
             drop(held);
-            held = if let Some(key) = options.hold_hotkey {
+            held = if let Some(key) = options.auto_hold_hotkey {
                 HeldKeys::press(key)?
             } else {
                 HeldKeys::default()
             };
-            held_binding = options.hold_hotkey;
+            held_binding = options.auto_hold_hotkey;
         }
         if eof && options.repeat {
             decoder = SoundDecoder::open(&path)?;
@@ -85,7 +85,7 @@ pub(super) fn run(
         let fill_end = (now + DECODE_AHEAD_FRAMES).min(base + pending.len() as u64 + 2400);
         while !eof && base + (pending.len() as u64) < fill_end {
             // Decode at most 50 ms per pass so stop/configuration stay responsive.
-            match decoder.next()? {
+            match decoder.next_frame()? {
                 Some(stereo) => {
                     mapping.write(base + pending.len() as u64, generation, stereo);
                     pending.push_back(stereo);
@@ -111,7 +111,7 @@ pub(super) fn run(
             !options.include_microphone_audio,
             now,
         );
-        if options.monitor_volume > 0.0 && !monitor_failed {
+        if options.speaker_output_volume > 0.0 && !monitor_failed {
             let result = (|| -> anyhow::Result<()> {
                 if monitor.is_none() {
                     monitor = Some(Monitor::open()?);
@@ -119,8 +119,8 @@ pub(super) fn run(
                 monitor.as_mut().unwrap().fill(now, |frame| {
                     let stereo = mapping.read(frame, generation);
                     [
-                        stereo[0] * options.monitor_volume,
-                        stereo[1] * options.monitor_volume,
+                        stereo[0] * options.speaker_output_volume,
+                        stereo[1] * options.speaker_output_volume,
                     ]
                 })
             })();

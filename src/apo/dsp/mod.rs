@@ -14,10 +14,10 @@ pub const MAX_SAMPLE_RATE: f64 = 192_000.0;
 pub const MAX_CHANNELS: usize = 32;
 
 struct Channel {
-    model: Box<Denoiser>,
+    denoiser: Box<Denoiser>,
     high_pass: HighPass,
-    down: Resampler,
-    up: Resampler,
+    input_resampler: Resampler,
+    output_resampler: Resampler,
     input: [f32; FRAME_SIZE],
     output: [f32; FRAME_SIZE],
     pending: usize,
@@ -31,16 +31,16 @@ struct Channel {
 impl Channel {
     fn new(sample_rate: f64) -> Self {
         let rate = f64::from(SAMPLE_RATE);
-        let down = Resampler::new(sample_rate, rate);
-        let up = Resampler::new(rate, sample_rate);
-        let prefill = ((FRAME_SIZE + up.input_chunk_size()) as f64 * sample_rate / rate).ceil() as usize
-            + down.input_chunk_size()
+        let input_resampler = Resampler::new(sample_rate, rate);
+        let output_resampler = Resampler::new(rate, sample_rate);
+        let prefill = ((FRAME_SIZE + output_resampler.input_chunk_size()) as f64 * sample_rate / rate).ceil() as usize
+            + input_resampler.input_chunk_size()
             + 2;
         let mut channel = Self {
-            model: Box::new(Denoiser::new()),
+            denoiser: Box::new(Denoiser::new()),
             high_pass: HighPass::new(rate),
-            down,
-            up,
+            input_resampler,
+            output_resampler,
             input: [0.0; FRAME_SIZE],
             output: [0.0; FRAME_SIZE],
             pending: 0,
@@ -57,14 +57,14 @@ impl Channel {
     fn delay_frames(&self, sample_rate: f64) -> f64 {
         self.prefill as f64
             + ALGORITHM_DELAY as f64 * sample_rate / f64::from(SAMPLE_RATE)
-            + (self.down.delay_seconds() + self.up.delay_seconds()) * sample_rate
+            + (self.input_resampler.delay_seconds() + self.output_resampler.delay_seconds()) * sample_rate
     }
 
     fn reset(&mut self) {
-        self.model.reset();
+        self.denoiser.reset();
         self.high_pass.reset();
-        self.down.reset();
-        self.up.reset();
+        self.input_resampler.reset();
+        self.output_resampler.reset();
         self.input.fill(0.0);
         self.output.fill(0.0);
         self.pending = 0;
@@ -75,16 +75,16 @@ impl Channel {
     }
 
     fn process_sample(&mut self, input: f32) -> f32 {
-        self.down.push(input);
-        while let Some(sample) = self.down.next() {
+        self.input_resampler.push(input);
+        while let Some(sample) = self.input_resampler.next() {
             self.input[self.pending] = self.high_pass.process_sample(sample);
             self.pending += 1;
             if self.pending == FRAME_SIZE {
-                self.model.process(&self.input, &mut self.output);
+                self.denoiser.process(&self.input, &mut self.output);
                 self.pending = 0;
                 for &sample in &self.output {
-                    self.up.push(if sample.is_finite() { sample } else { 0.0 });
-                    while let Some(sample) = self.up.next() {
+                    self.output_resampler.push(if sample.is_finite() { sample } else { 0.0 });
+                    while let Some(sample) = self.output_resampler.next() {
                         debug_assert!(self.queued < self.queue.len());
                         self.queue[self.write] = sample;
                         self.write = (self.write + 1) % self.queue.len();

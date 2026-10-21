@@ -80,7 +80,7 @@ pub(super) fn process(recording: &Recording, settings: &Settings) -> anyhow::Res
             u32::from(recording.channels),
             u32::try_from(recording.samples.len() / recording.channels as usize)?,
             settings.gain_millidb,
-            u32::from(settings.enable_denoising),
+            u32::from(settings.denoising_enabled),
             recording.samples.as_ptr(),
             output.as_mut_ptr(),
         )

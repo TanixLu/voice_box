@@ -23,10 +23,10 @@ pub(super) struct Hotkey {
 }
 
 impl Hotkey {
-    pub fn valid(self) -> bool {
-        self.valid_for_hold() && !is_modifier(self.virtual_key_code)
+    pub fn is_valid(self) -> bool {
+        self.is_valid_for_hold() && !is_modifier(self.virtual_key_code)
     }
-    pub fn valid_for_hold(self) -> bool {
+    pub fn is_valid_for_hold(self) -> bool {
         key_name(self.virtual_key_code).is_some() && self.modifiers & !0xf == 0
     }
     pub fn label(self) -> String {
@@ -42,10 +42,10 @@ impl Hotkey {
     pub fn pressed() -> Option<Self> {
         let modifiers = [(0x11, 2), (0x10, 4), (0x12, 1), (0x5b, 8), (0x5c, 8)]
             .into_iter()
-            .filter(|&(key, _)| down(key))
+            .filter(|&(key, _)| is_key_down(key))
             .fold(0, |flags, (_, flag)| flags | flag);
         (8..=0xfe)
-            .find(|&key| !is_modifier(key) && key_name(key).is_some() && down(key))
+            .find(|&key| !is_modifier(key) && key_name(key).is_some() && is_key_down(key))
             .map(|virtual_key_code| Self {
                 virtual_key_code,
                 modifiers,
@@ -54,7 +54,7 @@ impl Hotkey {
     pub fn pressed_modifier() -> Option<Self> {
         [0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0x5b, 0x5c]
             .into_iter()
-            .find(|&key| down(key))
+            .find(|&key| is_key_down(key))
             .map(|virtual_key_code| Self {
                 virtual_key_code,
                 modifiers: 0,
@@ -117,7 +117,7 @@ fn key_name(key: u16) -> Option<String> {
     })
 }
 
-fn down(key: u16) -> bool {
+fn is_key_down(key: u16) -> bool {
     unsafe { GetAsyncKeyState(i32::from(key)) < 0 }
 }
 
@@ -130,7 +130,7 @@ impl Registration {
     }
 
     fn new(key: Hotkey) -> anyhow::Result<Self> {
-        anyhow::ensure!(key.valid(), "无效快捷键：{}", key.label());
+        anyhow::ensure!(key.is_valid(), "无效快捷键：{}", key.label());
         unsafe {
             RegisterHotKey(
                 None,
@@ -307,7 +307,7 @@ impl Drop for Hotkeys {
 pub(super) struct HeldKeys(Vec<u16>);
 impl HeldKeys {
     pub fn press(key: Hotkey) -> anyhow::Result<Self> {
-        anyhow::ensure!(key.valid_for_hold(), "自动按键无效");
+        anyhow::ensure!(key.is_valid_for_hold(), "自动按键无效");
         let mut held = Self::default();
         let mut keys = Vec::new();
         for (flag, vk) in [(2, 0x11), (4, 0x10), (1, 0x12), (8, 0x5b)] {
@@ -318,7 +318,7 @@ impl HeldKeys {
         keys.push(key.virtual_key_code);
         for vk in keys {
             // Never release a key the user was already holding themselves.
-            if !down(vk) {
+            if !is_key_down(vk) {
                 anyhow::ensure!(
                     send_key(vk, false),
                     "无法自动按住 {}，请检查游戏与 VoiceBox 的权限",

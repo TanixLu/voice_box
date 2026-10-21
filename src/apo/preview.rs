@@ -25,7 +25,7 @@ pub unsafe extern "system" fn VoiceBoxPreviewProcess(
 ) -> HRESULT {
     let settings = Settings {
         gain_millidb,
-        enable_denoising: denoising != 0,
+        denoising_enabled: denoising != 0,
     };
     let Some(samples) = (frames as usize).checked_mul(channels as usize) else {
         return E_INVALIDARG;
@@ -75,7 +75,7 @@ pub unsafe extern "system" fn VoiceBoxPreviewProcess(
             buffer.len() * size_of::<f32>(),
         )
     };
-    processor.process_with_settings(bytes, gain, settings.enable_denoising);
+    processor.process_with_settings(bytes, gain, settings.denoising_enabled);
     // `buffer` is DLL-owned; only sample bytes are copied back to the caller.
     unsafe { ptr::copy_nonoverlapping(buffer.as_ptr().add(delay_samples), output, samples) };
     S_OK

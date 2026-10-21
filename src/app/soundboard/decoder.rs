@@ -19,11 +19,11 @@ use symphonia::core::{
 pub(super) struct SoundDecoder {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
-    track: u32,
+    track_id: u32,
     rate: u32,
     channels: usize,
-    converters: [Resampler; 2],
-    skip: usize,
+    resamplers: [Resampler; 2],
+    delay_frames_remaining: usize,
     samples: Vec<f32>,
     output: VecDeque<[f32; 2]>,
     input_frames: usize,
@@ -97,19 +97,19 @@ impl SoundDecoder {
             .context("无法创建音频解码器")?;
         let duration = track.num_frames.map(|n| n as f64 / f64::from(rate));
         let id = track.id;
-        let converters = [
+        let resamplers = [
             Resampler::new(f64::from(rate), f64::from(SAMPLE_RATE)),
             Resampler::new(f64::from(rate), f64::from(SAMPLE_RATE)),
         ];
-        let skip = (converters[0].delay_seconds().max(0.0) * f64::from(SAMPLE_RATE)).round() as usize;
+        let delay_frames_remaining = (resamplers[0].delay_seconds().max(0.0) * f64::from(SAMPLE_RATE)).round() as usize;
         Ok(Self {
             format,
             decoder,
-            track: id,
+            track_id: id,
             rate,
             channels,
-            converters,
-            skip,
+            resamplers,
+            delay_frames_remaining,
             samples: Vec::new(),
             output: VecDeque::new(),
             input_frames: 0,
@@ -119,21 +119,21 @@ impl SoundDecoder {
         })
     }
     fn push(&mut self, frame: [f32; 2]) {
-        for (r, sample) in self.converters.iter_mut().zip(frame) {
+        for (r, sample) in self.resamplers.iter_mut().zip(frame) {
             r.push(sample);
         }
-        while let Some(left) = self.converters[0].next() {
-            let right = self.converters[1]
+        while let Some(left) = self.resamplers[0].next() {
+            let right = self.resamplers[1]
                 .next()
                 .expect("identical stereo converters");
-            if self.skip > 0 {
-                self.skip -= 1;
+            if self.delay_frames_remaining > 0 {
+                self.delay_frames_remaining -= 1;
             } else {
                 self.output.push_back([sanitize_sample(left), sanitize_sample(right)]);
             }
         }
     }
-    pub fn next(&mut self) -> anyhow::Result<Option<[f32; 2]>> {
+    pub fn next_frame(&mut self) -> anyhow::Result<Option<[f32; 2]>> {
         loop {
             if self.eof
                 && self.output_frames
@@ -154,13 +154,13 @@ impl SoundDecoder {
                 self.eof = true;
                 // Flush the converter's filter and partial chunk, but never append
                 // its padding to the musical duration.
-                let padding = (self.rate / 20) as usize + self.converters[0].input_chunk_size();
+                let padding = (self.rate / 20) as usize + self.resamplers[0].input_chunk_size();
                 for _ in 0..padding {
                     self.push([0.0; 2]);
                 }
                 continue;
             };
-            if packet.track_id != self.track {
+            if packet.track_id != self.track_id {
                 continue;
             }
             let audio = self.decoder.decode(&packet).context("解码音频失败")?;

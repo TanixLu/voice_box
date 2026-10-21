@@ -18,16 +18,16 @@ pub(super) enum PlaybackAction {
     Play(usize),
 }
 
-pub(super) struct HotkeyBinding {
+pub(super) struct HotkeyManager {
     listener: Option<Hotkeys>,
     bindings: Vec<Option<Hotkey>>,
-    attempted: Vec<Option<Hotkey>>,
+    attempted_bindings: Vec<Option<Hotkey>>,
     revision: u64,
     capture: Option<KeyCapture>,
     registration_error: String,
     pub(super) message: String,
 }
-impl HotkeyBinding {
+impl HotkeyManager {
     pub(super) fn new(ctx: &egui::Context) -> Self {
         let (listener, message) = match Hotkeys::new(super::wake_ui(ctx.clone())) {
             Ok(listener) => (Some(listener), String::new()),
@@ -36,7 +36,7 @@ impl HotkeyBinding {
         Self {
             listener,
             bindings: Vec::new(),
-            attempted: Vec::new(),
+            attempted_bindings: Vec::new(),
             revision: 0,
             capture: None,
             registration_error: String::new(),
@@ -66,7 +66,7 @@ impl HotkeyBinding {
         let enabled = enabled && self.capture.is_none();
         let bindings: Vec<_> = if enabled {
             std::iter::once(soundboard.options().stop_hotkey)
-                .chain(std::iter::once(soundboard.options().random_hotkey))
+                .chain(std::iter::once(soundboard.options().random_playback_hotkey))
                 .chain(soundboard.library().sounds.iter().map(|sound| sound.hotkey))
                 .collect()
         } else {
@@ -86,7 +86,7 @@ impl HotkeyBinding {
                     _ => {}
                 }
             }
-            if bindings != self.attempted {
+            if bindings != self.attempted_bindings {
                 let revision = self.revision.wrapping_add(1);
                 match hotkeys.configure(revision, bindings.clone()) {
                     Ok(()) => {
@@ -96,7 +96,7 @@ impl HotkeyBinding {
                     }
                     Err(error) => self.registration_error = format!("{error:#}"),
                 }
-                self.attempted = bindings;
+                self.attempted_bindings = bindings;
             }
         }
 

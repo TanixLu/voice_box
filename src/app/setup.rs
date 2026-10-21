@@ -16,7 +16,7 @@ use winreg::{
 
 use super::{
     APO_DLL,
-    registry::{reg_get_value, reg_set_value},
+    registry::{read_registry_value, write_registry_value},
     settings_writer,
 };
 
@@ -27,7 +27,7 @@ fn plugin_guid() -> String {
     format!("{{{:?}}}", plugin::CLSID)
 }
 
-fn common_string_reg_pairs(apo_dll: &Path) -> anyhow::Result<[(String, String); 6]> {
+fn string_registration_values(apo_dll: &Path) -> anyhow::Result<[(String, String); 6]> {
     let apo_dll = apo_dll.to_str().context("APO DLL 路径不是有效的 Unicode")?;
     let guid = plugin_guid();
     let com = format!(r"HKLM\SOFTWARE\Classes\CLSID\{guid}\");
@@ -49,7 +49,7 @@ fn common_string_reg_pairs(apo_dll: &Path) -> anyhow::Result<[(String, String); 
     ])
 }
 
-fn common_u32_reg_pairs() -> [(String, u32); 10] {
+fn dword_registration_values() -> [(String, u32); 10] {
     let guid = plugin_guid();
     let apo = format!(r"HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}\");
     let properties = plugin::registration_properties();
@@ -128,7 +128,7 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     {
         return PluginStatus::NotInstalled;
     }
-    if !settings_writer::ready() {
+    if !settings_writer::has_valid_settings() {
         return PluginStatus::NeedsUpdate;
     }
     // 检测dll是否需要更新
@@ -140,16 +140,16 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     }
 
     // 检测注册表是否需要更新
-    let Ok(string_pairs) = common_string_reg_pairs(&apo_dll) else {
+    let Ok(string_values) = string_registration_values(&apo_dll) else {
         return PluginStatus::NeedsUpdate;
     };
-    for (reg_path, expected_value) in string_pairs {
-        if reg_get_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str()) {
+    for (reg_path, expected_value) in string_values {
+        if read_registry_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str()) {
             return PluginStatus::NeedsUpdate;
         }
     }
-    for (reg_path, expected_value) in common_u32_reg_pairs() {
-        if reg_get_value::<u32>(&reg_path).ok() != Some(expected_value) {
+    for (reg_path, expected_value) in dword_registration_values() {
+        if read_registry_value::<u32>(&reg_path).ok() != Some(expected_value) {
             return PluginStatus::NeedsUpdate;
         }
     }
@@ -199,7 +199,7 @@ pub(super) fn with_audio_service_stopped(
     info!("Audio service shutdown successfully");
 
     // Always restart the service, including when a registry or DLL write fails.
-    let registration = operation();
+    let operation_result = operation();
 
     let completion = pending.restart();
     let outcome = completion.outcome().clone();
@@ -211,13 +211,13 @@ pub(super) fn with_audio_service_stopped(
         .clone()
         .into_result()?;
     info!("Audio service restarted successfully");
-    registration?;
+    operation_result?;
     Ok(())
 }
 
 fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     let apo_dll = paths::apo_dll_path().context("读取 APO DLL 路径失败")?;
-    let string_pairs = common_string_reg_pairs(&apo_dll)?;
+    let string_values = string_registration_values(&apo_dll)?;
     // 更新dll
     if std::fs::read(&apo_dll).ok().as_deref() != Some(APO_DLL) {
         std::fs::write(&apo_dll, APO_DLL)?;
@@ -225,15 +225,15 @@ fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     }
 
     // 更新注册表
-    for (reg_path, expected_value) in string_pairs {
-        if reg_get_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str()) {
-            reg_set_value(&reg_path, &expected_value)?;
+    for (reg_path, expected_value) in string_values {
+        if read_registry_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str()) {
+            write_registry_value(&reg_path, &expected_value)?;
             info!("Updated registry key {} to {}", reg_path, expected_value);
         }
     }
-    for (reg_path, expected_value) in common_u32_reg_pairs() {
-        if reg_get_value::<u32>(&reg_path).ok() != Some(expected_value) {
-            reg_set_value(&reg_path, &expected_value)?;
+    for (reg_path, expected_value) in dword_registration_values() {
+        if read_registry_value::<u32>(&reg_path).ok() != Some(expected_value) {
+            write_registry_value(&reg_path, &expected_value)?;
             info!("Updated registry key {} to {}", reg_path, expected_value);
         }
     }
@@ -241,7 +241,7 @@ fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     update_device_effects(device_guid, false)
 }
 
-fn optional_value<T: FromRegValue>(key: &RegKey, name: &str) -> std::io::Result<Option<T>> {
+fn read_optional_value<T: FromRegValue>(key: &RegKey, name: &str) -> std::io::Result<Option<T>> {
     match key.get_value(name) {
         Ok(value) => Ok(Some(value)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -249,7 +249,7 @@ fn optional_value<T: FromRegValue>(key: &RegKey, name: &str) -> std::io::Result<
     }
 }
 
-fn delete_optional(key: &RegKey, name: &str) -> std::io::Result<()> {
+fn delete_value_if_present(key: &RegKey, name: &str) -> std::io::Result<()> {
     match key.delete_value(name) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         result => result,
@@ -284,7 +284,7 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
     let plugin_guid = plugin_guid();
     // Only an absent value means an empty list. Refuse to overwrite invalid types
     // or unreadable values, since they may contain another APO's settings.
-    let mut effects: Vec<String> = optional_value(fx, COMPOSITE_MFX_PROPERTY_KEY)
+    let mut effects: Vec<String> = read_optional_value(fx, COMPOSITE_MFX_PROPERTY_KEY)
         .context("读取 Composite MFX APO 列表失败")?
         .unwrap_or_default();
     if uninstall {
@@ -292,7 +292,7 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
         effects.retain(|effect| !effect.eq_ignore_ascii_case(&plugin_guid));
         if effects.len() != count {
             if effects.is_empty() {
-                delete_optional(fx, COMPOSITE_MFX_PROPERTY_KEY)?;
+                delete_value_if_present(fx, COMPOSITE_MFX_PROPERTY_KEY)?;
             } else {
                 fx.set_value(COMPOSITE_MFX_PROPERTY_KEY, &effects)?;
             }
@@ -301,13 +301,13 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
         effects.retain(|effect| !effect.eq_ignore_ascii_case(&plugin_guid));
         effects.insert(0, plugin_guid);
         fx.set_value(COMPOSITE_MFX_PROPERTY_KEY, &effects)?;
-        let modes: Vec<String> = optional_value(fx, MFX_PROCESSING_MODES_PROPERTY_KEY)
+        let modes: Vec<String> = read_optional_value(fx, MFX_PROCESSING_MODES_PROPERTY_KEY)
             .context("读取 MFX 处理模式失败")?
             .unwrap_or_default();
         if modes.iter().all(String::is_empty) {
             fx.set_value(MFX_PROCESSING_MODES_PROPERTY_KEY, &default_processing_modes())?;
         }
-        delete_optional(fx, DISABLE_APO_PROPERTY_KEY)?;
+        delete_value_if_present(fx, DISABLE_APO_PROPERTY_KEY)?;
     }
     Ok(())
 }

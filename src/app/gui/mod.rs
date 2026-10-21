@@ -14,7 +14,7 @@ mod style;
 mod voice;
 mod widgets;
 
-use hotkey_binding::{HotkeyBinding, PlaybackAction};
+use hotkey_binding::{HotkeyManager, PlaybackAction};
 use jobs::{JobResult, Jobs};
 use microphone::MicrophonePanel;
 use soundboard_panel::SoundboardPanel;
@@ -78,7 +78,7 @@ struct VoiceBoxApp {
     microphones: MicrophonePanel,
     voice: VoicePanel,
     soundboard: SoundboardPanel,
-    hotkeys: HotkeyBinding,
+    hotkeys: HotkeyManager,
     jobs: Jobs,
     close_enabled: bool,
     confirm_full_uninstall: bool,
@@ -110,7 +110,7 @@ impl VoiceBoxApp {
             microphones: MicrophonePanel::new(preferences.selected_microphone_guid),
             voice: VoicePanel::new(settings),
             soundboard: SoundboardPanel::new(soundboard_config),
-            hotkeys: HotkeyBinding::new(ctx),
+            hotkeys: HotkeyManager::new(ctx),
             jobs: Jobs::default(),
             close_enabled: true,
             confirm_full_uninstall: false,

@@ -22,7 +22,7 @@ pub(super) struct PluginOperationResult {
     pub statuses: Vec<(String, PluginStatus)>,
 }
 
-pub(super) fn microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
+pub(super) fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
     let _apartment = Apartment::new()?;
     let enumerator = DeviceEnumerator::new()?;
     let default_id = enumerator

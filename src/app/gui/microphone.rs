@@ -72,7 +72,7 @@ impl MicrophonePanel {
     pub(super) fn refresh(&mut self, ctx: &egui::Context, jobs: &mut Jobs) {
         self.confirm_uninstall = false;
         jobs.begin(ctx, "正在读取麦克风列表…", || {
-            JobResult::Microphones(devices::microphones())
+            JobResult::Microphones(devices::enumerate_microphones())
         });
     }
 

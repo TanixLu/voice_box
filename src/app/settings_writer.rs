@@ -7,7 +7,7 @@ use std::{
     path::Path,
 };
 
-pub fn ready() -> bool {
+pub fn has_valid_settings() -> bool {
     Settings::try_load().is_ok()
 }
 
@@ -28,7 +28,7 @@ pub fn initialize() -> anyhow::Result<()> {
 pub fn save(settings: Settings) -> anyhow::Result<()> {
     save_to(&paths::data_dir()?, &settings).context("无法保存 VoiceBox 配置文件")?;
     tracing::info!(
-        enable_denoising = settings.enable_denoising,
+        denoising_enabled = settings.denoising_enabled,
         gain_millidb = settings.gain_millidb,
         "Saved audio settings"
     );

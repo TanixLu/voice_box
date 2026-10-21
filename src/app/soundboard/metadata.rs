@@ -23,12 +23,12 @@ impl Drop for DurationJob {
 #[derive(Default)]
 pub(super) struct DurationReader {
     job: Option<DurationJob>,
-    checked: HashSet<PathBuf>,
+    scheduled_paths: HashSet<PathBuf>,
 }
 
 impl DurationReader {
     pub(super) fn invalidate(&mut self, path: &Path) {
-        self.checked.remove(path);
+        self.scheduled_paths.remove(path);
     }
     pub(super) fn poll(
         &mut self,
@@ -66,7 +66,7 @@ impl DurationReader {
         let paths: Vec<_> = library
             .sounds
             .iter()
-            .filter(|sound| !self.checked.contains(&sound.path))
+            .filter(|sound| !self.scheduled_paths.contains(&sound.path))
             .map(|sound| sound.path.clone())
             .collect();
         if paths.is_empty() {
@@ -92,7 +92,7 @@ impl DurationReader {
                 }
             }) {
             Ok(_) => {
-                self.checked.extend(paths);
+                self.scheduled_paths.extend(paths);
                 self.job = Some(DurationJob { receiver, stop });
             }
             Err(error) => errors.push(format!("无法读取音效时长：{error}")),

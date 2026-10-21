@@ -23,7 +23,7 @@ const SIZE: Vec2 = vec2(360.0, 72.0);
 
 pub(super) fn show(ctx: &egui::Context, model: &Soundboard) -> anyhow::Result<bool> {
     let Some(sound) = model
-        .active
+        .active_sound_index
         .and_then(|index| model.library().sounds.get(index))
     else {
         return Ok(false);

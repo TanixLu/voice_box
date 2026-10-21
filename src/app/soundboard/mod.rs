@@ -13,11 +13,11 @@ mod metadata;
 mod playback;
 
 use config::{BindingTarget, Config, Options};
-use library::{ImportedSounds, Library, import_files, valid_file_name};
+use library::{ImportedSounds, Library, import_files, is_valid_file_name};
 use metadata::DurationReader;
 use playback::{Command, Event};
 
-struct Job {
+struct PlaybackJob {
     sender: mpsc::Sender<Command>,
     receiver: mpsc::Receiver<Event>,
     thread: JoinHandle<()>,
@@ -28,13 +28,13 @@ struct Job {
 pub(super) struct Soundboard {
     library: Library,
     options: Options,
-    pub active: Option<usize>,
+    pub active_sound_index: Option<usize>,
     pub elapsed: f64,
     pub duration: Option<f64>,
     pub message: String,
     pub failed: bool,
-    job: Option<Job>,
-    pending: Option<(usize, Option<String>)>,
+    playback_job: Option<PlaybackJob>,
+    queued_playback: Option<(usize, Option<String>)>,
     import_job: Option<mpsc::Receiver<anyhow::Result<ImportedSounds>>>,
     duration_reader: DurationReader,
 }
@@ -56,10 +56,10 @@ impl Soundboard {
         };
         library
             .sounds
-            .retain(|sound| valid_file_name(&sound.file_name));
+            .retain(|sound| is_valid_file_name(&sound.file_name));
         for sound in &mut library.sounds {
             sound.path = directory.join(&sound.file_name);
-            sound.hotkey = sound.hotkey.filter(|key| key.valid());
+            sound.hotkey = sound.hotkey.filter(|key| key.is_valid());
         }
         let mut result = Self::default();
         result.options = options;
@@ -123,9 +123,9 @@ impl Soundboard {
             BindingTarget::Hold | BindingTarget::Stop | BindingTarget::Random => {
                 let options = draft.context("请先打开音效设置")?;
                 match target {
-                    BindingTarget::Hold => options.hold_hotkey = key,
+                    BindingTarget::Hold => options.auto_hold_hotkey = key,
                     BindingTarget::Stop => options.stop_hotkey = key,
-                    BindingTarget::Random => options.random_hotkey = key,
+                    BindingTarget::Random => options.random_playback_hotkey = key,
                     BindingTarget::Sound(_) => unreachable!(),
                 }
                 Ok(())
@@ -133,10 +133,10 @@ impl Soundboard {
         }
     }
     pub fn busy(&self) -> bool {
-        self.job.is_some() || self.import_job.is_some()
+        self.playback_job.is_some() || self.import_job.is_some()
     }
     pub fn playing(&self) -> bool {
-        self.job.is_some()
+        self.playback_job.is_some()
     }
     pub fn importing(&self) -> bool {
         self.import_job.is_some()
@@ -210,12 +210,12 @@ impl Soundboard {
         if index >= self.library.sounds.len() {
             return;
         }
-        if self.active == Some(index) {
+        if self.active_sound_index == Some(index) {
             self.stop();
-            if let Some(job) = self.job.take() {
+            if let Some(job) = self.playback_job.take() {
                 let _ = job.thread.join();
             }
-            self.active = None;
+            self.active_sound_index = None;
         }
         let sound = match self.library.remove(index) {
             Ok(sound) => sound,
@@ -224,12 +224,12 @@ impl Soundboard {
                 return;
             }
         };
-        if let Some(active) = &mut self.active
+        if let Some(active) = &mut self.active_sound_index
             && *active > index
         {
             *active -= 1;
         }
-        self.pending = None;
+        self.queued_playback = None;
         self.duration_reader.invalidate(&sound.path);
         self.save_library();
     }
@@ -237,20 +237,20 @@ impl Soundboard {
         let Some(sound) = self.library.sounds.get(index) else {
             return;
         };
-        if self.options.monitor_volume == 0.0 && self.options.microphone_output_volume == 0.0 {
+        if self.options.speaker_output_volume == 0.0 && self.options.microphone_output_volume == 0.0 {
             self.set_error("麦克风和扬声器音量均为 0，未开始播放".into());
             return;
         }
         wake();
-        if self.job.is_some() {
+        if self.playback_job.is_some() {
             self.stop();
-            self.pending = Some((index, guid.map(str::to_owned)));
+            self.queued_playback = Some((index, guid.map(str::to_owned)));
             return;
         }
         let path = sound.path.clone();
         let microphone_available = guid.is_some();
         let options = self.options.for_output(microphone_available);
-        if options.monitor_volume == 0.0 && options.microphone_output_volume == 0.0 {
+        if options.speaker_output_volume == 0.0 && options.microphone_output_volume == 0.0 {
             self.set_error("麦克风插件未就绪，且扬声器音量为 0，没有可用的播放输出".into());
             return;
         }
@@ -279,8 +279,8 @@ impl Soundboard {
                 wake();
             }) {
             Ok(thread) => {
-                self.active = Some(index);
-                self.job = Some(Job {
+                self.active_sound_index = Some(index);
+                self.playback_job = Some(PlaybackJob {
                     sender: tx,
                     receiver,
                     thread,
@@ -291,13 +291,13 @@ impl Soundboard {
         }
     }
     pub fn stop(&mut self) {
-        self.pending = None;
-        if let Some(job) = &self.job {
+        self.queued_playback = None;
+        if let Some(job) = &self.playback_job {
             let _ = job.sender.send(Command::Stop);
         }
     }
     pub fn update_playback_options(&self) {
-        if let Some(job) = &self.job {
+        if let Some(job) = &self.playback_job {
             let _ = job.sender.send(Command::Configure(
                 self.options.for_output(job.microphone_available),
             ));
@@ -323,12 +323,12 @@ impl Soundboard {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        while let Some(job) = &self.job {
+        while let Some(job) = &self.playback_job {
             match job.receiver.try_recv() {
                 Ok(Event::Started(duration)) => {
                     self.duration = duration;
                     if let Some(sound) = self
-                        .active
+                        .active_sound_index
                         .and_then(|index| self.library.sounds.get_mut(index))
                         && duration.is_some()
                     {
@@ -339,10 +339,10 @@ impl Soundboard {
                 Ok(Event::Progress(elapsed)) => self.elapsed = elapsed,
                 Ok(Event::MonitorError(error)) => self.set_error(error),
                 Ok(Event::Finished(result)) => {
-                    if let Some(job) = self.job.take() {
+                    if let Some(job) = self.playback_job.take() {
                         let _ = job.thread.join();
                     }
-                    self.active = None;
+                    self.active_sound_index = None;
                     if let Err(e) = result {
                         self.set_error(format!("播放失败：{e:#}"));
                     }
@@ -350,17 +350,17 @@ impl Soundboard {
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    if let Some(job) = self.job.take() {
+                    if let Some(job) = self.playback_job.take() {
                         let _ = job.thread.join();
                     }
-                    self.active = None;
+                    self.active_sound_index = None;
                     self.set_error("播放线程意外退出".into());
                     break;
                 }
             }
         }
-        if self.job.is_none()
-            && let Some((index, guid)) = self.pending.take()
+        if self.playback_job.is_none()
+            && let Some((index, guid)) = self.queued_playback.take()
         {
             self.play(index, guid.as_deref(), wake);
         }
@@ -369,7 +369,7 @@ impl Soundboard {
 impl Drop for Soundboard {
     fn drop(&mut self) {
         self.stop();
-        if let Some(job) = self.job.take() {
+        if let Some(job) = self.playback_job.take() {
             let _ = job.thread.join();
         }
     }
