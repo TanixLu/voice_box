@@ -26,7 +26,10 @@ impl RecordingImport {
         if let Some(sound) = self.recorder.poll(super::wake_ui(ctx.clone())) {
             match model.add_recording(sound) {
                 Ok(()) => return true,
-                Err(error) => self.recorder.error = format!("导入失败：{error:#}"),
+                Err(error) => {
+                    tracing::error!("Failed to commit recorded sound to library: {error:#}");
+                    self.recorder.error = format!("导入失败：{error:#}");
+                }
             }
         }
         if !had_clip && let Some(clip) = &self.recorder.clip {

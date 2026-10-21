@@ -12,6 +12,7 @@ pub(super) struct Microphone {
     pub plugin_status: PluginStatus,
 }
 
+#[derive(Debug)]
 pub(super) enum PluginAction {
     Install,
     Uninstall,
@@ -55,6 +56,11 @@ pub(super) fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)
             guid,
         });
     }
+    tracing::info!(
+        count = microphones.len(),
+        default_device_id = ?default_id,
+        "Microphone discovery completed"
+    );
     Ok((microphones, selected))
 }
 
@@ -63,6 +69,7 @@ pub(super) fn execute_plugin_action(
     guids: Vec<String>,
     action: PluginAction,
 ) -> PluginOperationResult {
+    tracing::info!(?action, %guid, "Starting microphone plugin operation");
     let result = if matches!(action, PluginAction::Uninstall) {
         setup::uninstall_device_plugin(&guid)
     } else {

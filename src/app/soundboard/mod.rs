@@ -157,6 +157,7 @@ impl Soundboard {
         }
         self.failed = false;
         self.message.clear();
+        tracing::info!(path = %path.display(), "Recorded sound committed to library");
         Ok(())
     }
     pub fn import(
@@ -175,7 +176,10 @@ impl Soundboard {
                 wake();
             }) {
             Ok(_) => self.import_job = Some(rx),
-            Err(e) => self.set_error(format!("打开文件选择器失败：{e}")),
+            Err(e) => {
+                tracing::error!("Failed to spawn sound import: {e}");
+                self.set_error(format!("打开文件选择器失败：{e}"));
+            }
         }
     }
     pub fn set_error(&mut self, message: String) {
@@ -183,6 +187,7 @@ impl Soundboard {
         self.message = message;
     }
     fn finish_import(&mut self, imported: ImportedSounds) {
+        let previous_count = self.library.sounds.len();
         let mut known: HashSet<_> = self
             .library
             .sounds
@@ -196,12 +201,24 @@ impl Soundboard {
             self.library.sounds.push(sound);
         }
         if !imported.errors.is_empty() {
+            tracing::warn!(
+                errors = ?imported.errors,
+                "Some sound files could not be imported"
+            );
             self.set_error(imported.errors.join("\n"));
         } else {
             self.failed = false;
             self.message.clear();
         }
         self.save_library();
+        let added = self.library.sounds.len() - previous_count;
+        if added > 0 || !imported.errors.is_empty() {
+            tracing::info!(
+                added,
+                failed = imported.errors.len(),
+                "Sound import processed"
+            );
+        }
     }
     pub fn rename(&mut self, index: usize, name: &str) -> anyhow::Result<()> {
         ensure!(!self.playing(), "请先停止播放再重命名");
@@ -293,7 +310,9 @@ impl Soundboard {
             .spawn(move || {
                 let result = playback::run(path, transport, options, &rx, &events);
                 if let Err(e) = &result {
-                    tracing::error!("Soundboard failed: {e:#}");
+                    tracing::error!(sound_index = index, "Soundboard failed: {e:#}");
+                } else {
+                    tracing::info!(sound_index = index, "Soundboard playback finished");
                 }
                 let _ = events.send(Event::Finished(result));
                 wake();
@@ -307,7 +326,13 @@ impl Soundboard {
                     microphone_available,
                 });
             }
-            Err(e) => self.set_error(format!("无法开始播放：{e}")),
+            Err(e) => {
+                tracing::error!(
+                    sound_index = index,
+                    "Failed to spawn soundboard playback: {e}"
+                );
+                self.set_error(format!("无法开始播放：{e}"));
+            }
         }
     }
     pub fn stop(&mut self) {
@@ -333,10 +358,14 @@ impl Soundboard {
                     self.import_job = None;
                     match result {
                         Ok(imported) => self.finish_import(imported),
-                        Err(e) => self.set_error(format!("选择文件失败：{e:#}")),
+                        Err(e) => {
+                            tracing::error!("Sound file selection or import failed: {e:#}");
+                            self.set_error(format!("选择文件失败：{e:#}"));
+                        }
                     }
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
+                    tracing::error!("Sound import exited without a result");
                     self.import_job = None;
                     self.set_error("文件选择器意外退出".into());
                 }
@@ -370,6 +399,10 @@ impl Soundboard {
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
+                    tracing::error!(
+                        sound_index = ?self.active_sound_index,
+                        "Soundboard playback exited without a result"
+                    );
                     if let Some(job) = self.playback_job.take() {
                         let _ = job.thread.join();
                     }

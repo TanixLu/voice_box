@@ -13,7 +13,7 @@ use std::{
     time::Instant,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::app) enum Activity {
     Recording,
     PlayingOriginal,
@@ -107,12 +107,13 @@ impl AudioSession {
             .name("VoiceBoxAudioSession".into())
             .spawn(move || {
                 let started = || {
+                    tracing::info!(?activity, "Audio session started");
                     let _ = sender.send(Event::Started);
                     wake();
                 };
                 let result = operation(&worker_stop, &started);
                 if let Err(error) = &result {
-                    tracing::error!("Audio session failed: {error:#}");
+                    tracing::error!(?activity, "Audio session failed: {error:#}");
                 }
                 let _ = sender.send(Event::Finished(result));
                 wake();
@@ -126,6 +127,7 @@ impl AudioSession {
                 })
             }
             Err(error) => {
+                tracing::error!(?activity, "Failed to spawn audio session: {error}");
                 self.message = format!("无法开始试听操作：{error}");
                 self.failed = true;
             }
@@ -199,6 +201,7 @@ impl AudioSession {
                 Ok(event) => event,
                 Err(mpsc::TryRecvError::Empty) => return,
                 Err(mpsc::TryRecvError::Disconnected) => {
+                    tracing::error!(activity = ?job.activity, "Audio session exited without a result");
                     self.job = None;
                     self.message = "试听操作未完成，请重试。".into();
                     self.failed = true;
@@ -218,6 +221,12 @@ impl AudioSession {
                     self.job = None;
                     match result {
                         Ok(Outcome::Recorded(recording)) => {
+                            tracing::info!(
+                                duration_secs = recording.duration(),
+                                sample_rate = recording.sample_rate,
+                                channels = recording.channels,
+                                "Microphone recording completed"
+                            );
                             self.message = format!("已录音 {:.1} 秒。", recording.duration());
                             self.recording = Some(recording);
                             self.processed = None;

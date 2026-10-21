@@ -44,6 +44,14 @@ pub(super) fn run(
     let mut held = HeldKeys::default();
     let mut held_binding = None;
     let mut progress = Instant::now();
+    tracing::info!(
+        path = %path.display(),
+        duration_secs = ?duration,
+        speaker_volume = options.speaker_output_volume,
+        microphone_volume = options.microphone_output_volume,
+        repeat = options.repeat,
+        "Soundboard playback started"
+    );
     let _ = events.send(Event::Started(duration));
     loop {
         let now = clock.frame();
@@ -130,6 +138,7 @@ pub(super) fn run(
                 }
                 monitor = None;
                 monitor_failed = true;
+                tracing::warn!("Speaker playback failed; microphone output continues: {error:#}");
                 let _ = events.send(Event::MonitorError(format!(
                     "扬声器播放失败，麦克风发送继续：{error:#}"
                 )));

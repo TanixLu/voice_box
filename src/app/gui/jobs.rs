@@ -38,9 +38,12 @@ impl Jobs {
         self.status = status.into();
         self.failed = false;
         ctx.request_repaint();
+        let operation_name = status.to_owned();
         if let Err(error) = std::thread::Builder::new()
             .name("VoiceBoxOperation".into())
             .spawn(move || {
+                let started = std::time::Instant::now();
+                tracing::info!(operation = %operation_name, "Background operation started");
                 let result = operation();
                 match &result {
                     JobResult::Uninstall(Err(error))
@@ -51,14 +54,26 @@ impl Jobs {
                     | JobResult::Saved {
                         result: Err(error), ..
                     } => {
-                        tracing::error!("Background operation failed: {error:#}");
+                        tracing::error!(
+                            operation = %operation_name,
+                            elapsed_ms = started.elapsed().as_millis(),
+                            "Background operation failed: {error:#}"
+                        );
                     }
-                    _ => {}
+                    _ => tracing::info!(
+                        operation = %operation_name,
+                        elapsed_ms = started.elapsed().as_millis(),
+                        "Background operation completed"
+                    ),
                 }
                 let _ = sender.send(result);
                 ctx.request_repaint();
             })
         {
+            tracing::error!(
+                operation = status,
+                "Failed to spawn background operation: {error}"
+            );
             self.receiver = None;
             self.status = format!("无法开始操作：{error}");
             self.failed = true;
@@ -77,6 +92,10 @@ impl VoiceBoxApp {
             Ok(result) => result,
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => {
+                tracing::error!(
+                    operation = %self.jobs.status,
+                    "Background operation exited without a result"
+                );
                 self.jobs.receiver = None;
                 self.uninstalling = false;
                 self.jobs.status = "操作未完成，请重试。".into();

@@ -80,7 +80,7 @@ impl Clip {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::app) enum Activity {
     Recording,
     Preview,
@@ -181,12 +181,15 @@ impl Recorder {
             .name("VoiceBoxRecordingImport".into())
             .spawn(move || {
                 let started = || {
+                    if activity == Activity::Recording {
+                        tracing::info!("Speaker recording started");
+                    }
                     let _ = sender.send(Event::Started(Instant::now()));
                     wake();
                 };
                 let result = operation(&worker_stop, &started);
                 if let Err(error) = &result {
-                    tracing::error!("Recording import failed: {error:#}");
+                    tracing::error!(?activity, "Recording import failed: {error:#}");
                 }
                 let _ = sender.send(Event::Finished(result));
                 wake();
@@ -200,7 +203,13 @@ impl Recorder {
                     range,
                 })
             }
-            Err(error) => self.error = format!("无法开始操作：{error}"),
+            Err(error) => {
+                tracing::error!(
+                    ?activity,
+                    "Failed to spawn recording import operation: {error}"
+                );
+                self.error = format!("无法开始操作：{error}");
+            }
         }
     }
     pub fn record(&mut self, wake: impl Fn() + Send + 'static) {
@@ -279,7 +288,15 @@ impl Recorder {
                 Ok(Event::Finished(result)) => {
                     self.job = None;
                     match result {
-                        Ok(Outcome::Recorded(clip)) => self.clip = Some(clip),
+                        Ok(Outcome::Recorded(clip)) => {
+                            tracing::info!(
+                                duration_secs = clip.audio.duration(),
+                                sample_rate = clip.audio.sample_rate,
+                                channels = clip.audio.channels,
+                                "Speaker recording completed"
+                            );
+                            self.clip = Some(clip);
+                        }
                         Ok(Outcome::Previewed) => {}
                         Ok(Outcome::Saved(sound)) => return Some(sound),
                         Err(error) => {
@@ -290,6 +307,10 @@ impl Recorder {
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
+                    tracing::error!(
+                        activity = ?job.activity,
+                        "Recording import operation exited without a result"
+                    );
                     self.job = None;
                     self.pending_preview = None;
                     self.error = "录音工具意外退出，请重试".into();
