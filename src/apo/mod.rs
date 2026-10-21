@@ -4,6 +4,7 @@ mod dsp;
 mod etw;
 mod preview;
 mod settings_watcher;
+mod soundboard;
 mod worker;
 
-pub use com::{DllCanUnloadNow, DllGetClassObject};
+pub use com::factory::{DllCanUnloadNow, DllGetClassObject};

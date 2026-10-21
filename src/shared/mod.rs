@@ -9,4 +9,6 @@ pub mod preview;
 #[allow(dead_code)]
 pub mod resample;
 pub mod settings;
+#[allow(dead_code)]
+pub mod soundboard;
 pub mod utils;

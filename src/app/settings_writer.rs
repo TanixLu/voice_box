@@ -1,4 +1,5 @@
 //! Management-only initialization and atomic settings commits.
+use super::soundboard::config::Config as SoundboardConfig;
 use crate::shared::{paths, settings::Settings};
 use anyhow::Context;
 use atomic_write_file::AtomicWriteFile;
@@ -36,10 +37,21 @@ pub fn save(settings: Settings) -> anyhow::Result<()> {
 }
 
 fn save_to(directory: &Path, settings: &Settings) -> anyhow::Result<()> {
-    let path = directory.join(paths::SETTINGS_FILE);
     let bytes = settings.encode()?;
-    // Only commit publishes the fully written file to the APO watcher.
+    save_bytes(directory, paths::SETTINGS_FILE, &bytes)
+}
+
+pub fn save_soundboard(config: &SoundboardConfig) -> anyhow::Result<()> {
+    let mut bytes = serde_json::to_vec_pretty(config)?;
+    bytes.push(b'\n');
+    save_bytes(&paths::data_dir()?, paths::SOUNDBOARD_SETTINGS_FILE, &bytes)
+        .context("保存音效配置失败")
+}
+
+fn save_bytes(directory: &Path, name: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    let path = directory.join(name);
+    // Publish the complete configuration with a single atomic commit.
     let mut file = AtomicWriteFile::open(&path).context("创建临时配置文件失败")?;
-    file.write_all(&bytes).context("写入临时配置文件失败")?;
+    file.write_all(bytes).context("写入临时配置文件失败")?;
     file.commit().context("提交配置文件失败")
 }

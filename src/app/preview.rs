@@ -13,7 +13,7 @@ use windows::{
     core::{PCSTR, PCWSTR},
 };
 
-use super::{audio_test::Recording, setup::APO_DLL};
+use super::{audio::capture::Recording, setup::APO_DLL};
 use crate::shared::{paths, preview, settings::Settings, utils::wide_null};
 
 struct PreviewDll(HMODULE);

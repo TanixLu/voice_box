@@ -29,6 +29,7 @@ single-instance = "0.3.3"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
 wasapi = "0.26.0"
+symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "wav", "pcm", "flac", "ogg", "vorbis"] }
 winreg = { version = "0.56.0", features = ["transactions"] }
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
@@ -38,12 +39,17 @@ windows = { version = "0.62.2", features = [
     "Win32_Media_Audio_Apo",
     "Win32_Media_Multimedia",
     "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
     "Win32_System_Diagnostics_Etw",
     "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Performance",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
 windows-core = "0.62.2"

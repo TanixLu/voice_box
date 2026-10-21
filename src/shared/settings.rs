@@ -11,7 +11,6 @@ pub const MAX_GAIN_MILLIDB: i32 = 60_000;
 const MAX_SETTINGS_BYTES: usize = 16_384;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
 pub struct Settings {
     pub enable_denoising: bool,
     pub gain_millidb: i32,

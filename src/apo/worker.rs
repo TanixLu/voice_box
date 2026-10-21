@@ -110,7 +110,7 @@ unsafe extern "system" fn entry(raw: *mut c_void) -> u32 {
     drop(start);
     // Clean up ETW too if the host already released its loader reference and
     // this worker is now the last owner. COM hosts otherwise do this themselves.
-    let _ = super::com::DllCanUnloadNow();
+    let _ = super::DllCanUnloadNow();
     // Use a native thread rather than std::thread's trampoline: ExitThread must
     // not bypass the Rust join packet or leave any Rust destructors pending.
     unsafe { FreeLibraryAndExitThread(module, 0) }

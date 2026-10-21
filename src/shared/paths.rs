@@ -9,6 +9,7 @@ use windows::Win32::{
 };
 
 pub const SETTINGS_FILE: &str = "settings.json";
+pub const SOUNDBOARD_SETTINGS_FILE: &str = "soundboard.json";
 
 pub fn windows_dir() -> io::Result<PathBuf> {
     directory_from_api(|buffer| unsafe { GetSystemWindowsDirectoryW(Some(buffer)) })
@@ -45,4 +46,8 @@ pub fn data_dir() -> io::Result<PathBuf> {
         CoTaskMemFree(Some(folder.0.cast()));
     }
     Ok(PathBuf::from(path.map_err(io::Error::other)?).join("VoiceBox"))
+}
+
+pub fn sound_library_dir() -> io::Result<PathBuf> {
+    Ok(data_dir()?.join("sounds"))
 }
