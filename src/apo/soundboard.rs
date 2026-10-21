@@ -247,7 +247,8 @@ fn receive(path: PathBuf, state: &Resident, stop: &AtomicBool, clock: Clock) {
         let now = clock.frame();
         if mapping.is_none() && now >= retry_at {
             mapping = Mapping::open(&path, false).ok();
-            retry_at = now + u64::from(RATE) / 2;
+            // Discover a new transport before playback's 100 ms startup lead ends.
+            retry_at = now + u64::from(RATE) / 100;
         }
         if let Some(mapping) = &mapping {
             let (generation, end, gain, mute_microphone) = mapping.status(now);

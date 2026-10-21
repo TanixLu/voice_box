@@ -204,13 +204,12 @@ impl Mapping {
         self.slot(frame).read(frame, generation)
     }
     pub fn publish(&self, generation: u64, end: u64, gain: f32, mute_microphone: bool, now: u64) {
-        self.header()
-            .gain
-            .store(u64::from(volume_gain(gain).to_bits()), SeqCst);
+        let gain = volume_gain(gain);
+        self.header().gain.store(u64::from(gain.to_bits()), SeqCst);
         self.header().end.store(end, SeqCst);
         self.header()
             .mute_microphone
-            .store(u64::from(mute_microphone), SeqCst);
+            .store(u64::from(mute_microphone && gain > 0.0), SeqCst);
         self.header().heartbeat.store(now, SeqCst);
         self.header().generation.store(generation, SeqCst);
     }

@@ -159,21 +159,34 @@ impl Soundboard {
         if file_name == sound.file_name {
             return self.save();
         }
-        let destination = paths::sound_library_dir()?.join(&file_name);
+        let destination = sound.path.with_file_name(&file_name);
         // Do not replace an existing library file when names collide.
-        unsafe {
+        let move_file = |from: &std::path::Path, to: &std::path::Path| unsafe {
             windows::Win32::Storage::FileSystem::MoveFileExW(
-                windows::core::PCWSTR(crate::shared::utils::wide_null(&sound.path).as_ptr()),
-                windows::core::PCWSTR(crate::shared::utils::wide_null(&destination).as_ptr()),
+                windows::core::PCWSTR(crate::shared::utils::wide_null(from).as_ptr()),
+                windows::core::PCWSTR(crate::shared::utils::wide_null(to).as_ptr()),
                 windows::Win32::Storage::FileSystem::MOVE_FILE_FLAGS(0),
             )
-        }
-        .context("重命名音效文件失败，请检查名称是否重复或文件是否被占用")?;
+        };
+        move_file(&sound.path, &destination)
+            .context("重命名音效文件失败，请检查名称是否重复或文件是否被占用")?;
         self.metadata.invalidate(&sound.path);
         self.metadata.invalidate(&destination);
-        sound.path = destination;
-        sound.file_name = file_name;
-        self.save()
+        let original_path = std::mem::replace(&mut sound.path, destination);
+        let original_name = std::mem::replace(&mut sound.file_name, file_name);
+        if let Err(error) = self.save() {
+            let sound = &mut self.library.sounds[index];
+            if let Err(rollback) = move_file(&sound.path, &original_path) {
+                return Err(error.context(format!(
+                    "无法还原音效文件名：{rollback}；音频保留在 {}",
+                    sound.path.display()
+                )));
+            }
+            sound.path = original_path;
+            sound.file_name = original_name;
+            return Err(error);
+        }
+        Ok(())
     }
     pub fn remove(&mut self, index: usize) {
         if index >= self.library.sounds.len() {
