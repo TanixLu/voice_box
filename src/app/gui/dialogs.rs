@@ -24,9 +24,9 @@ impl VoiceBoxApp {
         let available = ctx.content_rect().size();
         let response = egui::Modal::new(egui::Id::unique("full_uninstall")).show(ctx, |ui| {
             ui.set_width((available.x - 64.0).clamp(180.0, 400.0));
-            ui.heading("卸载 VoiceBox");
+            ui.heading(egui::RichText::new("卸载 VoiceBox").size(25.0));
             ui.add(egui::Label::new("将卸载 VoiceBox 的所有组件及配置。\n\n确定要继续吗？").wrap());
-            ui.separator();
+            ui.add_space(12.0);
             ui.horizontal_wrapped(|ui| {
                 if ui
                     .add_enabled(

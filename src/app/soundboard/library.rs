@@ -117,7 +117,7 @@ pub(super) struct ImportedSounds {
     pub(super) errors: Vec<String>,
 }
 
-pub(super) fn is_valid_file_name(name: &str) -> bool {
+pub(in crate::app) fn is_valid_file_name(name: &str) -> bool {
     if name.is_empty()
         || name.ends_with(['.', ' '])
         || name

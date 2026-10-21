@@ -9,6 +9,7 @@ mod jobs;
 mod microphone;
 mod overlay;
 mod picker;
+mod recording_import;
 mod soundboard_panel;
 mod style;
 mod voice;
@@ -171,7 +172,7 @@ impl VoiceBoxApp {
             });
             return;
         }
-        if self.jobs.busy() {
+        if self.jobs.busy() || self.soundboard.recording_saving() {
             // An elevated GUI can stop the audio service itself; let registration
             // finish and restart the service before allowing the process to exit.
             if ui.ctx().input(|input| input.viewport().close_requested()) {
@@ -186,25 +187,28 @@ impl VoiceBoxApp {
                     ui.selectable_value(&mut self.tab, Tab::Voice, "语音");
                     ui.selectable_value(&mut self.tab, Tab::Soundboard, "音效");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.menu_button("其他", |ui| {
-                            if ui
-                                .add_enabled(
-                                    !self.jobs.busy()
-                                        && !self.voice.session.busy()
-                                        && !self.soundboard.model.busy(),
-                                    egui::Button::new("完全卸载"),
-                                )
-                                .clicked()
-                            {
-                                self.microphones.cancel_uninstall();
-                                self.confirm_full_uninstall = true;
-                                ui.close();
-                            }
-                            if ui.button("版权声明").clicked() {
-                                self.show_licenses = true;
-                                ui.close();
-                            }
-                        });
+                        let more = ui.button("其他");
+                        egui::Popup::menu(&more)
+                            .align(egui::RectAlign::BOTTOM)
+                            .show(|ui| {
+                                if ui
+                                    .add_enabled(
+                                        !self.jobs.busy()
+                                            && !self.voice.session.busy()
+                                            && !self.soundboard.model.busy(),
+                                        egui::Button::new("完全卸载"),
+                                    )
+                                    .clicked()
+                                {
+                                    self.microphones.cancel_uninstall();
+                                    self.confirm_full_uninstall = true;
+                                    ui.close();
+                                }
+                                if ui.button("版权声明").clicked() {
+                                    self.show_licenses = true;
+                                    ui.close();
+                                }
+                            });
                     });
                 });
                 ui.add_space(12.0);
@@ -268,12 +272,13 @@ impl VoiceBoxApp {
         self.licenses_ui(ui.ctx());
         self.soundboard
             .settings_ui(ui.ctx(), &mut self.jobs, &mut self.hotkeys);
+        self.soundboard.recording_ui(ui.ctx());
         self.soundboard.finish_rename(self.tab == Tab::Soundboard);
         self.full_uninstall_ui(ui.ctx());
 
         // Apply after drawing so a job started by a button click disables the
         // native close button in the same frame. Every completion path restores it.
-        let close_enabled = !self.jobs.busy();
+        let close_enabled = !self.jobs.busy() && !self.soundboard.recording_saving();
         if self.close_enabled != close_enabled {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::EnableButtons {
@@ -291,6 +296,7 @@ impl eframe::App for VoiceBoxApp {
         self.poll_job();
         self.voice.session.poll();
         self.soundboard.model.poll(wake_ui(ctx.clone()));
+        self.soundboard.poll_recording(ctx);
         let focused = ctx.input(|input| {
             input.viewport().focused == Some(true) && input.viewport().minimized != Some(true)
         });
@@ -300,6 +306,7 @@ impl eframe::App for VoiceBoxApp {
         let shortcuts_enabled = !self.jobs.busy()
             && !self.voice.session.busy()
             && !self.soundboard.model.importing()
+            && !self.soundboard.recording_open()
             && !self.uninstalling
             && !self.uninstall_requested
             && !self.confirm_full_uninstall
@@ -324,7 +331,11 @@ impl eframe::App for VoiceBoxApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
         }
         // Keep completions moving even when eframe skips painting a hidden window.
-        if self.jobs.busy() || self.voice.session.busy() || self.soundboard.model.busy() {
+        if self.jobs.busy()
+            || self.voice.session.busy()
+            || self.soundboard.model.busy()
+            || self.soundboard.recording_open()
+        {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }

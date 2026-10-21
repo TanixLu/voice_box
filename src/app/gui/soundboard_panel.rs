@@ -43,6 +43,7 @@ pub(super) struct SoundboardPanel {
     filter: String,
     rename_editor: Option<SoundRenameEditor>,
     pending_delete_index: Option<usize>,
+    recording_import: Option<super::recording_import::RecordingImport>,
 }
 
 impl SoundboardPanel {
@@ -53,6 +54,7 @@ impl SoundboardPanel {
             draft_options: None,
             rename_editor: None,
             pending_delete_index: None,
+            recording_import: None,
         }
     }
     pub(super) fn renaming(&self) -> bool {
@@ -63,6 +65,28 @@ impl SoundboardPanel {
     }
     pub(super) fn cancel_delete(&mut self) {
         self.pending_delete_index = None;
+    }
+    pub(super) fn recording_open(&self) -> bool {
+        self.recording_import.is_some()
+    }
+    pub(super) fn recording_saving(&self) -> bool {
+        self.recording_import
+            .as_ref()
+            .is_some_and(|tool| tool.saving())
+    }
+    pub(super) fn poll_recording(&mut self, ctx: &egui::Context) {
+        if let Some(tool) = &mut self.recording_import
+            && tool.poll(ctx, &mut self.model)
+        {
+            self.recording_import = None;
+        }
+    }
+    pub(super) fn recording_ui(&mut self, ctx: &egui::Context) {
+        if let Some(tool) = &mut self.recording_import
+            && tool.ui(ctx)
+        {
+            self.recording_import = None;
+        }
     }
 
     fn save_soundboard_options(&mut self, jobs: &mut Jobs, hotkeys: &HotkeyManager) {
@@ -110,7 +134,8 @@ impl SoundboardPanel {
         hotkeys: &mut HotkeyManager,
         guid: Option<&str>,
     ) {
-        let available = !jobs.busy() && !session_busy && self.draft_options.is_none();
+        let available =
+            !jobs.busy() && !session_busy && self.draft_options.is_none() && !self.recording_open();
         ui.add_enabled_ui(available, |ui| {
             ui.horizontal(|ui| {
                 ui.strong(format!("音效库 · {} 个", self.model.library().sounds.len()));
@@ -119,6 +144,18 @@ impl SoundboardPanel {
                         self.draft_options = Some(self.model.options().clone());
                         jobs.status.clear();
                         jobs.failed = false;
+                    }
+                    // This row is laid out right-to-left: recording sits to the right of import.
+                    if ui
+                        .add_enabled(!self.model.importing(), egui::Button::new("录制导入"))
+                        .clicked()
+                    {
+                        self.model.stop();
+                        self.cancel_rename();
+                        self.cancel_delete();
+                        hotkeys.cancel_capture();
+                        self.recording_import =
+                            Some(super::recording_import::RecordingImport::default());
                     }
                     if ui
                         .add_enabled(!self.model.importing(), egui::Button::new("导入"))
@@ -204,7 +241,8 @@ impl SoundboardPanel {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            let confirming = self.pending_delete_index == Some(index);
+                                            let confirming =
+                                                self.pending_delete_index == Some(index);
                                             let icon = if confirming {
                                                 ButtonIcon::ConfirmDelete
                                             } else {
@@ -449,7 +487,7 @@ impl SoundboardPanel {
             .show(ctx, |ui| {
                 ui.set_width((available.x - 64.0).clamp(240.0, 460.0));
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("音效设置").size(16.0).strong());
+                    ui.label(egui::RichText::new("音效设置").size(17.0).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         close = icon_button(ui, idle, ButtonIcon::Close).clicked();
                     });
@@ -460,9 +498,16 @@ impl SoundboardPanel {
                     .show(ui, |ui| {
                         ui.add_enabled_ui(idle, |ui| {
                             let options = self.draft_options.as_mut().unwrap();
-                            playback_volume(ui, "麦克风输出", &mut options.microphone_output_volume);
+                            playback_volume(
+                                ui,
+                                "麦克风输出",
+                                &mut options.microphone_output_volume,
+                            );
                             playback_volume(ui, "扬声器输出", &mut options.speaker_output_volume);
-                            ui.checkbox(&mut options.include_microphone_audio, "音效播放时保持收音");
+                            ui.checkbox(
+                                &mut options.include_microphone_audio,
+                                "音效播放时保持收音",
+                            );
                             ui.checkbox(&mut options.show_overlay, "显示播放浮层");
                             ui.checkbox(&mut options.repeat, "循环播放");
                             if hotkey_editor(

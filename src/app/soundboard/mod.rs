@@ -11,6 +11,7 @@ mod decoder;
 pub(super) mod library;
 mod metadata;
 mod playback;
+pub(super) mod recording;
 
 use config::{BindingTarget, Config, Options};
 use library::{ImportedSounds, Library, import_files, is_valid_file_name};
@@ -141,6 +142,23 @@ impl Soundboard {
     pub fn importing(&self) -> bool {
         self.import_job.is_some()
     }
+    pub fn add_recording(&mut self, sound: library::Sound) -> anyhow::Result<()> {
+        let path = sound.path.clone();
+        self.library.sounds.push(sound);
+        if let Err(error) = self.save() {
+            self.library.sounds.pop();
+            if let Err(cleanup) = std::fs::remove_file(&path) {
+                return Err(error.context(format!(
+                    "无法清理录音文件：{cleanup}；文件保留在 {}",
+                    path.display()
+                )));
+            }
+            return Err(error);
+        }
+        self.failed = false;
+        self.message.clear();
+        Ok(())
+    }
     pub fn import(
         &mut self,
         select_files: impl FnOnce() -> anyhow::Result<Vec<PathBuf>> + Send + 'static,
@@ -203,7 +221,8 @@ impl Soundboard {
             .save()
         });
         self.duration_reader.invalidate(&original_path);
-        self.duration_reader.invalidate(&self.library.sounds[index].path);
+        self.duration_reader
+            .invalidate(&self.library.sounds[index].path);
         result
     }
     pub fn remove(&mut self, index: usize) {
@@ -237,7 +256,8 @@ impl Soundboard {
         let Some(sound) = self.library.sounds.get(index) else {
             return;
         };
-        if self.options.speaker_output_volume == 0.0 && self.options.microphone_output_volume == 0.0 {
+        if self.options.speaker_output_volume == 0.0 && self.options.microphone_output_volume == 0.0
+        {
             self.set_error("麦克风和扬声器音量均为 0，未开始播放".into());
             return;
         }

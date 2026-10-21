@@ -5,8 +5,9 @@ use windows::Win32::{
     Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT},
     Media::Audio::{
         AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
-        AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, IAudioClient,
-        IMMDeviceEnumerator, MMDeviceEnumerator,
+        AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_LOOPBACK,
+        AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, IAudioClient, IMMDeviceEnumerator,
+        MMDeviceEnumerator,
     },
     System::{
         Com::{CLSCTX_ALL, CoCreateInstance},
@@ -15,6 +16,7 @@ use windows::Win32::{
 };
 
 pub(super) mod capture;
+pub(super) mod loopback;
 pub(super) mod monitor;
 pub(super) mod playback;
 mod preview;
@@ -64,7 +66,25 @@ impl Stream {
         convert: bool,
         duration: i64,
     ) -> anyhow::Result<Self> {
-        let mut flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
+        Self::initialize(client, format, convert, duration, 0)
+    }
+    fn loopback(client: IAudioClient, format: &WaveFormat) -> anyhow::Result<Self> {
+        Self::initialize(
+            client,
+            format,
+            true,
+            1_000_000,
+            AUDCLNT_STREAMFLAGS_LOOPBACK,
+        )
+    }
+    fn initialize(
+        client: IAudioClient,
+        format: &WaveFormat,
+        convert: bool,
+        duration: i64,
+        extra_flags: u32,
+    ) -> anyhow::Result<Self> {
+        let mut flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK | extra_flags;
         if convert {
             flags |= AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
         }

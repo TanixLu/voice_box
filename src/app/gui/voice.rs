@@ -147,7 +147,8 @@ impl VoicePanel {
             if ui
                 .add_enabled(
                     !stopping
-                        && (activity == Some(Activity::Recording) || (idle && microphone.is_some())),
+                        && (activity == Some(Activity::Recording)
+                            || (idle && microphone.is_some())),
                     egui::Button::new(if activity == Some(Activity::Recording) {
                         "结束录音"
                     } else {

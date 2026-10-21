@@ -35,7 +35,7 @@ pub(super) fn icon_button(ui: &mut egui::Ui, enabled: bool, icon: ButtonIcon) ->
             painter.line_segment([point(-4.0, -4.0), point(4.0, 4.0)], stroke);
             painter.line_segment([point(-4.0, 4.0), point(4.0, -4.0)], stroke);
             if matches!(icon, ButtonIcon::Close) {
-                ("关闭音效设置", "关闭，放弃未保存的修改")
+                ("关闭", "关闭，放弃未保存的修改")
             } else {
                 ("清除快捷键", "清除快捷键")
             }
