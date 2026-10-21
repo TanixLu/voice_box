@@ -70,6 +70,8 @@ impl VoiceBoxApp {
                 ui.hyperlink("https://github.com/TanixLu/voice_box");
             });
             ui.separator();
+            ui.spacing_mut().scroll.floating = false;
+            ui.spacing_mut().scroll.bar_inner_margin = 14.0;
             egui::ScrollArea::vertical()
                 .id_salt("copyright_scroll")
                 .max_height((available.y - 180.0).clamp(60.0, 360.0))
