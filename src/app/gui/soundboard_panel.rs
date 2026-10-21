@@ -439,80 +439,109 @@ impl SoundboardPanel {
         let mut capture = None;
         let mut save = false;
         let mut close = false;
-        let response = egui::Modal::new(egui::Id::unique("sound_settings")).show(ctx, |ui| {
-            ui.set_width((available.x - 64.0).clamp(240.0, 460.0));
-            ui.horizontal(|ui| {
-                ui.strong("音效设置");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    close = icon_button(ui, idle, ButtonIcon::Close).clicked();
+        let response = egui::Modal::new(egui::Id::unique("sound_settings"))
+            .frame(egui::Frame::popup(&ctx.style_of(ctx.theme())).inner_margin(16))
+            .show(ctx, |ui| {
+                ui.set_width((available.x - 64.0).clamp(240.0, 460.0));
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("音效设置").size(16.0).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        close = icon_button(ui, idle, ButtonIcon::Close).clicked();
+                    });
                 });
-            });
-            egui::ScrollArea::vertical()
-                .max_height((available.y - 230.0).max(80.0))
-                .show(ui, |ui| {
-                    ui.add_enabled_ui(idle, |ui| {
-                        let options = self.options.as_mut().unwrap();
-                        playback_volume(ui, "麦克风输出", &mut options.send_volume);
-                        playback_volume(ui, "扬声器输出", &mut options.monitor_volume);
-                        ui.checkbox(&mut options.microphone, "音效播放时保持收音");
-                        ui.checkbox(&mut options.repeat, "循环播放");
-                        if hotkey_editor(ui, "播放时自动按住", &mut options.hold, BindingTarget::Hold, capture_target) {
-                            capture = Some(BindingTarget::Hold);
-                        }
-                        if hotkey_editor(ui, "停止播放快捷键", &mut options.stop_hotkey, BindingTarget::Stop, capture_target) {
-                            capture = Some(BindingTarget::Stop);
-                        }
-                        if hotkey_editor(ui, "随机播放快捷键", &mut options.random_hotkey, BindingTarget::Random, capture_target) {
-                            capture = Some(BindingTarget::Random);
-                        }
-                        if !hotkeys.message.is_empty() {
-                            warning(ui, &hotkeys.message);
+                ui.add_space(12.0);
+                egui::ScrollArea::vertical()
+                    .max_height((available.y - 230.0).max(80.0))
+                    .show(ui, |ui| {
+                        ui.add_enabled_ui(idle, |ui| {
+                            let options = self.options.as_mut().unwrap();
+                            playback_volume(ui, "麦克风输出", &mut options.send_volume);
+                            playback_volume(ui, "扬声器输出", &mut options.monitor_volume);
+                            ui.checkbox(&mut options.microphone, "音效播放时保持收音");
+                            ui.checkbox(&mut options.repeat, "循环播放");
+                            if hotkey_editor(
+                                ui,
+                                "播放时自动按住",
+                                &mut options.hold,
+                                BindingTarget::Hold,
+                                capture_target,
+                            ) {
+                                capture = Some(BindingTarget::Hold);
+                            }
+                            if hotkey_editor(
+                                ui,
+                                "停止播放快捷键",
+                                &mut options.stop_hotkey,
+                                BindingTarget::Stop,
+                                capture_target,
+                            ) {
+                                capture = Some(BindingTarget::Stop);
+                            }
+                            if hotkey_editor(
+                                ui,
+                                "随机播放快捷键",
+                                &mut options.random_hotkey,
+                                BindingTarget::Random,
+                                capture_target,
+                            ) {
+                                capture = Some(BindingTarget::Random);
+                            }
+                            if !hotkeys.message.is_empty() {
+                                warning(ui, &hotkeys.message);
+                            }
+                        });
+                    });
+                ui.add_space(12.0);
+                let dirty = self
+                    .options
+                    .as_ref()
+                    .is_some_and(|options| options != self.model.options());
+                ui.horizontal(|ui| {
+                    save = ui
+                        .add_enabled(idle && !capturing && dirty, egui::Button::new("保存设置"))
+                        .clicked();
+                    if ui
+                        .add_enabled(idle && !capturing && dirty, egui::Button::new("撤销修改"))
+                        .clicked()
+                    {
+                        self.options = Some(self.model.options().clone());
+                        hotkeys.message.clear();
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add_enabled(
+                                idle && !capturing
+                                    && self
+                                        .options
+                                        .as_ref()
+                                        .is_some_and(|options| *options != Options::default()),
+                                egui::Button::new("恢复默认"),
+                            )
+                            .clicked()
+                        {
+                            self.options = Some(Options::default());
+                            hotkeys.message.clear();
                         }
                     });
                 });
-            let dirty = self.options.as_ref()
-                .is_some_and(|options| options != self.model.options());
-            ui.horizontal(|ui| {
-                save = ui
-                    .add_enabled(idle && !capturing && dirty, egui::Button::new("保存设置"))
-                    .clicked();
-                if ui
-                    .add_enabled(idle && !capturing && dirty, egui::Button::new("撤销修改"))
-                    .clicked()
+                if self
+                    .options
+                    .as_ref()
+                    .is_some_and(|options| options != self.model.options())
                 {
-                    self.options = Some(self.model.options().clone());
-                    hotkeys.message.clear();
+                    warning(ui, "有未保存的修改，保存后生效；关闭将放弃未保存的修改。");
+                } else {
+                    hint(ui, "当前设置已生效。");
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add_enabled(
-                            idle && !capturing && self.options.as_ref()
-                                .is_some_and(|options| *options != Options::default()),
-                            egui::Button::new("恢复默认"),
-                        )
-                        .clicked()
-                    {
-                        self.options = Some(Options::default());
-                        hotkeys.message.clear();
-                    }
-                });
+                if !idle {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(&jobs.status);
+                    });
+                } else if jobs.failed {
+                    warning(ui, &jobs.status);
+                }
             });
-            if self.options.as_ref()
-                .is_some_and(|options| options != self.model.options())
-            {
-                warning(ui, "有未保存的修改，保存后生效；关闭将放弃未保存的修改。");
-            } else {
-                hint(ui, "当前设置已生效。");
-            }
-            if !idle {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(&jobs.status);
-                });
-            } else if jobs.failed {
-                warning(ui, &jobs.status);
-            }
-        });
         if close || (response.should_close() && !capturing && idle) {
             self.options = None;
             hotkeys.cancel_capture();
