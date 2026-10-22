@@ -53,11 +53,12 @@ impl RecordingImport {
         let mut close = false;
         let saving = self.saving();
         let available = ctx.content_rect().size();
-        let content_height = (available.y - 110.0).clamp(100.0, 340.0);
+        // Leave room for the preview button to wrap below the time controls.
+        let content_height = (available.y - 110.0).clamp(100.0, 380.0);
         egui::Modal::new(egui::Id::unique("recording_import"))
             .frame(egui::Frame::popup(&ctx.style_of(ctx.theme())).inner_margin(16))
             .show(ctx, |ui| {
-                ui.set_width((available.x - 64.0).clamp(240.0, 620.0));
+                ui.set_width((available.x - 64.0).clamp(240.0, 460.0));
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.label(

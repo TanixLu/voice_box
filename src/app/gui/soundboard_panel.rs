@@ -1,7 +1,7 @@
 use super::{
     hotkey_binding::{HotkeyManager, hotkey_badge, hotkey_editor},
     jobs::Jobs,
-    widgets::{ButtonIcon, hint, icon_button, play_button, warning},
+    widgets::{ButtonIcon, hint, icon_button, play_button, trailing_button, warning},
 };
 use crate::app::i18n::Text;
 use crate::app::i18n::{Details, Message};
@@ -608,7 +608,7 @@ impl SoundboardPanel {
                     .draft_options
                     .as_ref()
                     .is_some_and(|options| options != self.model.options());
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     save = ui
                         .add_enabled(
                             idle && !capturing && dirty,
@@ -625,22 +625,20 @@ impl SoundboardPanel {
                         self.draft_options = Some(self.model.options().clone());
                         hotkeys.message.clear();
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add_enabled(
-                                idle && !capturing
-                                    && self
-                                        .draft_options
-                                        .as_ref()
-                                        .is_some_and(|options| *options != Options::default()),
-                                egui::Button::new(Text::RestoreDefaults.text()),
-                            )
-                            .clicked()
-                        {
-                            self.draft_options = Some(Options::default());
-                            hotkeys.message.clear();
-                        }
-                    });
+                    if trailing_button(
+                        ui,
+                        idle && !capturing
+                            && self
+                                .draft_options
+                                .as_ref()
+                                .is_some_and(|options| *options != Options::default()),
+                        Text::RestoreDefaults.text(),
+                    )
+                    .clicked()
+                    {
+                        self.draft_options = Some(Options::default());
+                        hotkeys.message.clear();
+                    }
                 });
                 if self
                     .draft_options

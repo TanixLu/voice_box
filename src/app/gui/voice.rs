@@ -1,4 +1,4 @@
-use super::widgets::{hint, warning};
+use super::widgets::{hint, trailing_button, warning};
 use crate::app::i18n::Message;
 use crate::app::i18n::Text;
 use crate::{
@@ -101,7 +101,7 @@ impl VoicePanel {
                 self.settings.gain_millidb = (gain_db * 1000.0).round() as i32;
             }
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let dirty = self.settings != self.saved;
             if ui
                 .add_enabled(!busy && dirty, egui::Button::new(Text::SaveSettings.text()))
@@ -115,17 +115,15 @@ impl VoicePanel {
             {
                 self.settings = self.saved.clone();
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add_enabled(
-                        !busy && self.settings != Settings::default(),
-                        egui::Button::new(Text::RestoreDefaults.text()),
-                    )
-                    .clicked()
-                {
-                    self.settings = Settings::default();
-                }
-            });
+            if trailing_button(
+                ui,
+                !busy && self.settings != Settings::default(),
+                Text::RestoreDefaults.text(),
+            )
+            .clicked()
+            {
+                self.settings = Settings::default();
+            }
         });
         if self.settings != self.saved {
             warning(ui, Text::UnsavedVoiceSettings.text());
@@ -192,30 +190,14 @@ impl VoicePanel {
             } else {
                 Text::PlayProcessed.text()
             };
-            let button_width = ui
-                .painter()
-                .layout_no_wrap(
-                    processed_label.into(),
-                    egui::TextStyle::Button.resolve(ui.style()),
-                    ui.visuals().text_color(),
-                )
-                .size()
-                .x
-                + 2.0 * ui.spacing().button_padding.x;
-            // Wrapping layouts report the full row in available_width(); use
-            // the remaining space so the spacer cannot expand the section.
-            let spacer =
-                (ui.available_size_before_wrap().x - button_width - ui.spacing().item_spacing.x)
-                    .max(0.0);
-            ui.add_space(spacer);
-            if ui
-                .add_enabled(
-                    !stopping
-                        && (activity == Some(Activity::PlayingProcessed)
-                            || (idle && self.session.has_recording())),
-                    egui::Button::new(processed_label),
-                )
-                .clicked()
+            if trailing_button(
+                ui,
+                !stopping
+                    && (activity == Some(Activity::PlayingProcessed)
+                        || (idle && self.session.has_recording())),
+                processed_label,
+            )
+            .clicked()
             {
                 if activity == Some(Activity::PlayingProcessed) {
                     self.session.stop();

@@ -1,6 +1,27 @@
 use crate::app::i18n::Text;
 pub(super) const ICON_BUTTON_SIZE: f32 = 30.0;
 
+/// Right-align a trailing button when it fits, otherwise let the row wrap it.
+/// Call inside `Ui::horizontal_wrapped`.
+pub(super) fn trailing_button(ui: &mut egui::Ui, enabled: bool, label: &str) -> egui::Response {
+    let button_width = ui
+        .painter()
+        .layout_no_wrap(
+            label.into(),
+            egui::TextStyle::Button.resolve(ui.style()),
+            ui.visuals().text_color(),
+        )
+        .size()
+        .x
+        + 2.0 * ui.spacing().button_padding.x;
+    // Wrapping layouts report the full row in available_width(); use the
+    // remaining space so the spacer cannot expand the section.
+    let spacer =
+        (ui.available_size_before_wrap().x - button_width - ui.spacing().item_spacing.x).max(0.0);
+    ui.add_space(spacer);
+    ui.add_enabled(enabled, egui::Button::new(label))
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum ButtonIcon {
     Close,

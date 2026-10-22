@@ -39,7 +39,9 @@ pub fn run() -> anyhow::Result<()> {
             .with_icon(icon)
             .with_inner_size([560.0, 760.0])
             .with_min_inner_size([380.0, 340.0]),
-        persist_window: true,
+        // Track normal geometry every frame instead of only at eframe's save interval.
+        // eframe still restores the saved "window" entry on startup.
+        persist_window: false,
         persistence_path: Some(paths::data_dir()?.join(super::UI_STATE_FILE)),
         ..Default::default()
     };
@@ -80,6 +82,7 @@ enum Tab {
 }
 
 struct VoiceBoxApp {
+    window_settings: Option<egui_winit::WindowSettings>,
     tab: Tab,
     language_preference: crate::app::i18n::LanguagePreference,
     zoom_factor: f32,
@@ -114,6 +117,9 @@ impl VoiceBoxApp {
         install_system_font(ctx);
         apply_style(ctx);
         let mut app = Self {
+            window_settings: cc
+                .storage
+                .and_then(|storage| eframe::get_value(storage, "window")),
             tab: Tab::Voice,
             language_preference: app_settings.language,
             zoom_factor: ctx.zoom_factor(),
@@ -274,6 +280,7 @@ impl VoiceBoxApp {
                                                 self.microphones.selected(),
                                             )
                                         });
+                                        self.microphones.status_ui(ui, &self.jobs);
                                     },
                                 );
                             });
@@ -305,7 +312,17 @@ impl VoiceBoxApp {
 }
 
 impl eframe::App for VoiceBoxApp {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if let Some(window) = frame.winit_window()
+            && window.is_minimized() != Some(true)
+        {
+            self.window_settings = Some(egui_winit::WindowSettings::from_window(
+                ctx.zoom_factor(),
+                window,
+                self.window_settings
+                    .map(|settings| settings.normal_geometry()),
+            ));
+        }
         self.poll_job();
         self.voice.session.poll();
         self.soundboard.model.poll(wake_ui(ctx.clone()));
@@ -358,6 +375,9 @@ impl eframe::App for VoiceBoxApp {
         self.soundboard.model.stop();
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        if let Some(settings) = &self.window_settings {
+            eframe::set_value(storage, "window", settings);
+        }
         eframe::set_value(
             storage,
             "voice_box.ui",

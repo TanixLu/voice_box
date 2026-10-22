@@ -2668,6 +2668,7 @@ dependencies = [
  "atomic-write-file",
  "eframe",
  "egui",
+ "egui-winit",
  "find-msvc-tools",
  "image",
  "lz4_flex",

@@ -1,7 +1,4 @@
-use super::{
-    jobs::{JobResult, Jobs},
-    widgets::hint,
-};
+use super::jobs::{JobResult, Jobs};
 use crate::app::i18n::Message;
 use crate::app::i18n::Text;
 use crate::app::{
@@ -147,24 +144,33 @@ impl MicrophonePanel {
             self.confirm_uninstall = false;
             self.preferred_guid = self.devices.get(self.selected).map(|mic| mic.guid.clone());
         }
-        if self.devices.is_empty() {
-            hint(ui, Text::ConnectMicrophoneHint.text());
-        }
         self.plugin_ui(ui, other_busy, jobs);
-        if jobs.busy() {
-            ui.horizontal_top(|ui| {
-                ui.spinner();
-                ui.add(egui::Label::new(jobs.status.text()).wrap());
-            });
-        } else if jobs.failed {
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(jobs.status.text()).color(ui.visuals().error_fg_color),
-                )
-                .wrap(),
-            );
-        }
         response
+    }
+
+    pub(super) fn status_ui(&self, ui: &mut egui::Ui, jobs: &Jobs) {
+        let status = if jobs.busy() {
+            Some(egui::RichText::new(jobs.status.text()))
+        } else if jobs.failed {
+            Some(egui::RichText::new(jobs.status.text()).color(ui.visuals().error_fg_color))
+        } else if self.devices.is_empty() {
+            Some(
+                egui::RichText::new(Text::ConnectMicrophoneHint.text())
+                    .small()
+                    .weak(),
+            )
+        } else {
+            None
+        };
+        if let Some(status) = status {
+            ui.horizontal(|ui| {
+                if jobs.busy() {
+                    ui.spinner();
+                }
+                ui.add(egui::Label::new(status.clone()).truncate())
+                    .on_hover_text(status);
+            });
+        }
     }
 
     fn plugin_ui(&mut self, ui: &mut egui::Ui, other_busy: bool, jobs: &mut Jobs) {
