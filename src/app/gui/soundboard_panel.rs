@@ -22,7 +22,7 @@ impl SoundRenameEditor {
                 [ui.available_width().max(16.0), 30.0],
                 egui::TextEdit::singleline(&mut self.name).id_salt("sound_name"),
             )
-            .on_hover_text("Enter 或点击别处保存，Esc 取消；扩展名保持不变");
+            .on_hover_text("编辑完整文件名；Enter 或点击别处保存，Esc 取消");
         if self.request_focus && ui.is_enabled() {
             input.request_focus();
             let mut state = egui::TextEdit::load_state(ui.ctx(), input.id).unwrap_or_default();
@@ -192,7 +192,7 @@ impl SoundboardPanel {
                     self.rename_editor
                         .as_ref()
                         .is_some_and(|edit| edit.index == *index)
-                        || sound.name().to_lowercase().contains(&filter)
+                        || sound.file_name.to_lowercase().contains(&filter)
                 })
                 .map(|(index, _)| index)
                 .collect();
@@ -330,9 +330,9 @@ impl SoundboardPanel {
                                                 edit.ui(ui);
                                             } else {
                                                 let name = if active {
-                                                    format!("播放中 · {}", sound.name())
+                                                    format!("播放中 · {}", sound.file_name)
                                                 } else {
-                                                    sound.name().to_owned()
+                                                    sound.file_name.clone()
                                                 };
                                                 let response = ui
                                                     .add_sized(
@@ -349,7 +349,7 @@ impl SoundboardPanel {
                                                     && !capturing
                                                     && !renaming
                                                 {
-                                                    rename = Some((index, sound.name().to_owned()));
+                                                    rename = Some((index, sound.file_name.clone()));
                                                 }
                                             }
                                         },
@@ -452,7 +452,7 @@ impl SoundboardPanel {
                         .library()
                         .sounds
                         .get(index)
-                        .map(|sound| sound.name())
+                        .map(|sound| sound.file_name.as_str())
                         .unwrap_or("");
                     ui.add(
                         egui::Label::new(format!(
@@ -464,6 +464,35 @@ impl SoundboardPanel {
                 }
             });
         });
+    }
+
+    pub(super) fn import_error_ui(&mut self, ctx: &egui::Context) {
+        let Some(error) = &self.model.import_error else {
+            return;
+        };
+        let available = ctx.content_rect().size();
+        let response = egui::Modal::new(egui::Id::unique("sound_import_error"))
+            .frame(egui::Frame::popup(&ctx.style_of(ctx.theme())).inner_margin(16))
+            .show(ctx, |ui| {
+                ui.set_width((available.x - 64.0).clamp(180.0, 600.0));
+                ui.heading("音效导入失败");
+                ui.separator();
+                ui.spacing_mut().scroll.floating = false;
+                egui::ScrollArea::vertical()
+                    .id_salt("sound_import_errors")
+                    .max_height((available.y - 160.0).clamp(60.0, 400.0))
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.add(egui::Label::new(error).wrap().selectable(true));
+                    });
+                ui.separator();
+                if ui.button("关闭").clicked() {
+                    ui.close();
+                }
+            });
+        if response.should_close() {
+            self.model.import_error = None;
+        }
     }
 
     pub(super) fn settings_ui(

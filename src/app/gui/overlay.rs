@@ -21,13 +21,58 @@ use windows::{
 
 const SIZE: Vec2 = vec2(360.0, 72.0);
 
-pub(super) fn show(ctx: &egui::Context, model: &Soundboard) -> anyhow::Result<bool> {
-    let Some(sound) = model
-        .active_sound_index
-        .and_then(|index| model.library().sounds.get(index))
-    else {
-        return Ok(false);
-    };
+#[derive(Default)]
+pub(super) struct Overlay {
+    builder: Option<egui::ViewportBuilder>,
+}
+
+impl Overlay {
+    pub(super) fn show(
+        &mut self,
+        ctx: &egui::Context,
+        model: &Soundboard,
+        enabled: bool,
+    ) -> anyhow::Result<bool> {
+        let sound = model
+            .active_sound_index
+            .filter(|_| enabled)
+            .and_then(|index| model.library().sounds.get(index));
+        let mut layout_result = Ok(());
+        let playback = sound.and_then(|sound| match viewport_builder(ctx) {
+            Ok(builder) => {
+                self.builder = Some(builder);
+                Some((
+                    sound.file_name.clone(),
+                    model.elapsed,
+                    model.duration.or(sound.duration),
+                    model.options().repeat,
+                ))
+            }
+            Err(error) => {
+                layout_result = Err(error);
+                None
+            }
+        });
+        let visible = playback.is_some();
+        if let Some(builder) = &self.builder {
+            let id = egui::ViewportId::from_hash_of("sound_playback_overlay");
+            // Keep declaring the viewport after first use, even when hidden or layout fails.
+            // Omitting it would destroy the native window and its GL surface.
+            ctx.show_viewport_deferred(id, builder.clone().with_visible(visible), move |ui, _| {
+                if let Some((name, elapsed, duration, repeat)) = &playback {
+                    draw(ui, name, *elapsed, *duration, *repeat);
+                }
+            });
+            if visible {
+                ctx.request_repaint_of(id);
+            }
+        }
+        layout_result?;
+        Ok(visible)
+    }
+}
+
+fn viewport_builder(ctx: &egui::Context) -> anyhow::Result<egui::ViewportBuilder> {
     let mut work = RECT::default();
     unsafe {
         SystemParametersInfoW(
@@ -52,28 +97,17 @@ pub(super) fn show(ctx: &egui::Context, model: &Soundboard) -> anyhow::Result<bo
         work.center().x - size.x / 2.0,
         (work.bottom() - size.y - 24.0).max(work.top()),
     );
-    let name = sound.name().to_owned();
-    let elapsed = model.elapsed;
-    let duration = model.duration.or(sound.duration);
-    let repeat = model.options().repeat;
-    let id = egui::ViewportId::from_hash_of("sound_playback_overlay");
-    ctx.show_viewport_deferred(
-        id,
-        egui::ViewportBuilder::default()
-            .with_title("VoiceBox 播放浮层")
-            .with_inner_size(size)
-            .with_position(position)
-            .with_transparent(true)
-            .with_decorations(false)
-            .with_resizable(false)
-            .with_active(false)
-            .with_taskbar(false)
-            .with_mouse_passthrough(true)
-            .with_always_on_top(),
-        move |ui, _| draw(ui, &name, elapsed, duration, repeat),
-    );
-    ctx.request_repaint_of(id);
-    Ok(true)
+    Ok(egui::ViewportBuilder::default()
+        .with_title("VoiceBox 播放浮层")
+        .with_inner_size(size)
+        .with_position(position)
+        .with_transparent(true)
+        .with_decorations(false)
+        .with_resizable(false)
+        .with_active(false)
+        .with_taskbar(false)
+        .with_mouse_passthrough(true)
+        .with_always_on_top())
 }
 
 fn draw(ui: &mut egui::Ui, name: &str, elapsed: f64, duration: Option<f64>, repeat: bool) {

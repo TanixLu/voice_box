@@ -109,7 +109,10 @@ impl Options {
     }
 
     pub(super) fn sanitize(&mut self) {
-        for volume in [&mut self.speaker_output_volume, &mut self.microphone_output_volume] {
+        for volume in [
+            &mut self.speaker_output_volume,
+            &mut self.microphone_output_volume,
+        ] {
             *volume = if volume.is_finite() {
                 volume.clamp(0.0, MAX_VOLUME)
             } else {
@@ -147,13 +150,12 @@ impl Config {
 
     pub fn try_load() -> anyhow::Result<Self> {
         let path = paths::data_dir()?.join(paths::SOUNDBOARD_SETTINGS_FILE);
-        let file = match fs::File::open(path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default());
+        match fs::File::open(path) {
+            Ok(file) => {
+                serde_json::from_reader(std::io::BufReader::new(file)).context("音效配置格式无效")
             }
-            Err(error) => return Err(error).context("读取音效配置失败"),
-        };
-        serde_json::from_reader(std::io::BufReader::new(file)).context("音效配置格式无效")
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(error).context("读取音效配置失败"),
+        }
     }
 }

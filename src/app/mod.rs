@@ -11,7 +11,8 @@ mod soundboard;
 mod uninstall;
 
 const UI_STATE_FILE: &str = "ui.ron";
-const APO_DLL: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/target/voice_box.dll"));
+static APO_DLL: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/target/voice_box.dll"));
 
 use crate::shared::utils::wide_null;
 use tracing::error;

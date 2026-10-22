@@ -1,3 +1,4 @@
+use super::decoder::SoundDecoder;
 use crate::{app::hotkeys::Hotkey, shared::paths};
 use anyhow::{Context, ensure};
 use std::{
@@ -17,14 +18,6 @@ pub(in crate::app) struct Sound {
     pub duration: Option<f64>,
     #[serde(skip)]
     pub duration_error: Option<String>,
-}
-impl Sound {
-    pub fn name(&self) -> &str {
-        Path::new(&self.file_name)
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .unwrap_or(&self.file_name)
-    }
 }
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -55,25 +48,15 @@ impl Library {
         save: impl FnOnce(&Self) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         let sound = self.sounds.get_mut(index).context("音效不存在")?;
-        let name = name.trim();
+        let file_name = name.trim();
         ensure!(
-            is_valid_file_name(name),
+            is_valid_file_name(file_name),
             "名称不能为空，也不能包含路径、控制字符或 Windows 文件名保留字符"
         );
-        let mut file_name = PathBuf::from(name);
-        if let Some(extension) = sound.path.extension() {
-            file_name.as_mut_os_string().push(".");
-            file_name.as_mut_os_string().push(extension);
-        }
-        let file_name = file_name
-            .into_os_string()
-            .into_string()
-            .map_err(|_| anyhow::anyhow!("音效名称无效"))?;
-        ensure!(is_valid_file_name(&file_name), "音效名称无效");
         if file_name == sound.file_name {
             return save(self);
         }
-        let destination = sound.path.with_file_name(&file_name);
+        let destination = sound.path.with_file_name(file_name);
         // Do not replace an existing library file when names collide.
         let move_file = |from: &Path, to: &Path| unsafe {
             windows::Win32::Storage::FileSystem::MoveFileExW(
@@ -85,7 +68,7 @@ impl Library {
         move_file(&sound.path, &destination)
             .context("重命名音效文件失败，请检查名称是否重复或文件是否被占用")?;
         let original_path = std::mem::replace(&mut sound.path, destination);
-        let original_name = std::mem::replace(&mut sound.file_name, file_name);
+        let original_name = std::mem::replace(&mut sound.file_name, file_name.to_owned());
         if let Err(error) = save(self) {
             let sound = &mut self.sounds[index];
             if let Err(rollback) = move_file(&sound.path, &original_path) {
@@ -166,6 +149,11 @@ pub(super) fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSoun
                 .and_then(|name| name.to_str())
                 .context("音频文件名无效")?;
             ensure!(is_valid_file_name(original_name), "音频文件名无效");
+            {
+                let mut decoder = SoundDecoder::open(&source)?;
+                ensure!(decoder.next_frame()?.is_some(), "音频文件没有可播放的数据");
+                while decoder.next_frame()?.is_some() {}
+            }
             let (file_name, path) = if source.parent() == Some(canonical_directory.as_path()) {
                 (original_name.to_owned(), directory.join(original_name))
             } else {

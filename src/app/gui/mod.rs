@@ -86,6 +86,7 @@ struct VoiceBoxApp {
     uninstalling: bool,
     uninstall_requested: bool,
     show_licenses: bool,
+    overlay: overlay::Overlay,
     overlay_visible: bool,
 }
 
@@ -118,6 +119,7 @@ impl VoiceBoxApp {
             uninstalling: false,
             uninstall_requested: false,
             show_licenses: false,
+            overlay: overlay::Overlay::default(),
             overlay_visible: false,
         };
         app.microphones.refresh(ctx, &mut app.jobs);
@@ -274,6 +276,7 @@ impl VoiceBoxApp {
             .settings_ui(ui.ctx(), &mut self.jobs, &mut self.hotkeys);
         self.soundboard.recording_ui(ui.ctx());
         self.soundboard.finish_rename(self.tab == Tab::Soundboard);
+        self.soundboard.import_error_ui(ui.ctx());
         self.full_uninstall_ui(ui.ctx());
 
         // Apply after drawing so a job started by a button click disables the
@@ -306,6 +309,7 @@ impl eframe::App for VoiceBoxApp {
         let shortcuts_enabled = !self.jobs.busy()
             && !self.voice.session.busy()
             && !self.soundboard.model.importing()
+            && self.soundboard.model.import_error.is_none()
             && !self.soundboard.recording_open()
             && !self.uninstalling
             && !self.uninstall_requested
@@ -356,18 +360,19 @@ impl eframe::App for VoiceBoxApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
         self.overlay_visible = false;
-        if self.soundboard.model.options().show_overlay
+        let overlay_enabled = self.soundboard.model.options().show_overlay
             && !self.uninstalling
-            && !self.uninstall_requested
+            && !self.uninstall_requested;
+        match self
+            .overlay
+            .show(ui.ctx(), &self.soundboard.model, overlay_enabled)
         {
-            match overlay::show(ui.ctx(), &self.soundboard.model) {
-                Ok(visible) => self.overlay_visible = visible,
-                Err(error) => {
-                    tracing::warn!("Failed to show playback overlay: {error:#}");
-                    self.soundboard
-                        .model
-                        .set_error(format!("显示播放浮层失败：{error:#}"));
-                }
+            Ok(visible) => self.overlay_visible = visible,
+            Err(error) => {
+                tracing::warn!("Failed to show playback overlay: {error:#}");
+                self.soundboard
+                    .model
+                    .set_error(format!("显示播放浮层失败：{error:#}"));
             }
         }
     }

@@ -34,6 +34,7 @@ pub(super) struct Soundboard {
     pub duration: Option<f64>,
     pub message: String,
     pub failed: bool,
+    pub import_error: Option<String>,
     playback_job: Option<PlaybackJob>,
     queued_playback: Option<(usize, Option<String>)>,
     import_job: Option<mpsc::Receiver<anyhow::Result<ImportedSounds>>>,
@@ -178,7 +179,7 @@ impl Soundboard {
             Ok(_) => self.import_job = Some(rx),
             Err(e) => {
                 tracing::error!("Failed to spawn sound import: {e}");
-                self.set_error(format!("打开文件选择器失败：{e}"));
+                self.import_error = Some(format!("打开文件选择器失败：{e}"));
             }
         }
     }
@@ -186,7 +187,7 @@ impl Soundboard {
         self.failed = true;
         self.message = message;
     }
-    fn finish_import(&mut self, imported: ImportedSounds) {
+    fn finish_import(&mut self, mut imported: ImportedSounds) {
         let previous_count = self.library.sounds.len();
         let mut known: HashSet<_> = self
             .library
@@ -200,17 +201,20 @@ impl Soundboard {
             }
             self.library.sounds.push(sound);
         }
+        if let Err(error) = self.save() {
+            tracing::error!("Failed to save soundboard after import: {error:#}");
+            imported.errors.push(format!("{error:#}"));
+        }
         if !imported.errors.is_empty() {
             tracing::warn!(
                 errors = ?imported.errors,
                 "Some sound files could not be imported"
             );
-            self.set_error(imported.errors.join("\n"));
+            self.import_error = Some(imported.errors.join("\n\n"));
         } else {
             self.failed = false;
             self.message.clear();
         }
-        self.save_library();
         let added = self.library.sounds.len() - previous_count;
         if added > 0 || !imported.errors.is_empty() {
             tracing::info!(
@@ -360,14 +364,14 @@ impl Soundboard {
                         Ok(imported) => self.finish_import(imported),
                         Err(e) => {
                             tracing::error!("Sound file selection or import failed: {e:#}");
-                            self.set_error(format!("选择文件失败：{e:#}"));
+                            self.import_error = Some(format!("导入音效失败：{e:#}"));
                         }
                     }
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     tracing::error!("Sound import exited without a result");
                     self.import_job = None;
-                    self.set_error("文件选择器意外退出".into());
+                    self.import_error = Some("音效导入线程意外退出".into());
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
