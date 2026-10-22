@@ -52,16 +52,14 @@ pub unsafe extern "system" fn VoiceBoxPreviewProcess(
         return S_OK;
     }
     let mut processor = AudioProcessor::default();
-    if processor
-        .prepare(
-            SampleFormat::Float32,
-            channels as usize,
-            f64::from(sample_rate),
-            true,
-        )
-        .is_err()
-    {
-        return E_INVALIDARG;
+    if let Err(error) = processor.prepare(
+        SampleFormat::Float32,
+        channels as usize,
+        f64::from(sample_rate),
+        true,
+        false,
+    ) {
+        return error.code();
     }
     // Flush the entire latency, including resamplers, STFT/FIFO and limiter,
     // then remove it so A/B playback has the same length and starting point.

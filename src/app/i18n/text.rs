@@ -73,6 +73,7 @@ catalog! {
     CommitRegistrationTransaction => ("Failed to commit the APO registration transaction", "提交 APO 注册事务失败");
     ReadCompositeEffects => ("Failed to read the Composite MFX APO list", "读取 Composite MFX APO 列表失败");
     ReadProcessingModes => ("Failed to read the MFX processing modes", "读取 MFX 处理模式失败");
+    SelectDeviceDefaultEffects => ("Failed to select Device Default Effects for the microphone", "为麦克风选择设备默认效果失败");
     CreateUninstallTransaction => ("Failed to create the full uninstall registry transaction", "创建完全卸载注册事务失败");
     EnumerateMicrophoneRegistry => ("Failed to enumerate microphone registry entries", "枚举麦克风注册表失败");
     ReadMicrophoneRegistry => ("Failed to read the microphone registry entry", "读取麦克风注册表项失败");

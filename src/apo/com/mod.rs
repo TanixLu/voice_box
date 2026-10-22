@@ -53,6 +53,8 @@ struct InterfaceHeader<V> {
 /// A single carrier supports normal activation and COM aggregation.
 #[repr(C)]
 struct ApoCom {
+    // Drop leases before any of the allocations whose pages they cover.
+    resident_pages: Option<super::memory::LockedPages>,
     params: Arc<super::settings_watcher::RtParams>,
     settings_watcher: Option<super::settings_watcher::SettingsWatcher>,
     soundboard_path: Option<std::path::PathBuf>,
@@ -318,6 +320,7 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
     }
     unsafe {
         raw.write(ApoCom {
+            resident_pages: None,
             params: Arc::new(super::settings_watcher::RtParams::default()),
             settings_watcher: None,
             soundboard_path: None,

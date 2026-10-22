@@ -14,6 +14,7 @@ mod soundboard;
 mod uninstall;
 
 const UI_STATE_FILE: &str = "ui.ron";
+const SINGLE_INSTANCE_MUTEX: &str = r"Global\VoiceBoxSingleInstance";
 static COMPRESSED_APO_DLL: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/voice_box_apo.dll.lz4"));
 static APO_DLL: std::sync::LazyLock<Box<[u8]>> = std::sync::LazyLock::new(|| {
@@ -57,7 +58,7 @@ fn run_inner() -> anyhow::Result<()> {
         unsafe { IsUserAnAdmin() }.as_bool(),
         Text::AdministratorRequired
     );
-    let single_instance = single_instance::SingleInstance::new("VoiceBoxSingleInstance")?;
+    let single_instance = single_instance::SingleInstance::new(SINGLE_INSTANCE_MUTEX)?;
     anyhow::ensure!(single_instance.is_single(), Text::AnotherInstance);
     settings_writer::initialize()?;
     logging::init()?;

@@ -3,6 +3,7 @@
 mod high_pass;
 mod limiter;
 
+use super::memory::Resident;
 pub use crate::shared::audio::SampleFormat;
 use crate::shared::resample::Resampler;
 use high_pass::HighPass;
@@ -150,7 +151,69 @@ impl Enhancement {
 
 #[derive(Default)]
 pub struct AudioProcessor {
-    format: Option<SampleFormat>,
+    state: Option<Resident<ProcessorState>>,
+}
+
+impl AudioProcessor {
+    pub fn prepare(
+        &mut self,
+        format: SampleFormat,
+        channels: usize,
+        sample_rate: f64,
+        process_effect: bool,
+        lock_pages: bool,
+    ) -> windows::core::Result<()> {
+        if !(1..=MAX_CHANNELS).contains(&channels)
+            || !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sample_rate)
+        {
+            return Err(windows::core::Error::from_hresult(
+                windows::Win32::Foundation::E_INVALIDARG,
+            ));
+        }
+        // Real-time use locks every live allocation, including dependency-owned
+        // scratch buffers; offline preview needs no page residency.
+        // Publish only after all locks succeed; a failed relock preserves state.
+        let prepared = Resident::new(
+            || ProcessorState::new(format, channels, sample_rate, process_effect),
+            lock_pages,
+        )?;
+        self.state = Some(prepared);
+        Ok(())
+    }
+
+    pub fn reset(&mut self) {
+        if let Some(state) = &mut self.state {
+            state.reset();
+        }
+    }
+
+    pub fn silence_byte(&self) -> u8 {
+        self.state.as_ref().map_or(0, |state| state.silence_byte())
+    }
+
+    pub fn frame_bytes(&self) -> usize {
+        self.state.as_ref().map_or(0, |state| state.frame_bytes())
+    }
+
+    pub fn latency_hns(&self) -> i64 {
+        self.state.as_ref().map_or(0, |state| state.latency_hns())
+    }
+
+    pub fn latency_frames(&self) -> usize {
+        self.state
+            .as_ref()
+            .map_or(0, |state| state.latency_frames())
+    }
+
+    pub fn process_with_settings(&mut self, buffer: &mut [u8], gain: f32, enabled: bool) -> bool {
+        self.state
+            .as_mut()
+            .is_none_or(|state| state.process_with_settings(buffer, gain, enabled))
+    }
+}
+
+struct ProcessorState {
+    format: SampleFormat,
     frame_bytes: usize,
     enhancement: Option<Enhancement>,
     bypass: Vec<u8>,
@@ -161,36 +224,28 @@ pub struct AudioProcessor {
     enabled: bool,
 }
 
-impl AudioProcessor {
-    pub fn prepare(
-        &mut self,
-        format: SampleFormat,
-        channels: usize,
-        sample_rate: f64,
-        process_effect: bool,
-    ) -> Result<(), ()> {
-        if !(1..=MAX_CHANNELS).contains(&channels)
-            || !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sample_rate)
-        {
-            return Err(());
-        }
-        let frame_bytes = channels.checked_mul(format.bytes()).ok_or(())?;
+impl ProcessorState {
+    fn new(format: SampleFormat, channels: usize, sample_rate: f64, process_effect: bool) -> Self {
+        let frame_bytes = channels * format.bytes();
         let enhancement = process_effect.then(|| Enhancement::new(sample_rate, channels));
         let latency_frames = enhancement
             .as_ref()
             .map_or(0, |effect| effect.latency_frames);
-        self.format = Some(format);
-        self.frame_bytes = frame_bytes;
-        self.enhancement = enhancement;
+        let mut state = Self {
+            format,
+            frame_bytes,
+            enhancement,
+            bypass: Vec::new(),
+            bypass_position: 0,
+            warmup: 0,
+            latency_hns: (latency_frames as f64 / sample_rate * 10_000_000.0).ceil() as i64,
+            muted: false,
+            enabled: false,
+        };
         // Preserve native sample bytes, including Float64 precision and PCM
         // padding bits. Bypass introduces only the host's fixed processing delay.
-        self.bypass = vec![self.silence_byte(); latency_frames * frame_bytes];
-        self.bypass_position = 0;
-        self.warmup = 0;
-        self.latency_hns = (latency_frames as f64 / sample_rate * 10_000_000.0).ceil() as i64;
-        self.muted = false;
-        self.enabled = false;
-        Ok(())
+        state.bypass = vec![state.silence_byte(); latency_frames * frame_bytes];
+        state
     }
 
     pub fn reset(&mut self) {
@@ -204,7 +259,7 @@ impl AudioProcessor {
     }
 
     pub fn silence_byte(&self) -> u8 {
-        if matches!(self.format, Some(SampleFormat::Pcm { bytes: 1, .. })) {
+        if matches!(self.format, SampleFormat::Pcm { bytes: 1, .. }) {
             128
         } else {
             0
@@ -226,9 +281,7 @@ impl AudioProcessor {
     }
 
     pub fn process_with_settings(&mut self, buffer: &mut [u8], gain: f32, enabled: bool) -> bool {
-        let Some(format) = self.format else {
-            return true;
-        };
+        let format = self.format;
         if gain == 0.0 {
             buffer.fill(self.silence_byte());
             if !self.muted {

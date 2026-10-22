@@ -207,25 +207,47 @@ pub(super) unsafe extern "system" fn lock_for_process(
             APOERR_APO_LOCKED,
         );
     };
-    if unsafe {
+    let resident_pages = if unsafe { (*object).resident_pages.is_none() } {
+        let mut ranges = crate::apo::memory::image_ranges();
+        ranges.push((object as usize, size_of::<ApoCom>()));
+        let params = unsafe { (*object).params.as_ref() };
+        ranges.push((params as *const _ as usize, size_of_val(params)));
+        match crate::apo::memory::LockedPages::new(ranges) {
+            Ok(pages) => Some(pages),
+            Err(error) => {
+                return log_lock_failure(
+                    object,
+                    input_count,
+                    output_count,
+                    "cannot lock processing code and control data",
+                    error.code(),
+                );
+            }
+        }
+    } else {
+        None
+    };
+    if let Err(error) = unsafe {
         (&mut *(*object).dsp.get()).prepare(
             sample_format,
             input_format.dwSamplesPerFrame as usize,
             f64::from(input_format.fFramesPerSecond),
             (*object).effect_enabled.load(Ordering::Acquire),
+            true,
         )
-    }
-    .is_err()
-    {
+    } {
         return log_lock_failure(
             object,
             input_count,
             output_count,
-            "cannot prepare speech enhancement model",
-            APOERR_INVALID_CONNECTION_FORMAT,
+            "cannot allocate or lock speech enhancement state",
+            error.code(),
         );
     }
     unsafe {
+        if let Some(pages) = resident_pages {
+            (*object).resident_pages = Some(pages);
+        }
         *(*object).injection.get() = None;
         (*object).injection_stop = None;
         if (*object).effect_enabled.load(Ordering::Acquire)
@@ -287,6 +309,11 @@ pub(super) unsafe extern "system" fn unlock_for_process(this: *mut c_void) -> HR
     }
     if let Some(stop) = unsafe { &(*object).injection_stop } {
         stop.store(true, Ordering::Release);
+    }
+    // Unlock is non-RT. Normally no callback remains; if one is still exiting,
+    // retain its storage until the next prepare or final destruction.
+    if let Some(_access) = unsafe { DspAccess::try_acquire(&(*object).dsp_in_use) } {
+        unsafe { *(*object).dsp.get() = Default::default() };
     }
     apo_log!(
         etw::INFO,

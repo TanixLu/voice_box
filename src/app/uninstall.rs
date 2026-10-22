@@ -109,6 +109,10 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
         .env("VOICEBOX_UNINSTALL_COMPLETE", complete_name)
         .env("VOICEBOX_UNINSTALL_CANCEL", cancel_name)
         .env(
+            "VOICEBOX_SINGLE_INSTANCE_MUTEX",
+            super::SINGLE_INSTANCE_MUTEX,
+        )
+        .env(
             "VOICEBOX_UNINSTALL_PROCESS_ID",
             std::process::id().to_string(),
         )

@@ -1,6 +1,7 @@
 //! Background IPC reader plus resident, bounded-work post-denoise mixing.
 use super::{
     etw::{self, apo_log},
+    memory::LockedPages,
     worker,
 };
 use crate::shared::{
@@ -24,7 +25,6 @@ use std::{
 use windows::{
     Win32::System::Memory::{
         MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
-        VirtualLock, VirtualUnlock,
     },
     core::w,
 };
@@ -42,7 +42,10 @@ struct Storage {
     gain: AtomicU64,
     mute_microphone: AtomicBool,
 }
-struct Resident(NonNull<Storage>);
+struct Resident {
+    pointer: NonNull<Storage>,
+    pages: Option<LockedPages>,
+}
 // The allocation is owned through Arc. Samples and metadata are atomic; filter
 // coefficients are immutable after construction, and freeing needs exclusive Drop.
 unsafe impl Send for Resident {}
@@ -50,7 +53,7 @@ unsafe impl Sync for Resident {}
 impl std::ops::Deref for Resident {
     type Target = Storage;
     fn deref(&self) -> &Storage {
-        unsafe { self.0.as_ref() }
+        unsafe { self.pointer.as_ref() }
     }
 }
 impl Resident {
@@ -69,12 +72,21 @@ impl Resident {
             .ok_or_else(windows::core::Error::from_thread)?;
         unsafe {
             (*pointer.as_ptr()).kernels.copy_from_slice(&kernels(rate));
-            if let Err(error) = VirtualLock(pointer.as_ptr().cast(), size_of::<Storage>()) {
-                let _ = VirtualFree(pointer.as_ptr().cast(), 0, MEM_RELEASE);
-                return Err(error.into());
-            }
         }
-        Ok(Arc::new(Self(pointer)))
+        let mut resident = Arc::new(Self {
+            pointer,
+            pages: None,
+        });
+        // Pin the Arc's pointer carrier as well as the sample storage. Account
+        // for both in the same quota and page-reference registry as the DSP.
+        let pages = LockedPages::new([
+            (pointer.as_ptr() as usize, size_of::<Storage>()),
+            (Arc::as_ptr(&resident) as usize, size_of::<Self>()),
+        ])?;
+        Arc::get_mut(&mut resident)
+            .expect("unpublished soundboard state")
+            .pages = Some(pages);
+        Ok(resident)
     }
     fn sample(&self, position: f64, generation: u64, direct: bool) -> [f32; 2] {
         let base = position.floor() as u64;
@@ -96,9 +108,9 @@ impl Resident {
 }
 impl Drop for Resident {
     fn drop(&mut self) {
+        self.pages.take();
         unsafe {
-            let _ = VirtualUnlock(self.0.as_ptr().cast(), size_of::<Storage>());
-            let _ = VirtualFree(self.0.as_ptr().cast(), 0, MEM_RELEASE);
+            let _ = VirtualFree(self.pointer.as_ptr().cast(), 0, MEM_RELEASE);
         }
     }
 }

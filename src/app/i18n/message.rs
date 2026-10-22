@@ -145,6 +145,7 @@ messages! {
     RecycleCancelled { path: String } => ("Recycling {path} was cancelled or did not complete", "回收 {path} 的操作已取消或未完成");
     RecycleIncomplete { path: String } => ("{path} still exists; recycling did not complete", "{path} 仍然存在，回收未完成");
     OpenFxProperties { device: String } => ("Failed to open FxProperties for microphone {device}", "打开麦克风 {device} 的 FxProperties 失败");
+    OpenEndpointProperties { device: String } => ("Failed to open Properties for microphone {device}", "打开麦克风 {device} 的 Properties 失败");
     UninstallMicrophone { device: String } => ("Failed to uninstall the VoiceBox APO for microphone {device}", "卸载麦克风 {device} 的 VoiceBox APO 失败");
     DeleteApoRegistration { path: String } => ("Failed to delete the VoiceBox APO registration: {path}", "删除 VoiceBox APO 注册失败：{path}");
     InvalidHotkey { key: Hotkey } => ("Invalid hotkey: {key}", "无效快捷键：{key}");

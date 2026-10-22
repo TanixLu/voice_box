@@ -35,7 +35,7 @@ try {
     # WaitForExit will use this handle, so a reused PID cannot redirect the wait.
     $null = $parent.Handle
     # Keep the existing single-instance mutex alive across the process handoff.
-    $instance = [System.Threading.Mutex]::new($false, 'VoiceBoxSingleInstance')
+    $instance = [System.Threading.Mutex]::OpenExisting($env:VOICEBOX_SINGLE_INSTANCE_MUTEX)
     $ready = [System.Threading.EventWaitHandle]::OpenExisting($env:VOICEBOX_UNINSTALL_READY)
     $complete = [System.Threading.EventWaitHandle]::OpenExisting($env:VOICEBOX_UNINSTALL_COMPLETE)
     $cancel = [System.Threading.EventWaitHandle]::OpenExisting($env:VOICEBOX_UNINSTALL_CANCEL)

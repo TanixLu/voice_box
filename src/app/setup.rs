@@ -2,7 +2,9 @@ use crate::app::i18n::Text;
 use crate::app::i18n::{Message, UserContext};
 use crate::shared::{paths, plugin};
 
+use atomic_write_file::AtomicWriteFile;
 use restart_manager::{RestartSession, ShutdownOptions};
+use std::io::Write;
 use std::path::Path;
 use tracing::info;
 use windows::Win32::Media::KernelStreaming::{
@@ -100,6 +102,8 @@ fn default_processing_modes() -> Vec<String> {
 }
 
 const DISABLE_APO_PROPERTY_KEY: &str = "{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5";
+const SELECTED_EFFECT_PACK_PROPERTY_KEY: &str = "{c876062a-a276-4ed6-b15b-3962e69007f8},2";
+const DEVICE_DEFAULT_EFFECT_PACK: &str = "{00D5B26C-4D0F-4A83-BB69-C2F12DC5FB10}";
 
 const AUDIO_SERVICE_NAME: &str = "AudioSrv";
 
@@ -173,14 +177,34 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     {
         return PluginStatus::NeedsUpdate;
     }
-    if fx
-        .get_value::<u32, _>(DISABLE_APO_PROPERTY_KEY)
-        .is_ok_and(|value| value != 0)
-    {
+    let Ok(properties) = root.open_subkey_with_flags(
+        format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{device_guid}\Properties"),
+        KEY_QUERY_VALUE | KEY_WOW64_64KEY,
+    ) else {
+        return PluginStatus::NeedsUpdate;
+    };
+    if !device_default_effects_enabled(&fx, &properties) {
         return PluginStatus::NeedsUpdate;
     }
 
     PluginStatus::Installed
+}
+
+fn device_default_effects_enabled(fx: &RegKey, properties: &RegKey) -> bool {
+    if !matches!(
+        read_optional_value::<u32>(fx, DISABLE_APO_PROPERTY_KEY),
+        Ok(None | Some(0))
+    ) {
+        return false;
+    }
+    // An absent selection may fall back to a different effect pack.
+    properties
+        .get_raw_value(SELECTED_EFFECT_PACK_PROPERTY_KEY)
+        .is_ok_and(|value| {
+            value.vtype == winreg::enums::REG_SZ
+                && String::from_reg_value(&value)
+                    .is_ok_and(|pack| pack.eq_ignore_ascii_case(DEVICE_DEFAULT_EFFECT_PACK))
+        })
 }
 
 pub(super) fn with_audio_service_stopped(
@@ -222,7 +246,9 @@ fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     let string_values = string_registration_values(&apo_dll)?;
     // Update the DLL.
     if std::fs::read(&apo_dll).ok().as_deref() != Some(apo_dll_bytes()) {
-        std::fs::write(&apo_dll, apo_dll_bytes())?;
+        let mut file = AtomicWriteFile::open(&apo_dll)?;
+        file.write_all(apo_dll_bytes())?;
+        file.commit()?;
         info!("Updated APO DLL at {}", apo_dll.display());
     }
 
@@ -270,6 +296,18 @@ fn update_device_effects(device_guid: &str, uninstall: bool) -> anyhow::Result<(
         &transaction, flags,
     ).with_user_context(|| Message::OpenFxProperties { device: device_guid.to_owned() })?;
     update_fx_properties(&fx, uninstall)?;
+    if !uninstall {
+        let properties = root.open_subkey_transacted_with_flags(
+            format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{device_guid}\Properties"),
+            &transaction, flags,
+        ).with_user_context(|| Message::OpenEndpointProperties { device: device_guid.to_owned() })?;
+        properties
+            .set_value(
+                SELECTED_EFFECT_PACK_PROPERTY_KEY,
+                &DEVICE_DEFAULT_EFFECT_PACK,
+            )
+            .user_context(Text::SelectDeviceDefaultEffects)?;
+    }
     // All endpoint changes commit together; failures leave them untouched.
     transaction
         .commit()
