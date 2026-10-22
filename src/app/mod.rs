@@ -25,7 +25,10 @@ fn apo_dll_bytes() -> &'static [u8] {
 
 use crate::shared::utils::wide_null;
 use tracing::error;
-use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+use windows::Win32::UI::{
+    Shell::IsUserAnAdmin,
+    WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW},
+};
 use windows::core::{PCWSTR, w};
 
 pub fn run() {
@@ -48,6 +51,10 @@ fn run_inner() -> anyhow::Result<()> {
     anyhow::ensure!(
         std::env::args_os().len() == 1,
         "不支持此命令行参数，请在窗口中操作。"
+    );
+    anyhow::ensure!(
+        unsafe { IsUserAnAdmin() }.as_bool(),
+        "VoiceBox 需要管理员权限，请右键选择“以管理员身份运行”。"
     );
     let single_instance = single_instance::SingleInstance::new("VoiceBoxSingleInstance")?;
     anyhow::ensure!(

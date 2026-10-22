@@ -57,9 +57,8 @@ impl Options {
         );
         let duplicate = (target != BindingTarget::Stop && self.stop_hotkey == Some(key))
             || (target != BindingTarget::Random && self.random_playback_hotkey == Some(key))
-            || library.sounds.iter().enumerate().any(|(index, sound)| {
-                target != BindingTarget::Sound(index) && sound.hotkey == Some(key)
-            });
+            || (matches!(target, BindingTarget::Stop | BindingTarget::Random)
+                && library.sounds.iter().any(|sound| sound.hotkey == Some(key)));
         ensure!(
             !duplicate || target == BindingTarget::Hold,
             "{} 已绑定其他操作，请使用另一个快捷键",

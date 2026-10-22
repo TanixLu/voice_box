@@ -151,7 +151,7 @@ try {
 
     if ($run) {
         Write-Host "`nRunning target/$buildProfile/voice_box.exe..."
-        $app = Start-Process -FilePath (Join-Path $PSScriptRoot "target/$buildProfile/voice_box.exe") -Wait -PassThru
+        $app = Start-Process -FilePath (Join-Path $PSScriptRoot "target/$buildProfile/voice_box.exe") -Verb RunAs -Wait -PassThru
         $exitCode = $app.ExitCode
         if ($exitCode -ne 0) { Write-Host "Program exited with code $exitCode." }
     }

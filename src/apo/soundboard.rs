@@ -173,7 +173,9 @@ impl Injection {
     pub fn mix(&mut self, buffer: &mut [u8]) {
         let now = self.clock.frame();
         let generation = self.state.generation.load(Acquire);
-        if self.position == 0.0 || (self.position - now as f64).abs() > f64::from(SAMPLE_RATE) * 0.02 {
+        if self.position == 0.0
+            || (self.position - now as f64).abs() > f64::from(SAMPLE_RATE) * 0.02
+        {
             self.position = now as f64;
         }
         let live = generation != 0 && now < self.state.deadline.load(Acquire);

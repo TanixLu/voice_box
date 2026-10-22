@@ -144,7 +144,8 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
         return PluginStatus::NeedsUpdate;
     };
     for (reg_path, expected_value) in string_values {
-        if read_registry_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str()) {
+        if read_registry_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str())
+        {
             return PluginStatus::NeedsUpdate;
         }
     }
@@ -226,7 +227,8 @@ fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
 
     // 更新注册表
     for (reg_path, expected_value) in string_values {
-        if read_registry_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str()) {
+        if read_registry_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str())
+        {
             write_registry_value(&reg_path, &expected_value)?;
             info!("Updated registry key {} to {}", reg_path, expected_value);
         }
@@ -305,7 +307,10 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
             .context("读取 MFX 处理模式失败")?
             .unwrap_or_default();
         if modes.iter().all(String::is_empty) {
-            fx.set_value(MFX_PROCESSING_MODES_PROPERTY_KEY, &default_processing_modes())?;
+            fx.set_value(
+                MFX_PROCESSING_MODES_PROPERTY_KEY,
+                &default_processing_modes(),
+            )?;
         }
         delete_value_if_present(fx, DISABLE_APO_PROPERTY_KEY)?;
     }

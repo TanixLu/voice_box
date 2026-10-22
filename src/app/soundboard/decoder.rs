@@ -101,7 +101,8 @@ impl SoundDecoder {
             Resampler::new(f64::from(rate), f64::from(SAMPLE_RATE)),
             Resampler::new(f64::from(rate), f64::from(SAMPLE_RATE)),
         ];
-        let delay_frames_remaining = (resamplers[0].delay_seconds().max(0.0) * f64::from(SAMPLE_RATE)).round() as usize;
+        let delay_frames_remaining =
+            (resamplers[0].delay_seconds().max(0.0) * f64::from(SAMPLE_RATE)).round() as usize;
         Ok(Self {
             format,
             decoder,
@@ -129,7 +130,8 @@ impl SoundDecoder {
             if self.delay_frames_remaining > 0 {
                 self.delay_frames_remaining -= 1;
             } else {
-                self.output.push_back([sanitize_sample(left), sanitize_sample(right)]);
+                self.output
+                    .push_back([sanitize_sample(left), sanitize_sample(right)]);
             }
         }
     }
@@ -137,8 +139,8 @@ impl SoundDecoder {
         loop {
             if self.eof
                 && self.output_frames
-                    >= (self.input_frames as f64 * f64::from(SAMPLE_RATE) / f64::from(self.rate)).round()
-                        as usize
+                    >= (self.input_frames as f64 * f64::from(SAMPLE_RATE) / f64::from(self.rate))
+                        .round() as usize
             {
                 return Ok(None);
             }

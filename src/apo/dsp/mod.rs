@@ -33,7 +33,9 @@ impl Channel {
         let rate = f64::from(SAMPLE_RATE);
         let input_resampler = Resampler::new(sample_rate, rate);
         let output_resampler = Resampler::new(rate, sample_rate);
-        let prefill = ((FRAME_SIZE + output_resampler.input_chunk_size()) as f64 * sample_rate / rate).ceil() as usize
+        let prefill = ((FRAME_SIZE + output_resampler.input_chunk_size()) as f64 * sample_rate
+            / rate)
+            .ceil() as usize
             + input_resampler.input_chunk_size()
             + 2;
         let mut channel = Self {
@@ -57,7 +59,8 @@ impl Channel {
     fn delay_frames(&self, sample_rate: f64) -> f64 {
         self.prefill as f64
             + ALGORITHM_DELAY as f64 * sample_rate / f64::from(SAMPLE_RATE)
-            + (self.input_resampler.delay_seconds() + self.output_resampler.delay_seconds()) * sample_rate
+            + (self.input_resampler.delay_seconds() + self.output_resampler.delay_seconds())
+                * sample_rate
     }
 
     fn reset(&mut self) {
@@ -83,7 +86,8 @@ impl Channel {
                 self.denoiser.process(&self.input, &mut self.output);
                 self.pending = 0;
                 for &sample in &self.output {
-                    self.output_resampler.push(if sample.is_finite() { sample } else { 0.0 });
+                    self.output_resampler
+                        .push(if sample.is_finite() { sample } else { 0.0 });
                     while let Some(sample) = self.output_resampler.next() {
                         debug_assert!(self.queued < self.queue.len());
                         self.queue[self.write] = sample;
