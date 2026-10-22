@@ -165,7 +165,7 @@ impl VoiceBoxApp {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(64.0);
-                    ui.heading("正在卸载 VoiceBox");
+                    ui.heading(egui::RichText::new("正在卸载 VoiceBox").size(25.0));
                     ui.add_space(20.0);
                     ui.spinner();
                     ui.add_space(12.0);

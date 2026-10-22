@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 default-run = "voice_box"
 
 [lib]
+name = "voice_box_apo"
 crate-type = ["cdylib"]
 
 [profile.release]
@@ -21,6 +22,7 @@ eframe = { version = "0.37", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1.0.104"
+lz4_flex = { version = "0.13.1", default-features = false, features = ["std", "safe-encode", "safe-decode", "checked-decode"] }
 atomic-write-file = "0.3.1"
 ul_unas_rs = "0.1.1"
 rubato = { version = "5.0", default-features = false }
@@ -57,5 +59,6 @@ windows-core = "0.62.2"
 
 [build-dependencies]
 find-msvc-tools = "0.1"
+lz4_flex = { version = "0.13.1", default-features = false, features = ["std", "safe-encode", "safe-decode", "checked-decode"] }
 image = { version = "0.25", default-features = false, features = ["ico"] }
 resvg = { version = "0.48.1", default-features = false }

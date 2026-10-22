@@ -11,8 +11,17 @@ mod soundboard;
 mod uninstall;
 
 const UI_STATE_FILE: &str = "ui.ron";
-static APO_DLL: &[u8] =
-    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/target/voice_box.dll"));
+static COMPRESSED_APO_DLL: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/voice_box_apo.dll.lz4"));
+static APO_DLL: std::sync::LazyLock<Box<[u8]>> = std::sync::LazyLock::new(|| {
+    lz4_flex::block::decompress_size_prepended(COMPRESSED_APO_DLL)
+        .expect("Failed to decompress embedded APO DLL")
+        .into_boxed_slice()
+});
+
+fn apo_dll_bytes() -> &'static [u8] {
+    APO_DLL.as_ref()
+}
 
 use crate::shared::utils::wide_null;
 use tracing::error;

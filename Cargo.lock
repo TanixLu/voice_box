@@ -1181,6 +1181,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "lz4_flex"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ef0d4ed8669f8f8826eb00dc878084aa8f253506c4fd5e8f58f5bce72ddb97e"
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2664,6 +2670,7 @@ dependencies = [
  "egui",
  "find-msvc-tools",
  "image",
+ "lz4_flex",
  "restart-manager",
  "resvg",
  "rubato",

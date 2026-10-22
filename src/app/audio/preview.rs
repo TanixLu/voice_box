@@ -14,7 +14,7 @@ use windows::{
 };
 
 use super::capture::Recording;
-use crate::app::APO_DLL;
+use crate::app::apo_dll_bytes;
 use crate::shared::{paths, preview, settings::Settings, utils::wide_null};
 
 struct PreviewDll(HMODULE);
@@ -27,7 +27,7 @@ impl PreviewDll {
             fs::read(&apo_dll)
                 .context("无法读取试听组件，请先安装或更新插件")?
                 .as_slice()
-                == APO_DLL,
+                == apo_dll_bytes(),
             "已安装的试听组件与当前程序不一致，请先更新插件"
         );
         let path = wide_null(&apo_dll);

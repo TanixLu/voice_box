@@ -71,8 +71,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build release executable with embedded DLL
-        shell: cmd
-        run: call build.cmd --release
+        shell: pwsh
+        run: ./build.ps1 --release
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')

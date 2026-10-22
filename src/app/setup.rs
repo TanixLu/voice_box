@@ -15,7 +15,7 @@ use winreg::{
 };
 
 use super::{
-    APO_DLL,
+    apo_dll_bytes,
     registry::{read_registry_value, write_registry_value},
     settings_writer,
 };
@@ -135,7 +135,7 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     let Ok(apo_dll) = paths::apo_dll_path() else {
         return PluginStatus::NeedsUpdate;
     };
-    if std::fs::read(&apo_dll).ok().as_deref() != Some(APO_DLL) {
+    if std::fs::read(&apo_dll).ok().as_deref() != Some(apo_dll_bytes()) {
         return PluginStatus::NeedsUpdate;
     }
 
@@ -219,8 +219,8 @@ fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     let apo_dll = paths::apo_dll_path().context("读取 APO DLL 路径失败")?;
     let string_values = string_registration_values(&apo_dll)?;
     // 更新dll
-    if std::fs::read(&apo_dll).ok().as_deref() != Some(APO_DLL) {
-        std::fs::write(&apo_dll, APO_DLL)?;
+    if std::fs::read(&apo_dll).ok().as_deref() != Some(apo_dll_bytes()) {
+        std::fs::write(&apo_dll, apo_dll_bytes())?;
         info!("Updated APO DLL at {}", apo_dll.display());
     }
 

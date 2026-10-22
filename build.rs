@@ -44,12 +44,39 @@ fn generate_icons(out: &Path) {
         .expect("Failed to copy application manifest");
 }
 
+fn compress_apo_dll(out: &Path) {
+    let input = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
+        .join("target")
+        .join(env::var_os("PROFILE").unwrap())
+        .join("voice_box_apo.dll");
+    let output = out.join("voice_box_apo.dll.lz4");
+    println!("cargo:rerun-if-changed={}", input.display());
+
+    let dll = match fs::read(&input) {
+        Ok(dll) => dll,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // The first build.ps1 stage builds the DLL before this input exists.
+            // Remove stale output so an EXE build cannot embed an older DLL.
+            match fs::remove_file(output) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => panic!("Failed to remove stale compressed APO DLL: {error}"),
+            }
+            return;
+        }
+        Err(error) => panic!("Failed to read APO DLL at {}: {error}", input.display()),
+    };
+    let compressed = lz4_flex::block::compress_prepend_size(&dll);
+    fs::write(output, compressed).expect("Failed to write compressed APO DLL");
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=assets/icon.svg");
     println!("cargo:rerun-if-changed=assets/voice_box.manifest");
 
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     generate_icons(&out);
+    compress_apo_dll(&out);
 
     let target = env::var("TARGET").unwrap();
     if !target.contains("windows") {

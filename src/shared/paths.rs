@@ -20,7 +20,7 @@ pub fn system_dir() -> io::Result<PathBuf> {
 }
 
 pub fn apo_dll_path() -> io::Result<PathBuf> {
-    Ok(system_dir()?.join("voice_box.dll"))
+    Ok(system_dir()?.join("voice_box_apo.dll"))
 }
 
 fn directory_from_api(get_directory: impl Fn(&mut [u16]) -> u32) -> io::Result<PathBuf> {
