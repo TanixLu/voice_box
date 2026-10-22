@@ -131,7 +131,7 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     if !settings_writer::has_valid_settings() {
         return PluginStatus::NeedsUpdate;
     }
-    // 检测dll是否需要更新
+    // Check whether the DLL needs to be updated.
     let Ok(apo_dll) = paths::apo_dll_path() else {
         return PluginStatus::NeedsUpdate;
     };
@@ -139,7 +139,7 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
         return PluginStatus::NeedsUpdate;
     }
 
-    // 检测注册表是否需要更新
+    // Check whether the registry needs to be updated.
     let Ok(string_values) = string_registration_values(&apo_dll) else {
         return PluginStatus::NeedsUpdate;
     };
@@ -154,7 +154,7 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
             return PluginStatus::NeedsUpdate;
         }
     }
-    // 检测设备FxProperties是否需要更新
+    // Check whether the device's FxProperties need to be updated.
     if !(effects
         .first()
         .is_some_and(|effect| effect.eq_ignore_ascii_case(&plugin_guid))
@@ -219,13 +219,13 @@ pub(super) fn with_audio_service_stopped(
 fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     let apo_dll = paths::apo_dll_path().context("读取 APO DLL 路径失败")?;
     let string_values = string_registration_values(&apo_dll)?;
-    // 更新dll
+    // Update the DLL.
     if std::fs::read(&apo_dll).ok().as_deref() != Some(apo_dll_bytes()) {
         std::fs::write(&apo_dll, apo_dll_bytes())?;
         info!("Updated APO DLL at {}", apo_dll.display());
     }
 
-    // 更新注册表
+    // Update the registry.
     for (reg_path, expected_value) in string_values {
         if read_registry_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str())
         {
