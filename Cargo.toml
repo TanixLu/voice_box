@@ -18,7 +18,7 @@ eframe = { version = "0.37", default-features = false, features = [
     "persistence",
 ] }
 egui = { version = "0.37", default-features = false }
-lz4_flex = { version = "0.13.1", default-features = false, features = [
+lz4_flex = { version = "0.14.0", default-features = false, features = [
     "std",
     "safe-encode",
     "safe-decode",
@@ -68,7 +68,7 @@ winreg = { version = "0.56.0", features = ["transactions"] }
 [build-dependencies]
 find-msvc-tools = "0.1"
 image = { version = "0.25", default-features = false, features = ["ico"] }
-lz4_flex = { version = "0.13.1", default-features = false, features = [
+lz4_flex = { version = "0.14.0", default-features = false, features = [
     "std",
     "safe-encode",
     "safe-decode",
