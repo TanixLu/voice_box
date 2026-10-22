@@ -319,8 +319,9 @@ impl eframe::App for VoiceBoxApp {
             let guid = self.microphones.installed_guid();
             match action {
                 PlaybackAction::Stop => self.soundboard.model.stop(),
-                PlaybackAction::Random => self.soundboard.play_random_sound(ctx, guid),
-                PlaybackAction::Play(index) => self.soundboard.play_sound(ctx, index, guid),
+                PlaybackAction::Random(hotkey) => {
+                    self.soundboard.play_random_sound(ctx, hotkey, guid)
+                }
             }
         }
         if self.uninstall_requested {

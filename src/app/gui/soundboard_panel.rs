@@ -115,15 +115,15 @@ impl SoundboardPanel {
         self.model.play(index, guid, super::wake_ui(ctx.clone()));
     }
 
-    pub(super) fn play_random_sound(&mut self, ctx: &egui::Context, guid: Option<&str>) {
-        use std::hash::{BuildHasher, RandomState};
-        let count = self.model.library().sounds.len();
-        if count == 0 {
-            return;
+    pub(super) fn play_random_sound(
+        &mut self,
+        ctx: &egui::Context,
+        hotkey: Option<crate::app::hotkeys::Hotkey>,
+        guid: Option<&str>,
+    ) {
+        if let Some(index) = self.model.random_sound_index(hotkey) {
+            self.play_sound(ctx, index, guid);
         }
-        let index =
-            (RandomState::new().hash_one(std::time::Instant::now()) % count as u64) as usize;
-        self.play_sound(ctx, index, guid);
     }
 
     pub(super) fn ui(

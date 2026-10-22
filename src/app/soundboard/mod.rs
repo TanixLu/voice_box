@@ -12,6 +12,7 @@ pub(super) mod library;
 mod metadata;
 mod playback;
 pub(super) mod recording;
+mod shuffle;
 
 use config::{BindingTarget, Config, Options};
 use library::{ImportedSounds, Library, import_files, is_valid_file_name};
@@ -39,6 +40,7 @@ pub(super) struct Soundboard {
     queued_playback: Option<(usize, Option<String>)>,
     import_job: Option<mpsc::Receiver<anyhow::Result<ImportedSounds>>>,
     duration_reader: DurationReader,
+    shuffle: shuffle::Shuffle,
 }
 impl Soundboard {
     pub fn new(config: Config) -> Self {
@@ -97,6 +99,9 @@ impl Soundboard {
     }
     pub fn options(&self) -> &Options {
         &self.options
+    }
+    pub fn random_sound_index(&mut self, hotkey: Option<Hotkey>) -> Option<usize> {
+        self.shuffle.choose(&self.library.sounds, hotkey)
     }
     pub fn bind_hotkey(
         &mut self,
@@ -282,6 +287,7 @@ impl Soundboard {
             self.set_error("麦克风和扬声器音量均为 0，未开始播放".into());
             return;
         }
+        self.shuffle.last = Some(sound.path.clone());
         wake();
         if self.playback_job.is_some() {
             self.stop();

@@ -15,7 +15,9 @@ use windows::Win32::{
 
 const SIMULATED_INPUT_TAG: usize = 0x5642_4b59;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(default)]
 pub(super) struct Hotkey {
     pub virtual_key_code: u16,

@@ -6,7 +6,6 @@ use crate::app::{
         config::{BindingTarget, Options},
     },
 };
-use std::hash::{BuildHasher, RandomState};
 
 struct KeyCapture {
     target: BindingTarget,
@@ -15,8 +14,7 @@ struct KeyCapture {
 }
 pub(super) enum PlaybackAction {
     Stop,
-    Random,
-    Play(usize),
+    Random(Option<Hotkey>),
 }
 
 pub(super) struct HotkeyManager {
@@ -107,23 +105,15 @@ impl HotkeyManager {
         } else {
             triggers
                 .into_iter()
-                .map(|index| {
+                .filter_map(|index| {
                     if index == 1 {
-                        PlaybackAction::Random
+                        Some(PlaybackAction::Random(None))
                     } else {
-                        let candidates: Vec<_> = soundboard
-                            .library()
-                            .sounds
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(sound_index, sound)| {
-                                (sound.hotkey == self.bindings[index]).then_some(sound_index)
-                            })
-                            .collect();
-                        let choice = (RandomState::new().hash_one(std::time::Instant::now())
-                            % candidates.len() as u64)
-                            as usize;
-                        PlaybackAction::Play(candidates[choice])
+                        self.bindings
+                            .get(index)
+                            .copied()
+                            .flatten()
+                            .map(|key| PlaybackAction::Random(Some(key)))
                     }
                 })
                 .collect()
