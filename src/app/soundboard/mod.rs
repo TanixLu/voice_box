@@ -19,7 +19,7 @@ mod shuffle;
 use config::{BindingTarget, Config, Options};
 use library::{ImportedSounds, Library, import_files, is_valid_file_name};
 use metadata::DurationReader;
-use playback::{Command, Event};
+use playback::{Command, Event, StopReason};
 
 struct PlaybackJob {
     sender: mpsc::Sender<Command>,
@@ -315,7 +315,7 @@ impl Soundboard {
         self.shuffle.last = Some(sound.path.clone());
         wake();
         if self.playback_job.is_some() {
-            self.stop();
+            self.stop_with_reason(StopReason::Replaced);
             self.queued_playback = Some((index, guid.map(str::to_owned)));
             return;
         }
@@ -343,13 +343,27 @@ impl Soundboard {
         match std::thread::Builder::new()
             .name("VoiceBoxSoundboard".into())
             .spawn(move || {
+                let started = std::time::Instant::now();
                 let result = playback::run(path, transport, options, &rx, &events);
-                if let Err(e) = &result {
-                    tracing::error!(sound_index = index, "Soundboard failed: {e:#}");
-                } else {
-                    tracing::info!(sound_index = index, "Soundboard playback finished");
+                match &result {
+                    Err(e) => {
+                        tracing::error!(
+                            sound_index = index,
+                            elapsed_secs = started.elapsed().as_secs_f64(),
+                            "Soundboard failed: {e:#}"
+                        );
+                    }
+                    Ok(outcome) => {
+                        tracing::info!(
+                            sound_index = index,
+                            reason = outcome.reason,
+                            played_secs = outcome.played_secs,
+                            elapsed_secs = started.elapsed().as_secs_f64(),
+                            "Soundboard playback finished"
+                        );
+                    }
                 }
-                let _ = events.send(Event::Finished(result));
+                let _ = events.send(Event::Finished(result.map(|_| ())));
                 wake();
             }) {
             Ok(thread) => {
@@ -373,9 +387,12 @@ impl Soundboard {
         }
     }
     pub fn stop(&mut self) {
+        self.stop_with_reason(StopReason::Requested);
+    }
+    fn stop_with_reason(&mut self, reason: StopReason) {
         self.queued_playback = None;
         if let Some(job) = &self.playback_job {
-            let _ = job.sender.send(Command::Stop);
+            let _ = job.sender.send(Command::Stop(reason));
         }
     }
     pub fn update_playback_options(&self) {

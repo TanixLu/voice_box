@@ -13,8 +13,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub(super) enum StopReason {
+    Requested,
+    Replaced,
+}
+
 pub(super) enum Command {
-    Stop,
+    Stop(StopReason),
     Configure(Options),
 }
 pub(super) enum Event {
@@ -24,13 +29,19 @@ pub(super) enum Event {
     Finished(anyhow::Result<()>),
 }
 
+pub(super) struct PlaybackOutcome {
+    pub reason: &'static str,
+    /// Audio frames whose scheduled playback time has elapsed.
+    pub played_secs: f64,
+}
+
 pub(super) fn run(
     path: PathBuf,
     transport: PathBuf,
     mut options: Options,
     commands: &mpsc::Receiver<Command>,
     events: &mpsc::Sender<Event>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<PlaybackOutcome> {
     let mut decoder = SoundDecoder::open(&path)?;
     let duration = decoder.duration;
     let clock = Clock::new()?;
@@ -55,7 +66,7 @@ pub(super) fn run(
         "Soundboard playback started"
     );
     let _ = events.send(Event::Started(duration));
-    loop {
+    let reason = 'playback: loop {
         let now = clock.frame();
         while base < now && !pending.is_empty() {
             pending.pop_front();
@@ -67,7 +78,13 @@ pub(super) fn run(
         }
         loop {
             match commands.try_recv() {
-                Ok(Command::Stop) | Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+                Ok(Command::Stop(reason)) => {
+                    break 'playback match reason {
+                        StopReason::Requested => "stopped",
+                        StopReason::Replaced => "replaced",
+                    };
+                }
+                Err(mpsc::TryRecvError::Disconnected) => break 'playback "controller_disconnected",
                 Ok(Command::Configure(next)) => {
                     options = next;
                     monitor_failed = false;
@@ -76,7 +93,7 @@ pub(super) fn run(
             }
         }
         if options.microphone_output_volume == 0.0 && options.speaker_output_volume == 0.0 {
-            return Ok(());
+            break "outputs_muted";
         }
         if options.auto_hold_hotkey != held_binding {
             drop(held);
@@ -146,7 +163,7 @@ pub(super) fn run(
             monitor = None;
         }
         if eof && pending.is_empty() {
-            break;
+            break "completed";
         }
         if progress.elapsed() >= Duration::from_millis(100) {
             let mut elapsed = played as f64 / f64::from(SAMPLE_RATE);
@@ -159,8 +176,14 @@ pub(super) fn run(
             progress = Instant::now();
         }
         std::thread::sleep(Duration::from_millis(5));
+    };
+    let played_secs = played as f64 / f64::from(SAMPLE_RATE);
+    let _ = events.send(Event::Progress(played_secs));
+    if reason == "completed" {
+        std::thread::sleep(Duration::from_millis(30));
     }
-    let _ = events.send(Event::Progress(played as f64 / f64::from(SAMPLE_RATE)));
-    std::thread::sleep(Duration::from_millis(30));
-    Ok(())
+    Ok(PlaybackOutcome {
+        reason,
+        played_secs,
+    })
 }
