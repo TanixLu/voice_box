@@ -9,30 +9,37 @@ default-run = "voice_box"
 name = "voice_box_apo"
 crate-type = ["cdylib"]
 
-[profile.release]
-panic = "abort"
-
 [dependencies]
-egui = { version = "0.37", default-features = false }
+anyhow = "1.0.104"
+atomic-write-file = "0.3.1"
 eframe = { version = "0.37", default-features = false, features = [
     "glow",
     "links",
     "persistence",
 ] }
+egui = { version = "0.37", default-features = false }
+lz4_flex = { version = "0.13.1", default-features = false, features = [
+    "std",
+    "safe-encode",
+    "safe-decode",
+    "checked-decode",
+] }
+restart-manager = "0.1.0"
+rubato = { version = "5.0", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-anyhow = "1.0.104"
-lz4_flex = { version = "0.13.1", default-features = false, features = ["std", "safe-encode", "safe-decode", "checked-decode"] }
-atomic-write-file = "0.3.1"
-ul_unas_rs = "0.1.1"
-rubato = { version = "5.0", default-features = false }
-restart-manager = "0.1.0"
 single-instance = "0.3.3"
+symphonia = { version = "0.6.1", default-features = false, features = ["mp3",
+    "wav",
+    "pcm",
+    "flac",
+    "ogg",
+    "vorbis",
+] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
+ul_unas_rs = "0.1.1"
 wasapi = "0.26.0"
-symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "wav", "pcm", "flac", "ogg", "vorbis"] }
-winreg = { version = "0.56.0", features = ["transactions"] }
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Security",
@@ -56,9 +63,21 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 windows-core = "0.62.2"
+winreg = { version = "0.56.0", features = ["transactions"] }
 
 [build-dependencies]
 find-msvc-tools = "0.1"
-lz4_flex = { version = "0.13.1", default-features = false, features = ["std", "safe-encode", "safe-decode", "checked-decode"] }
 image = { version = "0.25", default-features = false, features = ["ico"] }
+lz4_flex = { version = "0.13.1", default-features = false, features = [
+    "std",
+    "safe-encode",
+    "safe-decode",
+    "checked-decode",
+] }
 resvg = { version = "0.48.1", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+panic = "abort"

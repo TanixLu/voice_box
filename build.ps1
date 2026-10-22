@@ -121,8 +121,11 @@ function Update-Licenses {
 }
 
 $exitCode = 0
+$originalRustFlags = $env:RUSTFLAGS
 Push-Location -LiteralPath $PSScriptRoot
 try {
+    # Use deterministic PE timestamps while preserving caller-supplied flags.
+    $env:RUSTFLAGS = "$env:RUSTFLAGS -C link-arg=/Brepro".Trim()
     $cargoPath = (Get-Command cargo -CommandType Application | Select-Object -First 1).Source
     $cargoArguments = @('--locked')
     $buildProfile = 'debug'
@@ -159,6 +162,7 @@ try {
     [Console]::Error.WriteLine($_.Exception.Message)
     $exitCode = 1
 } finally {
+    $env:RUSTFLAGS = $originalRustFlags
     Pop-Location
 }
 exit $exitCode
