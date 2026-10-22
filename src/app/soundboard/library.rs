@@ -28,6 +28,29 @@ pub(in crate::app) struct Library {
 }
 
 impl Library {
+    pub(super) fn move_sound(
+        &mut self,
+        from: usize,
+        to: usize,
+        save: impl FnOnce(&Self) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        ensure!(
+            from < self.sounds.len() && to < self.sounds.len(),
+            Text::SoundNotFound
+        );
+        if from == to {
+            return Ok(());
+        }
+        let sound = self.sounds.remove(from);
+        self.sounds.insert(to, sound);
+        if let Err(error) = save(self) {
+            let sound = self.sounds.remove(to);
+            self.sounds.insert(from, sound);
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub(super) fn set_hotkey(
         &mut self,
         index: usize,

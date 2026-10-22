@@ -222,6 +222,15 @@ impl SoundboardPanel {
             let renaming = self.rename_editor.is_some();
             let capture_target = hotkeys.target();
             let capturing = capture_target.is_some();
+            let can_reorder = ui.is_enabled()
+                && filter.is_empty()
+                && !renaming
+                && !capturing
+                && !self.model.importing();
+            if !can_reorder {
+                egui::DragAndDrop::clear_payload(ui.ctx());
+            }
+            let mut reorder = None;
             let height = (ui.available_height() - 50.0).max(50.0);
             ui.scope(|ui| {
                 // Keep the scroll bar outside the rows and leave a clear gap
@@ -233,12 +242,43 @@ impl SoundboardPanel {
                     .max_height(height)
                     .auto_shrink([false, false])
                     .show_rows(ui, 30.0, indices.len(), |ui, rows| {
+                        let row_height = 30.0 + ui.spacing().item_spacing.y;
+                        let top = ui.max_rect().top() - rows.start as f32 * row_height;
                         for row in rows {
                             let index = indices[row];
                             let active = self.model.active_sound_index == Some(index);
                             let sound = &self.model.library().sounds[index];
-                            ui.push_id(index, |ui| {
+                            ui.push_id(&sound.path, |ui| {
                                 ui.horizontal(|ui| {
+                                    let handle = icon_button(ui, can_reorder, ButtonIcon::Reorder)
+                                        .on_hover_cursor(egui::CursorIcon::Grab)
+                                        .on_disabled_hover_text(if filter.is_empty() {
+                                            Text::ReorderSoundHint.text()
+                                        } else {
+                                            Text::ClearSearchToReorder.text()
+                                        });
+                                    if can_reorder {
+                                        if handle.drag_started_by(egui::PointerButton::Primary) {
+                                            egui::DragAndDrop::set_payload(ui.ctx(), index);
+                                        }
+                                        handle.context_menu(|ui| {
+                                            for (label, to) in [
+                                                (Text::MoveSoundToTop, 0),
+                                                (Text::MoveSoundToBottom, indices.len() - 1),
+                                            ] {
+                                                if ui
+                                                    .add_enabled(
+                                                        index != to,
+                                                        egui::Button::new(label.text()),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    reorder = Some((index, to));
+                                                    ui.close();
+                                                }
+                                            }
+                                        });
+                                    }
                                     if play_button(ui, !capturing && !renaming, active)
                                         .on_hover_text(if active {
                                             Text::StopPlayback.text()
@@ -359,7 +399,8 @@ impl SoundboardPanel {
                                                 let response = ui
                                                     .add_sized(
                                                         [ui.available_width().max(16.0), 30.0],
-                                                        egui::Button::new(name)
+                                                        egui::Button::new(())
+                                                            .left_text(name)
                                                             .frame_when_inactive(false)
                                                             .truncate(),
                                                     )
@@ -380,6 +421,52 @@ impl SoundboardPanel {
                                     );
                                 });
                             });
+                        }
+                        if can_reorder
+                            && let Some(from) = egui::DragAndDrop::payload::<usize>(ui.ctx())
+                            && let Some(pointer) = ui.input(|input| input.pointer.interact_pos())
+                            && ui.clip_rect().contains(pointer)
+                        {
+                            let slot = ((pointer.y - top) / row_height)
+                                .round()
+                                .clamp(0.0, indices.len() as f32)
+                                as usize;
+                            let to = slot.saturating_sub(usize::from(*from < slot));
+                            if *from != to {
+                                let y = (top + slot as f32 * row_height
+                                    - ui.spacing().item_spacing.y * 0.5)
+                                    .clamp(
+                                        ui.clip_rect().top() + 1.0,
+                                        ui.clip_rect().bottom() - 1.0,
+                                    );
+                                ui.painter().hline(
+                                    ui.max_rect().x_range(),
+                                    y,
+                                    egui::Stroke::new(2.0, ui.visuals().selection.bg_fill),
+                                );
+                            }
+                            if ui.input(|input| input.pointer.primary_released()) {
+                                reorder = Some((*from, to));
+                                egui::DragAndDrop::clear_payload(ui.ctx());
+                            } else {
+                                let viewport = ui.clip_rect();
+                                let edge = 30.0_f32.min(viewport.height() * 0.5);
+                                let direction = if pointer.y < viewport.top() + edge {
+                                    1.0
+                                } else if pointer.y > viewport.bottom() - edge {
+                                    -1.0
+                                } else {
+                                    0.0
+                                };
+                                if direction != 0.0 {
+                                    let delta = ui.input(|input| input.stable_dt.min(0.1)) * 600.0;
+                                    ui.scroll_with_delta_animation(
+                                        egui::vec2(0.0, direction * delta),
+                                        egui::style::ScrollAnimation::none(),
+                                    );
+                                    ui.ctx().request_repaint();
+                                }
+                            }
                         }
                     });
             });
@@ -442,6 +529,14 @@ impl SoundboardPanel {
                 });
                 ui.ctx().request_repaint();
             }
+            if let Some((from, to)) = reorder {
+                self.pending_delete_index = None;
+                if let Err(error) = self.model.move_sound(from, to) {
+                    tracing::error!("Failed to reorder sounds: {error:#}");
+                    self.model.set_error(Message::error(error));
+                }
+                ui.ctx().request_repaint();
+            }
             ui.horizontal(|ui| {
                 let key = self
                     .model
@@ -471,20 +566,23 @@ impl SoundboardPanel {
                     )
                     .on_hover_text(error.text());
                 } else if let Some(index) = self.model.active_sound_index {
-                    let name = self
+                    let sound = self.model.library().sounds.get(index);
+                    let name = sound.map(|sound| sound.file_name.as_str()).unwrap_or("");
+                    let duration = self
                         .model
-                        .library()
-                        .sounds
-                        .get(index)
-                        .map(|sound| sound.file_name.as_str())
-                        .unwrap_or("");
-                    ui.add(
-                        egui::Label::new(format!(
-                            "{name} · {}",
+                        .duration
+                        .or(sound.and_then(|sound| sound.duration))
+                        .filter(|duration| duration.is_finite() && *duration > 0.0)
+                        .map(format_duration)
+                        .unwrap_or_else(|| "…".into());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(format!(
+                            "{} / {duration}",
                             format_duration(self.model.elapsed)
-                        ))
-                        .truncate(),
-                    );
+                        ));
+                        ui.add(egui::Label::new(name).truncate())
+                            .on_hover_text(name);
+                    });
                 }
             });
         });

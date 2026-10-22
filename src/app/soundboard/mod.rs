@@ -107,6 +107,23 @@ impl Soundboard {
     pub fn random_sound_index(&mut self, hotkey: Option<Hotkey>) -> Option<usize> {
         self.shuffle.choose(&self.library.sounds, hotkey)
     }
+    pub fn move_sound(&mut self, from: usize, to: usize) -> anyhow::Result<()> {
+        let options = &self.options;
+        self.library.move_sound(from, to, |library| {
+            Config {
+                options: options.clone(),
+                library: library.clone(),
+            }
+            .save()
+        })?;
+        if let Some(index) = &mut self.active_sound_index {
+            *index = moved_index(*index, from, to);
+        }
+        if let Some((index, _)) = &mut self.queued_playback {
+            *index = moved_index(*index, from, to);
+        }
+        Ok(())
+    }
     pub fn bind_hotkey(
         &mut self,
         target: BindingTarget,
@@ -449,5 +466,17 @@ impl Drop for Soundboard {
         if let Some(job) = self.playback_job.take() {
             let _ = job.thread.join();
         }
+    }
+}
+
+fn moved_index(index: usize, from: usize, to: usize) -> usize {
+    if index == from {
+        to
+    } else if from < index && index <= to {
+        index - 1
+    } else if to <= index && index < from {
+        index + 1
+    } else {
+        index
     }
 }

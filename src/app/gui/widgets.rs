@@ -28,12 +28,18 @@ pub(super) enum ButtonIcon {
     ClearHotkey,
     Delete,
     ConfirmDelete,
+    Reorder,
 }
 
 pub(super) fn icon_button(ui: &mut egui::Ui, enabled: bool, icon: ButtonIcon) -> egui::Response {
     let mut button = egui::Button::new("").min_size(egui::Vec2::splat(ICON_BUTTON_SIZE));
     if matches!(icon, ButtonIcon::Close) {
         button = button.frame_when_inactive(false);
+    }
+    if matches!(icon, ButtonIcon::Reorder) {
+        button = button
+            .frame_when_inactive(false)
+            .sense(egui::Sense::click_and_drag());
     }
     let confirming = matches!(icon, ButtonIcon::ConfirmDelete);
     if confirming {
@@ -53,6 +59,14 @@ pub(super) fn icon_button(ui: &mut egui::Ui, enabled: bool, icon: ButtonIcon) ->
     let point = |x, y| center + egui::vec2(x, y);
     let painter = ui.painter();
     let (label, tooltip) = match icon {
+        ButtonIcon::Reorder => {
+            for x in [-3.0, 3.0] {
+                for y in [-6.0, 0.0, 6.0] {
+                    painter.circle_filled(point(x, y), 1.5, color);
+                }
+            }
+            (Text::ReorderSound.text(), Text::ReorderSoundHint.text())
+        }
         ButtonIcon::Close | ButtonIcon::ClearHotkey => {
             painter.line_segment([point(-4.0, -4.0), point(4.0, 4.0)], stroke);
             painter.line_segment([point(-4.0, 4.0), point(4.0, -4.0)], stroke);

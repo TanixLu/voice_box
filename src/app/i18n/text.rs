@@ -173,7 +173,7 @@ catalog! {
     RestoreDefaults => ("Restore defaults", "恢复默认");
     UnsavedVoiceSettings => ("There are unsaved changes. Preview uses the current settings; save to apply them to microphone plugins.", "有未保存的修改；试听使用当前设置，保存后应用于麦克风插件。");
     VoiceSettingsApplied => ("Settings are applied to all microphones with the VoiceBox plugin installed.", "设置已应用到所有安装 VoiceBox 插件的麦克风。");
-    RecordingPreview => ("Recording preview", "录音试听");
+    RecordingPreview => ("Voice preview", "语音试听");
     FinishRecording => ("Finish recording", "结束录音");
     StartRecording => ("Start recording", "开始录音");
     PlayOriginal => ("Play original", "播放原音频");
@@ -193,6 +193,11 @@ catalog! {
     RecordImport => ("Record audio", "录制导入");
     Import => ("Import", "导入");
     SearchSounds => ("Search sounds", "搜索音效");
+    ReorderSound => ("Reorder sound", "调整音效顺序");
+    ReorderSoundHint => ("Drag to reorder. Right-click to move to the top or bottom", "拖拽调整顺序，右键可移至顶部或底部");
+    MoveSoundToTop => ("Move to top", "移至顶部");
+    MoveSoundToBottom => ("Move to bottom", "移至底部");
+    ClearSearchToReorder => ("Clear the search to reorder sounds", "清空搜索后可调整顺序");
     Failed => ("Failed", "失败");
     AudioLength => ("Audio duration", "音频长度");
     ImportSoundsHint => ("Click Import to add sounds. You can select multiple files at once", "点击「导入」添加音效，可一次选择多个文件");
