@@ -1,4 +1,6 @@
 use super::widgets::{ButtonIcon, hint, icon_button, warning};
+use crate::app::i18n::Text;
+use crate::app::i18n::{Details, Message};
 use crate::app::{
     audio::loopback::MAX_RECORD_SECONDS,
     soundboard::{
@@ -28,14 +30,16 @@ impl RecordingImport {
                 Ok(()) => return true,
                 Err(error) => {
                     tracing::error!("Failed to commit recorded sound to library: {error:#}");
-                    self.recorder.error = format!("导入失败：{error:#}");
+                    self.recorder.error = Message::ImportRecordingFailed {
+                        error: Details::new(error),
+                    };
                 }
             }
         }
         if !had_clip && let Some(clip) = &self.recorder.clip {
             self.selection = Some(Selection::full(&clip.audio));
             if self.name.is_empty() {
-                self.name = "录音".into();
+                self.name = Text::RecordingName.text().into();
             }
         }
         if self.recorder.busy() {
@@ -56,7 +60,11 @@ impl RecordingImport {
                 ui.set_width((available.x - 64.0).clamp(240.0, 620.0));
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("录制导入").size(17.0).strong());
+                    ui.label(
+                        egui::RichText::new(Text::RecordImport.text())
+                            .size(17.0)
+                            .strong(),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         close = icon_button(ui, !saving, ButtonIcon::Close).clicked();
                     });
@@ -74,7 +82,7 @@ impl RecordingImport {
                         self.editor_ui(ui);
                         if !self.recorder.error.is_empty() {
                             ui.add_space(8.0);
-                            warning(ui, &self.recorder.error);
+                            warning(ui, &self.recorder.error.text());
                         }
                     });
             });
@@ -86,16 +94,16 @@ impl RecordingImport {
         let saving = self.saving();
         ui.horizontal_wrapped(|ui| {
             let label = if recording {
-                "停止录制"
+                Text::StopCapture.text()
             } else {
-                "开始录制"
+                Text::StartCapture.text()
             };
             if ui
                 .add_enabled(
                     !saving && (!recording || !self.recorder.stopping()),
                     egui::Button::new(label),
                 )
-                .on_hover_text("录制默认扬声器；再次开始录制将替换当前录音")
+                .on_hover_text(Text::RecordSpeakerHint.text())
                 .clicked()
             {
                 if recording {
@@ -109,16 +117,24 @@ impl RecordingImport {
             if recording {
                 ui.spinner();
                 if self.recorder.stopping() {
-                    ui.label("正在整理录音…");
+                    ui.label(Text::FinishingRecording.text());
                 } else if let Some(elapsed) = self.recorder.elapsed() {
-                    ui.label(format!("正在录制 · {}", time(elapsed)));
+                    ui.label(
+                        Message::CaptureProgress {
+                            time: time(elapsed),
+                        }
+                        .text(),
+                    );
                 } else {
-                    ui.label("正在打开默认扬声器…");
+                    ui.label(Text::OpeningDefaultSpeaker.text());
                 }
             } else {
                 hint(
                     ui,
-                    &format!("默认扬声器 · 最长 {} 分钟", MAX_RECORD_SECONDS / 60),
+                    &Message::RecordingLimit {
+                        minutes: MAX_RECORD_SECONDS / 60,
+                    }
+                    .text(),
                 );
             }
         });
@@ -150,14 +166,14 @@ impl RecordingImport {
             ui.horizontal_wrapped(|ui| {
                 let mut start = selection.start as f64 / f64::from(rate);
                 let mut end = selection.end as f64 / f64::from(rate);
-                ui.label("开始");
+                ui.label(Text::Start.text());
                 if ui
                     .add(
                         egui::DragValue::new(&mut start)
                             .range(0.0..=selection.end.saturating_sub(1) as f64 / f64::from(rate))
                             .speed(0.01)
                             .fixed_decimals(3)
-                            .suffix(" 秒"),
+                            .suffix(Text::SecondsSuffix.text()),
                     )
                     .changed()
                 {
@@ -168,7 +184,7 @@ impl RecordingImport {
                     );
                     changed = Some(Edge::Left);
                 }
-                ui.label("结束");
+                ui.label(Text::End.text());
                 if ui
                     .add(
                         egui::DragValue::new(&mut end)
@@ -181,7 +197,7 @@ impl RecordingImport {
                             )
                             .speed(0.01)
                             .fixed_decimals(3)
-                            .suffix(" 秒"),
+                            .suffix(Text::SecondsSuffix.text()),
                     )
                     .changed()
                 {
@@ -189,9 +205,9 @@ impl RecordingImport {
                     changed = Some(Edge::Right);
                 }
                 let label = if previewing {
-                    "停止试听"
+                    Text::StopPreview.text()
                 } else {
-                    "试听选中片段"
+                    Text::PreviewSelection.text()
                 };
                 toggle_preview = ui.button(label).clicked();
             });
@@ -208,12 +224,12 @@ impl RecordingImport {
                 .queue_preview(selection.preview(edge, rate), false);
         }
         ui.add_space(12.0);
-        ui.label("音效名称");
+        ui.label(Text::SoundName.text());
         ui.add_enabled(
             !saving,
             egui::TextEdit::singleline(&mut self.name)
                 .desired_width(f32::INFINITY)
-                .hint_text("输入名称"),
+                .hint_text(Text::EnterName.text()),
         );
         ui.add_space(12.0);
         ui.horizontal_wrapped(|ui| {
@@ -221,7 +237,7 @@ impl RecordingImport {
             if ui
                 .add_enabled(
                     editable && selection.start < selection.end && valid_name,
-                    egui::Button::new("导入音效库"),
+                    egui::Button::new(Text::ImportIntoLibrary.text()),
                 )
                 .clicked()
             {
@@ -229,11 +245,11 @@ impl RecordingImport {
             }
             if saving {
                 ui.spinner();
-                ui.label("正在保存…");
+                ui.label(Text::Saving.text());
             }
         });
         if !self.name.trim().is_empty() && !is_valid_file_name(self.name.trim()) {
-            warning(ui, "名称不能包含路径、控制字符或 Windows 文件名保留字符。");
+            warning(ui, Text::InvalidFileNameHint.text());
         }
     }
 }
@@ -329,8 +345,12 @@ fn timeline(
         );
     }
     for (frame, label, align) in [
-        (selection.start, "开始", egui::Align2::LEFT_BOTTOM),
-        (selection.end, "结束", egui::Align2::RIGHT_BOTTOM),
+        (
+            selection.start,
+            Text::Start.text(),
+            egui::Align2::LEFT_BOTTOM,
+        ),
+        (selection.end, Text::End.text(), egui::Align2::RIGHT_BOTTOM),
     ] {
         let px = x(frame);
         painter.line_segment(

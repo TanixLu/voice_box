@@ -1,10 +1,11 @@
 use super::library::Library;
+use crate::app::i18n::Message;
+use crate::app::i18n::Text;
 use crate::{
-    app::{hotkeys::Hotkey, settings_writer},
-    shared::{paths, pcm_transport::MAX_VOLUME},
+    app::{app_settings, hotkeys::Hotkey},
+    shared::pcm_transport::MAX_VOLUME,
 };
-use anyhow::{Context, ensure};
-use std::fs;
+use anyhow::ensure;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum BindingTarget {
@@ -53,7 +54,7 @@ impl Options {
             } else {
                 key.is_valid()
             },
-            "无效快捷键"
+            Text::InvalidHotkey
         );
         let duplicate = (target != BindingTarget::Stop && self.stop_hotkey == Some(key))
             || (target != BindingTarget::Random && self.random_playback_hotkey == Some(key))
@@ -61,8 +62,7 @@ impl Options {
                 && library.sounds.iter().any(|sound| sound.hotkey == Some(key)));
         ensure!(
             !duplicate || target == BindingTarget::Hold,
-            "{} 已绑定其他操作，请使用另一个快捷键",
-            key.label()
+            Message::HotkeyConflict { key }
         );
         let overlaps_hold = match target {
             BindingTarget::Sound(_) | BindingTarget::Stop | BindingTarget::Random => self
@@ -81,10 +81,7 @@ impl Options {
                     })
             }
         };
-        ensure!(
-            !overlaps_hold,
-            "自动按键不能与播放或停止快捷键使用同一个主键"
-        );
+        ensure!(!overlaps_hold, Text::HoldKeyConflict);
         Ok(())
     }
 
@@ -93,7 +90,7 @@ impl Options {
             [self.speaker_output_volume, self.microphone_output_volume]
                 .iter()
                 .all(|volume| { volume.is_finite() && (0.0..=MAX_VOLUME).contains(volume) }),
-            "播放音量无效"
+            Text::InvalidPlaybackVolume
         );
         for (target, key) in [
             (BindingTarget::Hold, self.auto_hold_hotkey),
@@ -132,7 +129,7 @@ impl Options {
     }
 }
 
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub(in crate::app) struct Config {
     pub options: Options,
@@ -141,20 +138,6 @@ pub(in crate::app) struct Config {
 
 impl Config {
     pub(super) fn save(&self) -> anyhow::Result<()> {
-        let mut bytes = serde_json::to_vec_pretty(self)?;
-        bytes.push(b'\n');
-        settings_writer::save_bytes(&paths::data_dir()?, paths::SOUNDBOARD_SETTINGS_FILE, &bytes)
-            .context("保存音效配置失败")
-    }
-
-    pub fn try_load() -> anyhow::Result<Self> {
-        let path = paths::data_dir()?.join(paths::SOUNDBOARD_SETTINGS_FILE);
-        match fs::File::open(path) {
-            Ok(file) => {
-                serde_json::from_reader(std::io::BufReader::new(file)).context("音效配置格式无效")
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(error) => Err(error).context("读取音效配置失败"),
-        }
+        app_settings::save_soundboard(self)
     }
 }

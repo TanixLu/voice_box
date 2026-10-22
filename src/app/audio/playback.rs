@@ -1,5 +1,7 @@
 use super::{Apartment, Stream, capture::Recording, enumerator};
-use anyhow::{Context, ensure};
+use crate::app::i18n::Text;
+use crate::app::i18n::UserContext;
+use anyhow::ensure;
 use std::{
     ptr,
     sync::atomic::{AtomicBool, Ordering},
@@ -28,7 +30,7 @@ pub(in crate::app) fn playback(
         recording.channels as usize,
         Some(recording.channel_mask),
     );
-    let stream = Stream::new(client, &format, true).context("开启播放设备失败")?;
+    let stream = Stream::new(client, &format, true).user_context(Text::OpenPlaybackDevice)?;
     let render: IAudioRenderClient = unsafe { stream.client.GetService()? };
     let channels = recording.channels as usize;
     let mut cursor = 0;
@@ -72,7 +74,7 @@ pub(in crate::app) fn playback(
         }
         ensure!(
             last_progress.elapsed() < Duration::from_secs(3),
-            "播放设备没有响应，请检查设备连接"
+            Text::PlaybackDeviceUnresponsive
         );
         let capacity = unsafe { stream.client.GetBufferSize()? };
         let previous_cursor = cursor;

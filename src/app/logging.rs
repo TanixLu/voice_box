@@ -1,4 +1,5 @@
 //! Bounded application logs; APO diagnostics remain ETW-only.
+use crate::app::i18n::{Details, Message};
 use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
@@ -91,7 +92,11 @@ pub fn init() -> anyhow::Result<()> {
         .with_writer(log)
         .with_target(true)
         .try_init()
-        .map_err(|error| anyhow::anyhow!("初始化 VoiceBox 日志失败：{error}"))?;
+        .map_err(|error| {
+            anyhow::anyhow!(Message::LoggingFailed {
+                error: Details::new(anyhow::Error::from_boxed(error))
+            })
+        })?;
     std::panic::set_hook(Box::new(|panic| {
         tracing::error!("Application panic: {panic}");
     }));

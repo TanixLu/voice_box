@@ -3,10 +3,12 @@ use super::{
     audio::Apartment,
     setup::{self, PluginStatus},
 };
+use crate::shared::error::SharedError;
 use wasapi::{DeviceEnumerator, Direction};
 
 pub(super) struct Microphone {
     pub name: String,
+    pub is_default: bool,
     pub device_id: String,
     pub guid: String,
     pub plugin_status: PluginStatus,
@@ -38,7 +40,7 @@ pub(super) fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)
         let guid = id
             .rsplit('.')
             .next()
-            .ok_or_else(|| anyhow::anyhow!("麦克风标识无效"))?
+            .ok_or_else(|| anyhow::anyhow!(SharedError::InvalidMicrophoneId))?
             .to_owned();
         let is_default = default_id.as_deref() == Some(&id);
         if is_default {
@@ -47,11 +49,8 @@ pub(super) fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)
         let name = device.get_friendlyname()?;
         microphones.push(Microphone {
             device_id: id,
-            name: if is_default {
-                format!("{name}（默认）")
-            } else {
-                name
-            },
+            name,
+            is_default,
             plugin_status: setup::device_plugin_status(&guid),
             guid,
         });

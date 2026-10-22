@@ -1,5 +1,7 @@
+use crate::app::i18n::Text;
+use crate::app::i18n::{Message, UserContext};
 use crate::shared::{paths, plugin};
-use anyhow::Context;
+
 use restart_manager::{RestartSession, ShutdownOptions};
 use std::path::Path;
 use tracing::info;
@@ -28,7 +30,7 @@ fn plugin_guid() -> String {
 }
 
 fn string_registration_values(apo_dll: &Path) -> anyhow::Result<[(String, String); 6]> {
-    let apo_dll = apo_dll.to_str().context("APO DLL 路径不是有效的 Unicode")?;
+    let apo_dll = apo_dll.to_str().user_context(Text::InvalidApoPath)?;
     let guid = plugin_guid();
     let com = format!(r"HKLM\SOFTWARE\Classes\CLSID\{guid}\");
     let apo = format!(r"HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}\");
@@ -192,10 +194,9 @@ pub(super) fn with_audio_service_stopped(
     }
     let pending = session.shutdown_with_options(ShutdownOptions::default());
     if !pending.shutdown_outcome().is_success() {
-        anyhow::bail!(
-            "Audio service shutdown failed: {:?}",
-            pending.shutdown_outcome()
-        );
+        anyhow::bail!(Message::StopAudioServiceFailed {
+            result: format!("{:?}", pending.shutdown_outcome())
+        });
     }
     info!("Audio service shutdown successfully");
 
@@ -217,7 +218,7 @@ pub(super) fn with_audio_service_stopped(
 }
 
 fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
-    let apo_dll = paths::apo_dll_path().context("读取 APO DLL 路径失败")?;
+    let apo_dll = paths::apo_dll_path().user_context(Text::ReadApoPath)?;
     let string_values = string_registration_values(&apo_dll)?;
     // Update the DLL.
     if std::fs::read(&apo_dll).ok().as_deref() != Some(apo_dll_bytes()) {
@@ -259,7 +260,7 @@ fn delete_value_if_present(key: &RegKey, name: &str) -> std::io::Result<()> {
 }
 
 fn update_device_effects(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
-    let transaction = Transaction::new().context("创建 APO 注册事务失败")?;
+    let transaction = Transaction::new().user_context(Text::CreateRegistrationTransaction)?;
     let root = RegKey::predef(HKEY_LOCAL_MACHINE);
     // MMDevices permits setting values but can deny creating subkeys, even to
     // administrators. KEY_WRITE includes KEY_CREATE_SUB_KEY, which we do not need.
@@ -267,10 +268,12 @@ fn update_device_effects(device_guid: &str, uninstall: bool) -> anyhow::Result<(
     let fx = root.open_subkey_transacted_with_flags(
         format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{device_guid}\FxProperties"),
         &transaction, flags,
-    ).with_context(|| format!("打开麦克风 {device_guid} 的 FxProperties 失败"))?;
+    ).with_user_context(|| Message::OpenFxProperties { device: device_guid.to_owned() })?;
     update_fx_properties(&fx, uninstall)?;
     // All endpoint changes commit together; failures leave them untouched.
-    transaction.commit().context("提交 APO 注册事务失败")?;
+    transaction
+        .commit()
+        .user_context(Text::CommitRegistrationTransaction)?;
     info!(
         "{} VoiceBox device effects for {device_guid}",
         if uninstall {
@@ -287,7 +290,7 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
     // Only an absent value means an empty list. Refuse to overwrite invalid types
     // or unreadable values, since they may contain another APO's settings.
     let mut effects: Vec<String> = read_optional_value(fx, COMPOSITE_MFX_PROPERTY_KEY)
-        .context("读取 Composite MFX APO 列表失败")?
+        .user_context(Text::ReadCompositeEffects)?
         .unwrap_or_default();
     if uninstall {
         let count = effects.len();
@@ -304,7 +307,7 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
         effects.insert(0, plugin_guid);
         fx.set_value(COMPOSITE_MFX_PROPERTY_KEY, &effects)?;
         let modes: Vec<String> = read_optional_value(fx, MFX_PROCESSING_MODES_PROPERTY_KEY)
-            .context("读取 MFX 处理模式失败")?
+            .user_context(Text::ReadProcessingModes)?
             .unwrap_or_default();
         if modes.iter().all(String::is_empty) {
             fx.set_value(
@@ -318,7 +321,7 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
 }
 
 pub(super) fn unregister_all() -> anyhow::Result<()> {
-    let transaction = Transaction::new().context("创建完全卸载注册事务失败")?;
+    let transaction = Transaction::new().user_context(Text::CreateUninstallTransaction)?;
     let root = RegKey::predef(HKEY_LOCAL_MACHINE);
     let capture = match root.open_subkey_transacted_with_flags(
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture",
@@ -327,13 +330,13 @@ pub(super) fn unregister_all() -> anyhow::Result<()> {
     ) {
         Ok(capture) => Some(capture),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error).context("枚举麦克风注册表失败"),
+        Err(error) => return Err(error).user_context(Text::EnumerateMicrophoneRegistry),
     };
     if let Some(capture) = capture {
         // Enumerate the registry rather than active WASAPI devices: disabled and
         // disconnected microphones must lose their VoiceBox association too.
         for device in capture.enum_keys() {
-            let device = device.context("读取麦克风注册表项失败")?;
+            let device = device.user_context(Text::ReadMicrophoneRegistry)?;
             let fx = match capture.open_subkey_transacted_with_flags(
                 format!(r"{device}\FxProperties"),
                 &transaction,
@@ -342,12 +345,14 @@ pub(super) fn unregister_all() -> anyhow::Result<()> {
                 Ok(fx) => fx,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => {
-                    return Err(error)
-                        .with_context(|| format!("打开麦克风 {device} 的 FxProperties 失败"));
+                    return Err(error).with_user_context(|| Message::OpenFxProperties {
+                        device: device.to_owned(),
+                    });
                 }
             };
-            update_fx_properties(&fx, true)
-                .with_context(|| format!("卸载麦克风 {device} 的 VoiceBox APO 失败"))?;
+            update_fx_properties(&fx, true).with_user_context(|| Message::UninstallMicrophone {
+                device: device.to_owned(),
+            })?;
         }
     }
 
@@ -358,10 +363,15 @@ pub(super) fn unregister_all() -> anyhow::Result<()> {
         format!(r"SOFTWARE\Classes\CLSID\{guid}"),
         format!(r"SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}"),
     ] {
-        delete_tree_transacted(&root, &path, &transaction)
-            .with_context(|| format!("删除 VoiceBox APO 注册失败：{path}"))?;
+        delete_tree_transacted(&root, &path, &transaction).with_user_context(|| {
+            Message::DeleteApoRegistration {
+                path: path.to_owned(),
+            }
+        })?;
     }
-    transaction.commit().context("提交完全卸载注册事务失败")?;
+    transaction
+        .commit()
+        .user_context(Text::CommitUninstallTransaction)?;
     info!("Removed VoiceBox from all capture devices and unregistered the APO");
     Ok(())
 }
@@ -391,7 +401,7 @@ pub fn ensure_device_plugin_installed(device_guid: &str) -> anyhow::Result<()> {
         run_device_plugin_operation(device_guid, false)?;
         anyhow::ensure!(
             device_plugin_status(device_guid) == PluginStatus::Installed,
-            "安装操作已结束，但插件检查未通过，请刷新后重试"
+            Text::PluginVerificationFailed
         );
     }
     Ok(())
@@ -407,7 +417,7 @@ fn run_device_plugin_operation(device_guid: &str, uninstall: bool) -> anyhow::Re
             && device_guid.starts_with('{')
             && device_guid.ends_with('}')
             && windows::core::GUID::try_from(device_guid.trim_matches(['{', '}'])).is_ok(),
-        "Invalid device GUID"
+        Text::InvalidDeviceGuid
     );
     with_audio_service_stopped(|| {
         if uninstall {

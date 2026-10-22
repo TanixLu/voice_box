@@ -1,6 +1,8 @@
 //! Default-speaker loopback, including time spent with no render packets.
 use super::{Apartment, Stream, capture::Recording, enumerator};
-use anyhow::{Context, ensure};
+use crate::app::i18n::Text;
+use crate::app::i18n::UserContext;
+use anyhow::ensure;
 use std::{
     ptr, slice,
     sync::atomic::{AtomicBool, Ordering},
@@ -54,15 +56,15 @@ fn place_packet(samples: &mut Vec<f32>, start: usize, frames: usize, data: Optio
 pub(in crate::app) fn capture(stop: &AtomicBool, started: &dyn Fn()) -> anyhow::Result<Recording> {
     let _apartment = Apartment::new()?;
     let device = unsafe { enumerator()?.GetDefaultAudioEndpoint(eRender, eConsole) }
-        .context("找不到默认扬声器，请检查 Windows 声音输出设置")?;
+        .user_context(Text::DefaultSpeakerMissing)?;
     let client = unsafe { device.Activate::<IAudioClient>(CLSCTX_ALL, None)? };
     // Let the shared audio engine convert/downmix the endpoint's native format.
     let format = WaveFormat::new(32, 32, &SampleType::Float, RATE as usize, CHANNELS, Some(3));
-    let stream = Stream::loopback(client, &format).context("无法录制默认扬声器")?;
+    let stream = Stream::loopback(client, &format).user_context(Text::CaptureSpeaker)?;
     let capture: IAudioCaptureClient = unsafe { stream.client.GetService()? };
     let mut frequency = 0;
     unsafe { QueryPerformanceFrequency(&mut frequency)? };
-    ensure!(frequency > 0, "无法读取录音时钟");
+    ensure!(frequency > 0, Text::ReadRecordingClock);
     let origin = clock_hns(frequency)?;
     unsafe { stream.client.Start()? };
     let begin = Instant::now();
@@ -117,7 +119,7 @@ pub(in crate::app) fn capture(stop: &AtomicBool, started: &dyn Fn()) -> anyhow::
                 place_packet(&mut recording.samples, start, count, packet);
             }
             unsafe { capture.ReleaseBuffer(frames)? };
-            ensure!(valid, "扬声器返回了无效音频数据");
+            ensure!(valid, Text::InvalidSpeakerData);
             if start + count >= max_frames {
                 break;
             }
@@ -129,6 +131,6 @@ pub(in crate::app) fn capture(stop: &AtomicBool, started: &dyn Fn()) -> anyhow::
         }
         stream.event.wait()?;
     }
-    ensure!(!recording.samples.is_empty(), "录音太短，请重新录制");
+    ensure!(!recording.samples.is_empty(), Text::RecordingTooShort);
     Ok(recording)
 }

@@ -1,6 +1,8 @@
 //! Management-only initialization and atomic settings commits.
+use crate::app::i18n::Text;
+use crate::app::i18n::UserContext;
 use crate::shared::{paths, settings::Settings};
-use anyhow::Context;
+
 use atomic_write_file::AtomicWriteFile;
 use std::{
     io::{self, Write},
@@ -13,20 +15,20 @@ pub fn has_valid_settings() -> bool {
 
 pub fn initialize() -> anyhow::Result<()> {
     let directory = paths::data_dir()?;
-    std::fs::create_dir_all(&directory).context("创建 VoiceBox 数据目录失败")?;
-    let path = directory.join(paths::SETTINGS_FILE);
+    std::fs::create_dir_all(&directory).user_context(Text::CreateDataDirectory)?;
+    let path = directory.join(paths::APO_SETTINGS_FILE);
     match Settings::read(&path) {
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             save_to(&directory, &Settings::default())?;
         }
-        Err(error) => return Err(error).context("读取 VoiceBox 配置文件失败，保留原文件"),
+        Err(error) => return Err(error).user_context(Text::ReadSettingsPreserved),
     }
     Ok(())
 }
 
 pub fn save(settings: Settings) -> anyhow::Result<()> {
-    save_to(&paths::data_dir()?, &settings).context("无法保存 VoiceBox 配置文件")?;
+    save_to(&paths::data_dir()?, &settings).user_context(Text::SaveSettingsFailed)?;
     tracing::info!(
         denoising_enabled = settings.denoising_enabled,
         gain_millidb = settings.gain_millidb,
@@ -37,13 +39,14 @@ pub fn save(settings: Settings) -> anyhow::Result<()> {
 
 fn save_to(directory: &Path, settings: &Settings) -> anyhow::Result<()> {
     let bytes = settings.encode()?;
-    save_bytes(directory, paths::SETTINGS_FILE, &bytes)
+    save_bytes(directory, paths::APO_SETTINGS_FILE, &bytes)
 }
 
 pub(super) fn save_bytes(directory: &Path, name: &str, bytes: &[u8]) -> anyhow::Result<()> {
     let path = directory.join(name);
     // Publish the complete configuration with a single atomic commit.
-    let mut file = AtomicWriteFile::open(&path).context("创建临时配置文件失败")?;
-    file.write_all(bytes).context("写入临时配置文件失败")?;
-    file.commit().context("提交配置文件失败")
+    let mut file = AtomicWriteFile::open(&path).user_context(Text::CreateTemporarySettings)?;
+    file.write_all(bytes)
+        .user_context(Text::WriteTemporarySettings)?;
+    file.commit().user_context(Text::CommitSettings)
 }

@@ -1,8 +1,11 @@
 //! Management application: GUI, plugin setup, writable settings and file logs.
+use crate::app::i18n::Text;
+mod app_settings;
 mod audio;
 mod devices;
 mod gui;
 mod hotkeys;
+mod i18n;
 mod logging;
 mod registry;
 mod settings_writer;
@@ -32,9 +35,10 @@ use windows::Win32::UI::{
 use windows::core::{PCWSTR, w};
 
 pub fn run() {
+    i18n::set_language(app_settings::load_language().resolve());
     if let Err(error) = run_inner() {
         error!("Application error: {error:?}");
-        let message = wide_null(format!("{error:#}"));
+        let message = wide_null(i18n::Message::error(error).text().as_ref());
         unsafe {
             MessageBoxW(
                 None,
@@ -48,19 +52,13 @@ pub fn run() {
 }
 
 fn run_inner() -> anyhow::Result<()> {
-    anyhow::ensure!(
-        std::env::args_os().len() == 1,
-        "不支持此命令行参数，请在窗口中操作。"
-    );
+    anyhow::ensure!(std::env::args_os().len() == 1, Text::UnsupportedArguments);
     anyhow::ensure!(
         unsafe { IsUserAnAdmin() }.as_bool(),
-        "VoiceBox 需要管理员权限，请右键选择“以管理员身份运行”。"
+        Text::AdministratorRequired
     );
     let single_instance = single_instance::SingleInstance::new("VoiceBoxSingleInstance")?;
-    anyhow::ensure!(
-        single_instance.is_single(),
-        "Another instance of VoiceBox is already running."
-    );
+    anyhow::ensure!(single_instance.is_single(), Text::AnotherInstance);
     settings_writer::initialize()?;
     logging::init()?;
     gui::run()

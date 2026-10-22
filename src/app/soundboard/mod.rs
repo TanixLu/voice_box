@@ -1,9 +1,11 @@
 //! Sound library operations and background playback coordination.
+use crate::app::i18n::Text;
+use crate::app::i18n::{Details, Message, UserContext};
 use crate::{
     app::hotkeys::Hotkey,
     shared::{paths, pcm_transport::transport_path},
 };
-use anyhow::{Context, ensure};
+use anyhow::ensure;
 use std::{collections::HashSet, path::PathBuf, sync::mpsc, thread::JoinHandle};
 
 pub(super) mod config;
@@ -33,9 +35,9 @@ pub(super) struct Soundboard {
     pub active_sound_index: Option<usize>,
     pub elapsed: f64,
     pub duration: Option<f64>,
-    pub message: String,
+    pub message: Message,
     pub failed: bool,
-    pub import_error: Option<String>,
+    pub import_error: Option<Message>,
     playback_job: Option<PlaybackJob>,
     queued_playback: Option<(usize, Option<String>)>,
     import_job: Option<mpsc::Receiver<anyhow::Result<ImportedSounds>>>,
@@ -54,7 +56,9 @@ impl Soundboard {
             Err(error) => {
                 let mut result = Self::default();
                 result.options = options;
-                result.set_error(format!("读取音效库目录失败：{error}"));
+                result.set_error(Message::ReadLibraryFailed {
+                    error: Details::new(error),
+                });
                 return result;
             }
         };
@@ -91,7 +95,7 @@ impl Soundboard {
     fn save_library(&mut self) {
         if let Err(error) = self.save() {
             tracing::error!("Failed to save soundboard: {error:#}");
-            self.set_error(format!("{error:#}"));
+            self.set_error(Message::error(error));
         }
     }
     pub fn library(&self) -> &Library {
@@ -128,7 +132,7 @@ impl Soundboard {
                 })
             }
             BindingTarget::Hold | BindingTarget::Stop | BindingTarget::Random => {
-                let options = draft.context("请先打开音效设置")?;
+                let options = draft.user_context(Text::OpenSoundSettingsFirst)?;
                 match target {
                     BindingTarget::Hold => options.auto_hold_hotkey = key,
                     BindingTarget::Stop => options.stop_hotkey = key,
@@ -154,10 +158,10 @@ impl Soundboard {
         if let Err(error) = self.save() {
             self.library.sounds.pop();
             if let Err(cleanup) = std::fs::remove_file(&path) {
-                return Err(error.context(format!(
-                    "无法清理录音文件：{cleanup}；文件保留在 {}",
-                    path.display()
-                )));
+                return Err(error.user_context(Message::CleanupRecording {
+                    error: Details::new(cleanup),
+                    path: path.display().to_string(),
+                }));
             }
             return Err(error);
         }
@@ -184,11 +188,13 @@ impl Soundboard {
             Ok(_) => self.import_job = Some(rx),
             Err(e) => {
                 tracing::error!("Failed to spawn sound import: {e}");
-                self.import_error = Some(format!("打开文件选择器失败：{e}"));
+                self.import_error = Some(Message::OpenPickerFailed {
+                    error: Details::new(e),
+                });
             }
         }
     }
-    pub fn set_error(&mut self, message: String) {
+    pub fn set_error(&mut self, message: Message) {
         self.failed = true;
         self.message = message;
     }
@@ -208,14 +214,14 @@ impl Soundboard {
         }
         if let Err(error) = self.save() {
             tracing::error!("Failed to save soundboard after import: {error:#}");
-            imported.errors.push(format!("{error:#}"));
+            imported.errors.push(Message::error(error));
         }
         if !imported.errors.is_empty() {
             tracing::warn!(
                 errors = ?imported.errors,
                 "Some sound files could not be imported"
             );
-            self.import_error = Some(imported.errors.join("\n\n"));
+            self.import_error = Some(Message::Many(imported.errors.clone()));
         } else {
             self.failed = false;
             self.message.clear();
@@ -230,12 +236,12 @@ impl Soundboard {
         }
     }
     pub fn rename(&mut self, index: usize, name: &str) -> anyhow::Result<()> {
-        ensure!(!self.playing(), "请先停止播放再重命名");
+        ensure!(!self.playing(), Text::StopBeforeRename);
         let original_path = self
             .library
             .sounds
             .get(index)
-            .context("音效不存在")?
+            .user_context(Text::SoundNotFound)?
             .path
             .clone();
         let options = &self.options;
@@ -265,7 +271,9 @@ impl Soundboard {
         let sound = match self.library.remove(index) {
             Ok(sound) => sound,
             Err(error) => {
-                self.set_error(format!("删除音效文件失败：{error}"));
+                self.set_error(Message::DeleteSoundFailed {
+                    error: Details::new(error),
+                });
                 return;
             }
         };
@@ -284,7 +292,7 @@ impl Soundboard {
         };
         if self.options.speaker_output_volume == 0.0 && self.options.microphone_output_volume == 0.0
         {
-            self.set_error("麦克风和扬声器音量均为 0，未开始播放".into());
+            self.set_error(Text::OutputsMuted.into());
             return;
         }
         self.shuffle.last = Some(sound.path.clone());
@@ -298,14 +306,14 @@ impl Soundboard {
         let microphone_available = guid.is_some();
         let options = self.options.for_output(microphone_available);
         if options.speaker_output_volume == 0.0 && options.microphone_output_volume == 0.0 {
-            self.set_error("麦克风插件未就绪，且扬声器音量为 0，没有可用的播放输出".into());
+            self.set_error(Text::NoPlaybackOutput.into());
             return;
         }
         let transport = match transport_path(guid.unwrap_or("00000000-0000-0000-0000-000000000000"))
         {
             Ok(path) => path,
             Err(e) => {
-                self.set_error(e.to_string());
+                self.set_error(Message::error(e));
                 return;
             }
         };
@@ -341,7 +349,9 @@ impl Soundboard {
                     sound_index = index,
                     "Failed to spawn soundboard playback: {e}"
                 );
-                self.set_error(format!("无法开始播放：{e}"));
+                self.set_error(Message::StartPlaybackFailed {
+                    error: Details::new(e),
+                });
             }
         }
     }
@@ -370,14 +380,16 @@ impl Soundboard {
                         Ok(imported) => self.finish_import(imported),
                         Err(e) => {
                             tracing::error!("Sound file selection or import failed: {e:#}");
-                            self.import_error = Some(format!("导入音效失败：{e:#}"));
+                            self.import_error = Some(Message::ImportSoundsFailed {
+                                error: Details::new(e),
+                            });
                         }
                     }
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     tracing::error!("Sound import exited without a result");
                     self.import_job = None;
-                    self.import_error = Some("音效导入线程意外退出".into());
+                    self.import_error = Some(Text::ImportThreadExited.into());
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
@@ -403,7 +415,9 @@ impl Soundboard {
                     }
                     self.active_sound_index = None;
                     if let Err(e) = result {
-                        self.set_error(format!("播放失败：{e:#}"));
+                        self.set_error(Message::PlaybackFailed {
+                            error: Details::new(e),
+                        });
                     }
                     break;
                 }
@@ -417,7 +431,7 @@ impl Soundboard {
                         let _ = job.thread.join();
                     }
                     self.active_sound_index = None;
-                    self.set_error("播放线程意外退出".into());
+                    self.set_error(Text::PlaybackThreadExited.into());
                     break;
                 }
             }

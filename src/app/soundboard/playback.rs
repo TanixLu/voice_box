@@ -1,9 +1,11 @@
 use super::{config::Options, decoder::SoundDecoder};
+use crate::app::i18n::Text;
+use crate::app::i18n::{Details, Message, UserContext};
 use crate::{
     app::{audio::monitor::Monitor, hotkeys::HeldKeys},
     shared::pcm_transport::{Clock, DECODE_AHEAD_FRAMES, Mapping, SAMPLE_RATE},
 };
-use anyhow::{Context, ensure};
+use anyhow::ensure;
 use std::{
     collections::VecDeque,
     path::PathBuf,
@@ -18,7 +20,7 @@ pub(super) enum Command {
 pub(super) enum Event {
     Started(Option<f64>),
     Progress(f64),
-    MonitorError(String),
+    MonitorError(Message),
     Finished(anyhow::Result<()>),
 }
 
@@ -32,7 +34,7 @@ pub(super) fn run(
     let mut decoder = SoundDecoder::open(&path)?;
     let duration = decoder.duration;
     let clock = Clock::new()?;
-    let mapping = Mapping::open(&transport, true).context("创建播放传输缓冲区失败")?;
+    let mapping = Mapping::open(&transport, true).user_context(Text::CreatePlaybackBuffer)?;
     let generation = (clock.frame() & 0xffff).max(1);
     let mut base = clock.frame() + 4800;
     let mut pending = VecDeque::with_capacity(DECODE_AHEAD_FRAMES as usize);
@@ -104,10 +106,7 @@ pub(super) fn run(
                     decoded = 0;
                 }
                 None => {
-                    ensure!(
-                        played > 0 || !pending.is_empty(),
-                        "音频文件没有可播放的数据"
-                    );
+                    ensure!(played > 0 || !pending.is_empty(), Text::NoPlayableAudio);
                     eof = true;
                 }
             }
@@ -134,14 +133,14 @@ pub(super) fn run(
             })();
             if let Err(error) = result {
                 if options.microphone_output_volume == 0.0 {
-                    return Err(error.context("扬声器播放失败"));
+                    return Err(error.user_context(Text::SpeakerPlaybackFailed));
                 }
                 monitor = None;
                 monitor_failed = true;
                 tracing::warn!("Speaker playback failed; microphone output continues: {error:#}");
-                let _ = events.send(Event::MonitorError(format!(
-                    "扬声器播放失败，麦克风发送继续：{error:#}"
-                )));
+                let _ = events.send(Event::MonitorError(Message::SpeakerMonitorFailed {
+                    error: Details::new(error),
+                }));
             }
         } else {
             monitor = None;

@@ -1,4 +1,6 @@
 use super::widgets::{hint, warning};
+use crate::app::i18n::Message;
+use crate::app::i18n::Text;
 use crate::{
     app::{
         audio::session::{Activity, AudioSession},
@@ -26,13 +28,16 @@ impl VoicePanel {
     }
     pub(super) fn settings_ui(&mut self, ui: &mut egui::Ui, busy: bool) -> Option<Settings> {
         let mut save_requested = false;
-        ui.strong("语音设置");
+        ui.strong(Text::VoiceSettings.text());
         ui.add_enabled_ui(!busy, |ui| {
-            ui.checkbox(&mut self.settings.denoising_enabled, "启用降噪");
+            ui.checkbox(
+                &mut self.settings.denoising_enabled,
+                Text::EnableDenoising.text(),
+            );
             let mut gain_db = self.settings.gain_millidb as f64 / 1000.0;
             let mut changed = false;
             ui.horizontal(|ui| {
-                ui.label("音量调节");
+                ui.label(Text::VolumeAdjustment.text());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     changed |= ui
                         .add(
@@ -45,7 +50,7 @@ impl VoicePanel {
                                 .fixed_decimals(1)
                                 .custom_formatter(|value, _| {
                                     if value <= MIN_GAIN_MILLIDB as f64 / 1000.0 {
-                                        "静音".into()
+                                        Text::Mute.text().into()
                                     } else if value > 0.0 {
                                         format!("+{value:.1} dB")
                                     } else {
@@ -53,18 +58,18 @@ impl VoicePanel {
                                     }
                                 })
                                 .custom_parser(|text| {
-                                    if text.trim() == "静音" {
+                                    if Text::Mute.matches_input(text) {
                                         Some(MIN_GAIN_MILLIDB as f64 / 1000.0)
                                     } else {
                                         text.trim().trim_end_matches("dB").trim().parse().ok()
                                     }
                                 }),
                         )
-                        .on_hover_text("拖动调整，或点击数值直接输入。")
+                        .on_hover_text(Text::AdjustVolumeHint.text())
                         .changed();
                     if ui
-                        .add_enabled(gain_db != 0.0, egui::Button::new("置零"))
-                        .on_hover_text("恢复到 0 dB")
+                        .add_enabled(gain_db != 0.0, egui::Button::new(Text::ResetGain.text()))
+                        .on_hover_text(Text::ResetGainHint.text())
                         .clicked()
                     {
                         gain_db = 0.0;
@@ -99,13 +104,13 @@ impl VoicePanel {
         ui.horizontal(|ui| {
             let dirty = self.settings != self.saved;
             if ui
-                .add_enabled(!busy && dirty, egui::Button::new("保存设置"))
+                .add_enabled(!busy && dirty, egui::Button::new(Text::SaveSettings.text()))
                 .clicked()
             {
                 save_requested = true;
             }
             if ui
-                .add_enabled(!busy && dirty, egui::Button::new("撤销修改"))
+                .add_enabled(!busy && dirty, egui::Button::new(Text::UndoChanges.text()))
                 .clicked()
             {
                 self.settings = self.saved.clone();
@@ -114,7 +119,7 @@ impl VoicePanel {
                 if ui
                     .add_enabled(
                         !busy && self.settings != Settings::default(),
-                        egui::Button::new("恢复默认"),
+                        egui::Button::new(Text::RestoreDefaults.text()),
                     )
                     .clicked()
                 {
@@ -123,12 +128,9 @@ impl VoicePanel {
             });
         });
         if self.settings != self.saved {
-            warning(
-                ui,
-                "有未保存的修改；试听使用当前设置，保存后应用于麦克风插件。",
-            );
+            warning(ui, Text::UnsavedVoiceSettings.text());
         } else {
-            hint(ui, "设置已应用到所有安装 VoiceBox 插件的麦克风。");
+            hint(ui, Text::VoiceSettingsApplied.text());
         }
         save_requested.then(|| self.settings.clone())
     }
@@ -139,7 +141,7 @@ impl VoicePanel {
         busy: bool,
         microphone: Option<&Microphone>,
     ) {
-        ui.strong("录音试听");
+        ui.strong(Text::RecordingPreview.text());
         let activity = self.session.activity();
         let idle = !busy && !self.session.busy();
         let stopping = self.session.stopping();
@@ -150,9 +152,9 @@ impl VoicePanel {
                         && (activity == Some(Activity::Recording)
                             || (idle && microphone.is_some())),
                     egui::Button::new(if activity == Some(Activity::Recording) {
-                        "结束录音"
+                        Text::FinishRecording.text()
                     } else {
-                        "开始录音"
+                        Text::StartRecording.text()
                     }),
                 )
                 .clicked()
@@ -170,9 +172,9 @@ impl VoicePanel {
                         && (activity == Some(Activity::PlayingOriginal)
                             || (idle && self.session.has_recording())),
                     egui::Button::new(if activity == Some(Activity::PlayingOriginal) {
-                        "停止播放"
+                        Text::StopPlayback.text()
                     } else {
-                        "播放原音频"
+                        Text::PlayOriginal.text()
                     }),
                 )
                 .clicked()
@@ -186,9 +188,9 @@ impl VoicePanel {
             // Place processed playback at the right on normal window sizes;
             // wrapped layout keeps every button reachable in a narrow window.
             let processed_label = if activity == Some(Activity::PlayingProcessed) {
-                "停止播放"
+                Text::StopPlayback.text()
             } else {
-                "播放处理后声音"
+                Text::PlayProcessed.text()
             };
             let button_width = ui
                 .painter()
@@ -226,15 +228,16 @@ impl VoicePanel {
             }
         });
         if stopping {
-            hint(ui, "正在停止…");
+            hint(ui, Text::Stopping.text());
         } else if let Some(elapsed) = self.session.recording_elapsed() {
-            ui.label(format!("正在录音：{elapsed:.1} 秒"));
+            ui.label(Message::RecordingProgress { elapsed }.text());
         } else if let Some((elapsed, duration)) = self.session.playback_progress() {
-            ui.label(format!("正在播放 {elapsed:.1} / {duration:.1} 秒"));
+            ui.label(Message::PlaybackProgress { elapsed, duration }.text());
         } else if self.session.failed {
             ui.add(
                 egui::Label::new(
-                    egui::RichText::new(&self.session.message).color(ui.visuals().error_fg_color),
+                    egui::RichText::new(self.session.message.text())
+                        .color(ui.visuals().error_fg_color),
                 )
                 .wrap(),
             );
@@ -243,7 +246,7 @@ impl VoicePanel {
                 if self.session.busy() {
                     ui.spinner();
                 }
-                ui.add(egui::Label::new(&self.session.message).wrap());
+                ui.add(egui::Label::new(self.session.message.text()).wrap());
             });
         }
     }

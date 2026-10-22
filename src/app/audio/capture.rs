@@ -1,10 +1,12 @@
 use super::{Apartment, Stream, enumerator};
+use crate::app::i18n::Text;
+use crate::app::i18n::UserContext;
 use crate::shared::{
     audio::SampleFormat,
     preview::{MAX_RECORD_SECONDS, MAX_SAMPLES},
     utils::wide_null,
 };
-use anyhow::{Context, bail, ensure};
+use anyhow::{bail, ensure};
 use std::{
     ptr, slice,
     sync::atomic::{AtomicBool, Ordering},
@@ -52,7 +54,7 @@ pub(in crate::app) fn capture(
         ..Default::default()
     };
     unsafe { client2.SetClientProperties(&properties) }
-        .context("此麦克风无法开启 RAW 录音，无法保证绕过 VoiceBox 处理")?;
+        .user_context(Text::RawCaptureUnavailable)?;
     let raw_format = unsafe { client.GetMixFormat()? };
     let format = unsafe { WaveFormat::parse(&*raw_format) };
     unsafe {
@@ -63,7 +65,7 @@ pub(in crate::app) fn capture(
     let rate = format.get_samplespersec();
     ensure!(
         (1..=32).contains(&channels) && (8_000..=192_000).contains(&rate),
-        "麦克风采样率或声道数不支持试听"
+        Text::UnsupportedPreviewChannels
     );
     let sample_format = match (format.get_subformat()?, format.get_bitspersample()) {
         (SampleType::Float, 32) => SampleFormat::Float32,
@@ -72,15 +74,15 @@ pub(in crate::app) fn capture(
             u32::from(bits / 8),
             u32::from(format.get_validbitspersample()),
         )
-        .ok_or_else(|| anyhow::anyhow!("麦克风 PCM 格式不支持试听"))?,
-        _ => bail!("麦克风音频格式不支持试听"),
+        .ok_or_else(|| anyhow::anyhow!(Text::UnsupportedPreviewPcm))?,
+        _ => bail!(Text::UnsupportedPreviewFormat),
     };
     let frame_bytes = sample_format.bytes() * channels as usize;
     ensure!(
         frame_bytes == format.get_blockalign() as usize,
-        "麦克风音频帧格式无效"
+        Text::InvalidMicrophoneFrame
     );
-    let stream = Stream::new(client, &format, false).context("开启 RAW 录音失败")?;
+    let stream = Stream::new(client, &format, false).user_context(Text::OpenRawCapture)?;
     let capture: IAudioCaptureClient = unsafe { stream.client.GetService()? };
     let max_frames = (rate * MAX_RECORD_SECONDS) as usize;
     let max_samples =
@@ -124,7 +126,7 @@ pub(in crate::app) fn capture(
                 unsafe {
                     capture.ReleaseBuffer(frames)?;
                 }
-                bail!("麦克风返回了无效音频数据");
+                bail!(Text::InvalidMicrophoneData);
             }
             unsafe {
                 capture.ReleaseBuffer(frames)?;
@@ -139,13 +141,10 @@ pub(in crate::app) fn capture(
         }
         ensure!(
             last_packet.elapsed() < Duration::from_secs(3),
-            "麦克风未返回音频，请检查设备连接和麦克风权限"
+            Text::MicrophoneUnresponsive
         );
         stream.event.wait()?;
     }
-    ensure!(
-        !recording.samples.is_empty(),
-        "没有录到声音，请稍后再结束录音"
-    );
+    ensure!(!recording.samples.is_empty(), Text::NoRecordedAudio);
     Ok(recording)
 }

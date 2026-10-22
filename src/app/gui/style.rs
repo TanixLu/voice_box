@@ -19,24 +19,28 @@ pub(super) fn install_system_font(ctx: &egui::Context) {
     let Ok(windows) = paths::windows_dir() else {
         return;
     };
-    for file in ["msyh.ttc", "simsun.ttc", "segoeui.ttf"] {
+    let mut fonts = FontDefinitions::default();
+    let chinese_font = ["msyh.ttc", "simsun.ttc"]
+        .into_iter()
+        .find(|file| windows.join("Fonts").join(file).is_file());
+    for file in std::iter::once("segoeui.ttf").chain(chinese_font) {
         if let Ok(data) = std::fs::read(windows.join("Fonts").join(file)) {
-            let mut fonts = FontDefinitions::empty();
             fonts
                 .font_data
-                .insert("system".into(), Arc::new(FontData::from_owned(data)));
+                .insert(file.into(), Arc::new(FontData::from_owned(data)));
             fonts
                 .families
                 .entry(FontFamily::Proportional)
                 .or_default()
-                .push("system".into());
+                .push(file.into());
             fonts
                 .families
                 .entry(FontFamily::Monospace)
                 .or_default()
-                .push("system".into());
-            ctx.set_fonts(fonts);
-            break;
+                .push(file.into());
         }
+    }
+    if !fonts.font_data.is_empty() {
+        ctx.set_fonts(fonts);
     }
 }

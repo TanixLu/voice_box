@@ -1,6 +1,8 @@
 # Embedded in the EXE and passed to Windows PowerShell with -Command.
 # Open the process handle before signaling readiness; preserve original restore paths.
 $ErrorActionPreference = 'Stop'
+# Read the Rust catalog snapshot before the application removes its data directory.
+$texts = $env:VOICEBOX_UNINSTALL_TEXTS | ConvertFrom-Json
 $script:finished = $false
 $script:parentExited = $false
 
@@ -12,13 +14,13 @@ function Show-UninstallResult([string]$message, [bool]$failed) {
     $form.ControlBox = $true
     $ok.Visible = $true
     if ($failed) {
-        $form.Text = 'VoiceBox 卸载未完成'
+        $form.Text = $texts.UninstallIncompleteTitle
         $form.ClientSize = [System.Drawing.Size]::new(460, 300)
         $label.Size = [System.Drawing.Size]::new(420, 210)
         $label.ForeColor = [System.Drawing.Color]::Firebrick
         $ok.Location = [System.Drawing.Point]::new(350, 250)
     } else {
-        $form.Text = 'VoiceBox 卸载完成'
+        $form.Text = $texts.UninstallCompleteTitle
     }
     $null = $ok.Focus()
 }
@@ -40,7 +42,7 @@ try {
 
     [System.Windows.Forms.Application]::EnableVisualStyles()
     $form = [System.Windows.Forms.Form]::new()
-    $form.Text = '正在卸载 VoiceBox'
+    $form.Text = $texts.UninstallingVoiceBox
     $form.ClientSize = [System.Drawing.Size]::new(460, 180)
     $form.StartPosition = 'CenterScreen'
     $form.FormBorderStyle = 'FixedDialog'
@@ -50,7 +52,7 @@ try {
     $form.Font = [System.Drawing.SystemFonts]::MessageBoxFont
     $form.AutoScaleMode = 'Dpi'
     $label = [System.Windows.Forms.Label]::new()
-    $label.Text = '正在卸载 VoiceBox，请稍候…'
+    $label.Text = $texts.UninstallProgress
     $label.Location = [System.Drawing.Point]::new(20, 20)
     $label.Size = [System.Drawing.Size]::new(420, 80)
     $progress = [System.Windows.Forms.ProgressBar]::new()
@@ -59,7 +61,7 @@ try {
     $progress.Location = [System.Drawing.Point]::new(20, 110)
     $progress.Size = [System.Drawing.Size]::new(420, 18)
     $ok = [System.Windows.Forms.Button]::new()
-    $ok.Text = '确定'
+    $ok.Text = $texts.Ok
     $ok.Location = [System.Drawing.Point]::new(350, 135)
     $ok.Size = [System.Drawing.Size]::new(90, 30)
     $ok.Visible = $false
@@ -92,31 +94,31 @@ try {
             }
             $timer.Stop()
             if (-not $complete.WaitOne(0)) {
-                throw '卸载进程意外退出，请重新打开 VoiceBox 后重试。'
+                throw $texts.UninstallProcessExited
             }
 
             # Recycle the EXE first, including when it is inside the data directory.
-            $label.Text = '正在将程序文件移入回收站…'
+            $label.Text = $texts.RecyclingExecutable
             $form.Refresh()
             if (Test-Path -LiteralPath $executable -PathType Leaf) {
                 [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
                     $executable, 'OnlyErrorDialogs', 'SendToRecycleBin', 'ThrowException')
             }
             if (Test-Path -LiteralPath $executable) {
-                throw "回收程序文件未完成：$executable"
+                throw ($texts.RecycleExecutableIncomplete + ": " + $executable)
             }
-            $label.Text = '正在将配置移入回收站…'
+            $label.Text = $texts.RecyclingSettings
             $form.Refresh()
             if (Test-Path -LiteralPath $directory -PathType Container) {
                 [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
                     $directory, 'OnlyErrorDialogs', 'SendToRecycleBin', 'ThrowException')
             }
             if (Test-Path -LiteralPath $directory) {
-                throw "回收数据目录未完成：$directory"
+                throw ($texts.RecycleDataIncomplete + ": " + $directory)
             }
-            Show-UninstallResult 'VoiceBox 已完全从您的电脑中移除。' $false
+            Show-UninstallResult $texts.UninstallComplete $false
         } catch {
-            Show-UninstallResult "卸载未完成：`r`n$($_.Exception.Message)" $true
+            Show-UninstallResult ($texts.UninstallIncomplete + ":`r`n" + $_.Exception.Message) $true
         }
     })
     $form.Add_Shown({
@@ -126,13 +128,13 @@ try {
             $null = $ready.Set()
             $timer.Start()
         } catch {
-            Show-UninstallResult "卸载窗口初始化失败：`r`n$($_.Exception.Message)" $true
+            Show-UninstallResult ($texts.UninstallWindowFailed + ":`r`n" + $_.Exception.Message) $true
         }
     })
     $null = $form.ShowDialog()
 } catch {
     $null = [System.Windows.Forms.MessageBox]::Show(
-        "卸载清理失败：`r`n$($_.Exception.Message)", 'VoiceBox', 'OK', 'Error')
+        ($texts.CleanupFailed + ":`r`n" + $_.Exception.Message), 'VoiceBox', 'OK', 'Error')
     exit 1
 } finally {
     if ($timer) { $timer.Dispose() }

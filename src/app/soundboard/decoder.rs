@@ -1,9 +1,11 @@
 //! Bounded packet decoding and stereo sinc conversion; never runs on an APO thread.
+use crate::app::i18n::Text;
+use crate::app::i18n::UserContext;
 use crate::shared::{
     pcm_transport::{SAMPLE_RATE, sanitize_sample},
     resample::Resampler,
 };
-use anyhow::{Context, ensure};
+use anyhow::ensure;
 use std::{
     collections::VecDeque,
     fs::File,
@@ -38,8 +40,8 @@ impl SoundDecoder {
         let mut format = open_format(path)?;
         let track = format
             .default_track(TrackType::Audio)
-            .context("文件没有音轨")?;
-        let time_base = track.time_base.context("音轨缺少时间基准")?;
+            .user_context(Text::NoAudioTrack)?;
+        let time_base = track.time_base.user_context(Text::MissingTimeBase)?;
         if let Some(duration) = track
             .duration
             .and_then(|duration| time_base.calc_duration(duration))
@@ -59,42 +61,42 @@ impl SoundDecoder {
         let id = track.id;
         let mut ticks = symphonia::core::units::Duration::ZERO;
         while !stop.load(Ordering::Relaxed) {
-            let Some(packet) = format.next_packet().context("读取音频时长失败")? else {
+            let Some(packet) = format.next_packet().user_context(Text::ReadAudioDuration)? else {
                 break;
             };
             if packet.track_id == id {
                 ticks = ticks.saturating_add(packet.dur);
             }
         }
-        ensure!(!stop.load(Ordering::Relaxed), "已取消读取时长");
+        ensure!(!stop.load(Ordering::Relaxed), Text::DurationCancelled);
         Ok(time_base
             .calc_duration(ticks)
-            .context("音频时长无效")?
+            .user_context(Text::InvalidAudioDuration)?
             .as_secs_f64())
     }
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let format = open_format(path)?;
         let track = format
             .default_track(TrackType::Audio)
-            .context("文件没有音轨")?;
+            .user_context(Text::NoAudioTrack)?;
         let params = track
             .codec_params
             .as_ref()
             .and_then(|p| p.audio())
-            .context("音轨参数无效")?;
-        let rate = params.sample_rate.context("音轨缺少采样率")?;
+            .user_context(Text::InvalidTrackParameters)?;
+        let rate = params.sample_rate.user_context(Text::MissingSampleRate)?;
         let channels = params
             .channels
             .as_ref()
-            .context("音轨缺少声道信息")?
+            .user_context(Text::MissingChannels)?
             .count();
         ensure!(
             (8_000..=192_000).contains(&rate) && (1..=2).contains(&channels),
-            "首版支持 8–192 kHz 单声道或立体声音频"
+            Text::SupportedAudioRange
         );
         let decoder = symphonia::default::get_codecs()
             .make_audio_decoder(params, &AudioDecoderOptions::default().gapless(true))
-            .context("无法创建音频解码器")?;
+            .user_context(Text::CreateAudioDecoder)?;
         let duration = track.num_frames.map(|n| n as f64 / f64::from(rate));
         let id = track.id;
         let resamplers = [
@@ -151,7 +153,10 @@ impl SoundDecoder {
             if self.eof {
                 return Ok(None);
             }
-            let Some(packet) = self.format.next_packet().context("读取音频数据失败")?
+            let Some(packet) = self
+                .format
+                .next_packet()
+                .user_context(Text::ReadAudioData)?
             else {
                 self.eof = true;
                 // Flush the converter's filter and partial chunk, but never append
@@ -165,15 +170,18 @@ impl SoundDecoder {
             if packet.track_id != self.track_id {
                 continue;
             }
-            let audio = self.decoder.decode(&packet).context("解码音频失败")?;
+            let audio = self
+                .decoder
+                .decode(&packet)
+                .user_context(Text::DecodeAudio)?;
             ensure!(
                 audio.spec().rate() == self.rate
                     && audio.spec().channels().count() == self.channels,
-                "不支持播放中改变采样率或声道数的音频"
+                Text::ChangingAudioFormat
             );
             ensure!(
                 audio.samples_interleaved() <= 2 * 1024 * 1024,
-                "音频数据包过大"
+                Text::AudioPacketTooLarge
             );
             self.samples.resize(audio.samples_interleaved(), 0.0);
             audio.copy_to_slice_interleaved(&mut self.samples);
@@ -192,7 +200,7 @@ impl SoundDecoder {
 }
 
 fn open_format(path: &Path) -> anyhow::Result<Box<dyn FormatReader>> {
-    let file = File::open(path).context("无法打开音频文件")?;
+    let file = File::open(path).user_context(Text::OpenAudioFile)?;
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
         hint.with_extension(ext);
@@ -204,5 +212,5 @@ fn open_format(path: &Path) -> anyhow::Result<Box<dyn FormatReader>> {
             Default::default(),
             Default::default(),
         )
-        .context("不支持此音频格式，请使用 MP3、WAV、FLAC 或 OGG/Vorbis")
+        .user_context(Text::UnsupportedAudioFormat)
 }

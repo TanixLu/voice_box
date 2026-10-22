@@ -1,6 +1,8 @@
 use super::soundboard_panel::format_duration;
+use crate::app::i18n::Text;
+use crate::app::i18n::UserContext;
 use crate::app::soundboard::Soundboard;
-use anyhow::{Context, ensure};
+use anyhow::ensure;
 use egui::{Color32, FontId, Rect, Vec2, pos2, vec2};
 use windows::{
     Win32::{
@@ -16,10 +18,12 @@ use windows::{
             },
         },
     },
-    core::w,
+    core::PCWSTR,
 };
 
 const SIZE: Vec2 = vec2(360.0, 72.0);
+// This undecorated tool window uses an invariant internal title for native lookup.
+const NATIVE_TITLE: &str = "VoiceBox Playback Overlay";
 
 #[derive(Default)]
 pub(super) struct Overlay {
@@ -81,12 +85,12 @@ fn viewport_builder(ctx: &egui::Context) -> anyhow::Result<egui::ViewportBuilder
             Some((&mut work as *mut RECT).cast()),
             SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
         )
-        .context("读取主屏工作区失败")?;
+        .user_context(Text::ReadWorkArea)?;
     }
     let scale = unsafe { GetDpiForSystem() } as f32 / 96.0 * ctx.zoom_factor();
     ensure!(
         scale > 0.0 && work.right > work.left && work.bottom > work.top,
-        "主屏显示参数无效"
+        Text::InvalidDisplay
     );
     let work = Rect::from_min_max(
         pos2(work.left as f32, work.top as f32) / scale,
@@ -98,7 +102,7 @@ fn viewport_builder(ctx: &egui::Context) -> anyhow::Result<egui::ViewportBuilder
         (work.bottom() - size.y - 24.0).max(work.top()),
     );
     Ok(egui::ViewportBuilder::default()
-        .with_title("VoiceBox 播放浮层")
+        .with_title(NATIVE_TITLE)
         .with_inner_size(size)
         .with_position(position)
         .with_transparent(true)
@@ -159,7 +163,7 @@ fn draw(ui: &mut egui::Ui, name: &str, elapsed: f64, duration: Option<f64>, repe
             ui.horizontal(|ui| {
                 if repeat {
                     ui.label(
-                        egui::RichText::new("循环")
+                        egui::RichText::new(Text::Repeat.text())
                             .size(12.0)
                             .color(Color32::from_rgb(114, 180, 255)),
                     );
@@ -175,15 +179,16 @@ fn draw(ui: &mut egui::Ui, name: &str, elapsed: f64, duration: Option<f64>, repe
 
 fn remove_native_frame() -> anyhow::Result<()> {
     unsafe {
-        let window = FindWindowW(None, w!("VoiceBox 播放浮层"))?;
+        let title = crate::shared::utils::wide_null(NATIVE_TITLE);
+        let window = FindWindowW(None, PCWSTR(title.as_ptr()))?;
         let mut process_id = 0;
         GetWindowThreadProcessId(window, Some(&mut process_id));
-        ensure!(process_id == std::process::id(), "浮层窗口不属于当前进程");
+        ensure!(process_id == std::process::id(), Text::WrongOverlayProcess);
         let mut data = 0;
         if !GetWindowSubclass(window, Some(overlay_window_proc), 0, Some(&mut data)).as_bool() {
             SetWindowSubclass(window, Some(overlay_window_proc), 0, 0)
                 .ok()
-                .context("安装浮层窗口回调失败")?;
+                .user_context(Text::InstallOverlayCallback)?;
             SetWindowPos(
                 window,
                 None,

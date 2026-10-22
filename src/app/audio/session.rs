@@ -3,6 +3,8 @@ use super::{
     capture::{Recording, capture},
     playback::playback,
 };
+use crate::app::i18n::Text;
+use crate::app::i18n::{Details, Message};
 use crate::shared::settings::Settings;
 use std::{
     sync::{
@@ -47,7 +49,7 @@ pub(in crate::app) struct AudioSession {
     job: Option<Job>,
     recording: Option<Arc<Recording>>,
     processed: Option<ProcessedRecording>,
-    pub message: String,
+    pub message: Message,
     pub failed: bool,
 }
 
@@ -92,7 +94,7 @@ impl AudioSession {
         &mut self,
         wake: impl Fn() + Send + 'static,
         activity: Activity,
-        message: &str,
+        message: Text,
         operation: impl FnOnce(&AtomicBool, &dyn Fn()) -> anyhow::Result<Outcome> + Send + 'static,
     ) {
         if self.busy() {
@@ -128,7 +130,9 @@ impl AudioSession {
             }
             Err(error) => {
                 tracing::error!(?activity, "Failed to spawn audio session: {error}");
-                self.message = format!("无法开始试听操作：{error}");
+                self.message = Message::CannotStartPreview {
+                    error: Details::new(error),
+                };
                 self.failed = true;
             }
         }
@@ -138,7 +142,7 @@ impl AudioSession {
         self.begin(
             wake,
             Activity::Recording,
-            "正在打开麦克风…",
+            Text::OpeningMicrophone,
             move |stop, started| {
                 capture(&device_id, stop, started)
                     .map(|recording| Outcome::Recorded(Arc::new(recording)))
@@ -165,9 +169,9 @@ impl AudioSession {
             wake,
             activity,
             if settings.is_some() {
-                "正在准备处理后的声音…"
+                Text::PreparingProcessedAudio
             } else {
-                "正在打开播放设备…"
+                Text::OpeningPlaybackDevice
             },
             move |stop, started| {
                 let processed = if let Some(settings) = settings {
@@ -203,7 +207,7 @@ impl AudioSession {
                 Err(mpsc::TryRecvError::Disconnected) => {
                     tracing::error!(activity = ?job.activity, "Audio session exited without a result");
                     self.job = None;
-                    self.message = "试听操作未完成，请重试。".into();
+                    self.message = Text::PreviewIncomplete.into();
                     self.failed = true;
                     return;
                 }
@@ -212,8 +216,8 @@ impl AudioSession {
                 Event::Started => {
                     job.started = Some(Instant::now());
                     self.message = match job.activity {
-                        Activity::Recording => "正在录音…",
-                        Activity::PlayingOriginal | Activity::PlayingProcessed => "正在播放…",
+                        Activity::Recording => Text::Recording,
+                        Activity::PlayingOriginal | Activity::PlayingProcessed => Text::Playing,
                     }
                     .into();
                 }
@@ -227,7 +231,9 @@ impl AudioSession {
                                 channels = recording.channels,
                                 "Microphone recording completed"
                             );
-                            self.message = format!("已录音 {:.1} 秒。", recording.duration());
+                            self.message = Message::Recorded {
+                                seconds: recording.duration(),
+                            };
                             self.recording = Some(recording);
                             self.processed = None;
                         }
@@ -236,11 +242,15 @@ impl AudioSession {
                                 self.processed = Some(processed);
                             }
                             if let Some(recording) = &self.recording {
-                                self.message = format!("已录音 {:.1} 秒。", recording.duration());
+                                self.message = Message::Recorded {
+                                    seconds: recording.duration(),
+                                };
                             }
                         }
                         Err(error) => {
-                            self.message = format!("试听失败：{error:#}");
+                            self.message = Message::PreviewFailed {
+                                error: Details::new(error),
+                            };
                             self.failed = true;
                         }
                     }

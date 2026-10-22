@@ -1,4 +1,5 @@
 use super::{VoiceBoxApp, jobs::JobResult};
+use crate::app::i18n::Text;
 use crate::app::uninstall;
 
 const LICENSES: &str = concat!(
@@ -24,8 +25,8 @@ impl VoiceBoxApp {
         let available = ctx.content_rect().size();
         let response = egui::Modal::new(egui::Id::unique("full_uninstall")).show(ctx, |ui| {
             ui.set_width((available.x - 64.0).clamp(180.0, 400.0));
-            ui.heading(egui::RichText::new("卸载 VoiceBox").size(25.0));
-            ui.add(egui::Label::new("将卸载 VoiceBox 的所有组件及配置。\n\n确定要继续吗？").wrap());
+            ui.heading(egui::RichText::new(Text::UninstallVoiceBox.text()).size(25.0));
+            ui.add(egui::Label::new(Text::ConfirmFullUninstall.text()).wrap());
             ui.add_space(12.0);
             ui.horizontal_wrapped(|ui| {
                 if ui
@@ -33,16 +34,16 @@ impl VoiceBoxApp {
                         !self.jobs.busy()
                             && !self.voice.session.busy()
                             && !self.soundboard.model.busy(),
-                        egui::Button::new("卸载"),
+                        egui::Button::new(Text::Uninstall.text()),
                     )
                     .clicked()
                 {
                     self.confirm_full_uninstall = false;
-                    self.uninstalling = self.jobs.begin(ctx, "正在准备卸载…", || {
+                    self.uninstalling = self.jobs.begin(ctx, Text::PreparingUninstall, || {
                         JobResult::Uninstall(uninstall::run())
                     });
                 }
-                if ui.button("取消").clicked() {
+                if ui.button(Text::Cancel.text()).clicked() {
                     self.confirm_full_uninstall = false;
                 }
             });
@@ -59,14 +60,14 @@ impl VoiceBoxApp {
         let available = ctx.content_rect().size();
         let response = egui::Modal::new(egui::Id::unique("copyright_notice")).show(ctx, |ui| {
             ui.set_width((available.x - 64.0).clamp(180.0, 760.0));
-            ui.heading("版权声明");
+            ui.heading(Text::Licenses.text());
             ui.label(concat!(
                 "VoiceBox v",
                 env!("CARGO_PKG_VERSION"),
                 " · MIT OR Apache-2.0"
             ));
             ui.horizontal_wrapped(|ui| {
-                ui.label("Project source:");
+                ui.label(Text::ProjectSource.text());
                 ui.hyperlink("https://github.com/TanixLu/voice_box");
             });
             ui.separator();
@@ -81,10 +82,10 @@ impl VoiceBoxApp {
                 });
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button("复制全部").clicked() {
+                if ui.button(Text::CopyAll.text()).clicked() {
                     ctx.copy_text(LICENSES.to_owned());
                 }
-                if ui.button("关闭").clicked() {
+                if ui.button(Text::Close.text()).clicked() {
                     ui.close();
                 }
             });

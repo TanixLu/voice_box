@@ -1,11 +1,13 @@
 //! Elevated APO removal followed by recycling from a separate system process.
+use crate::app::i18n::Text;
+use crate::app::i18n::{Message, UserContext};
 use std::{
     os::windows::{io::AsRawHandle, process::CommandExt},
     path::Path,
     process::{Command, Stdio},
 };
 
-use anyhow::{Context, ensure};
+use anyhow::ensure;
 use windows::{
     Win32::{
         Foundation::{HANDLE, WAIT_OBJECT_0},
@@ -33,12 +35,12 @@ use crate::shared::{paths, utils::wide_null};
 // The GUI is already elevated; only self-deletion needs a separate process.
 pub fn run() -> anyhow::Result<()> {
     let directory = paths::data_dir()?;
-    let apo_dll = paths::apo_dll_path().context("读取 APO DLL 路径失败")?;
+    let apo_dll = paths::apo_dll_path().user_context(Text::ReadApoPath)?;
     let cleanup = start_cleanup(&directory)?;
     let _apartment = ShellApartment::new()?;
     setup::with_audio_service_stopped(|| {
         setup::unregister_all()?;
-        recycle(&apo_dll).context("回收 APO DLL 失败")
+        recycle(&apo_dll).user_context(Text::RecycleApo)
     })?;
     cleanup.finish()
 }
@@ -52,7 +54,7 @@ struct Cleanup {
 
 impl Cleanup {
     fn finish(mut self) -> anyhow::Result<()> {
-        unsafe { SetEvent(*self.complete).context("通知清理进程卸载完成失败")? };
+        unsafe { SetEvent(*self.complete).user_context(Text::SignalCleanup)? };
         self.committed = true;
         Ok(())
     }
@@ -74,7 +76,7 @@ fn create_event(name: &str) -> anyhow::Result<Owned<HANDLE>> {
 }
 
 fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
-    let system_directory = paths::system_dir().context("读取 Windows 系统目录失败")?;
+    let system_directory = paths::system_dir().user_context(Text::ReadSystemDirectory)?;
     let event_name = format!("Local\\VoiceBox.Cleanup.{:?}", unsafe { CoCreateGuid()? });
     let ready = create_event(&event_name)?;
     let complete_name = format!("{event_name}.complete");
@@ -97,6 +99,10 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
         ])
         .arg(include_str!("uninstall_cleanup.ps1"))
         // Paths are data, never interpolated into PowerShell source code.
+        .env(
+            "VOICEBOX_UNINSTALL_TEXTS",
+            cleanup_texts(crate::app::i18n::current_language())?,
+        )
         .env("VOICEBOX_UNINSTALL_EXE", std::env::current_exe()?)
         .env("VOICEBOX_UNINSTALL_DATA", directory)
         .env("VOICEBOX_UNINSTALL_READY", event_name)
@@ -112,12 +118,12 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .context("启动回收站清理进程失败")?;
+        .user_context(Text::StartCleanup)?;
     ensure!(
         unsafe {
             WaitForMultipleObjects(&[*ready, HANDLE(cleanup.as_raw_handle())], false, INFINITE)
         } == WAIT_OBJECT_0,
-        "回收站清理进程初始化失败，请查看错误提示后重试"
+        Text::CleanupInitializationFailed
     );
     Ok(cleanup_state)
 }
@@ -141,7 +147,11 @@ fn recycle(path: &Path) -> anyhow::Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error).with_context(|| format!("读取 {} 失败", path.display())),
+        Err(error) => {
+            return Err(error).with_user_context(|| Message::ReadPathFailed {
+                path: path.display().to_string(),
+            });
+        }
     }
     let wide_path = wide_null(path);
     unsafe {
@@ -160,14 +170,76 @@ fn recycle(path: &Path) -> anyhow::Result<()> {
         operation.PerformOperations()?;
         ensure!(
             !operation.GetAnyOperationsAborted()?.as_bool(),
-            "回收 {} 的操作已取消或未完成",
-            path.display()
+            Message::RecycleCancelled {
+                path: path.display().to_string()
+            }
         );
     }
     ensure!(
         !path.try_exists()?,
-        "{} 仍然存在，回收未完成",
-        path.display()
+        Message::RecycleIncomplete {
+            path: path.display().to_string()
+        }
     );
     Ok(())
+}
+
+fn cleanup_texts(language: crate::app::i18n::Language) -> anyhow::Result<String> {
+    let entries = [
+        (
+            "UninstallIncompleteTitle",
+            Text::UninstallIncompleteTitle.in_language(language),
+        ),
+        (
+            "UninstallCompleteTitle",
+            Text::UninstallCompleteTitle.in_language(language),
+        ),
+        (
+            "UninstallingVoiceBox",
+            Text::UninstallingVoiceBox.in_language(language),
+        ),
+        (
+            "UninstallProgress",
+            Text::UninstallProgress.in_language(language),
+        ),
+        ("Ok", Text::Ok.in_language(language)),
+        (
+            "UninstallProcessExited",
+            Text::UninstallProcessExited.in_language(language),
+        ),
+        (
+            "RecyclingExecutable",
+            Text::RecyclingExecutable.in_language(language),
+        ),
+        (
+            "RecycleExecutableIncomplete",
+            Text::RecycleExecutableIncomplete.in_language(language),
+        ),
+        (
+            "RecyclingSettings",
+            Text::RecyclingSettings.in_language(language),
+        ),
+        (
+            "RecycleDataIncomplete",
+            Text::RecycleDataIncomplete.in_language(language),
+        ),
+        (
+            "UninstallComplete",
+            Text::UninstallComplete.in_language(language),
+        ),
+        (
+            "UninstallIncomplete",
+            Text::UninstallIncomplete.in_language(language),
+        ),
+        (
+            "UninstallWindowFailed",
+            Text::UninstallWindowFailed.in_language(language),
+        ),
+        ("CleanupFailed", Text::CleanupFailed.in_language(language)),
+    ];
+    Ok(serde_json::to_string(
+        &entries
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>(),
+    )?)
 }

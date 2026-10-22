@@ -1,5 +1,6 @@
 //! Machine-wide settings shared by the GUI and APO settings watcher.
 use super::paths;
+use crate::shared::error::SharedError;
 use serde::{Deserialize, Serialize};
 use std::{
     io::{self, Read},
@@ -40,7 +41,7 @@ impl Settings {
         if !(MIN_GAIN_MILLIDB..=MAX_GAIN_MILLIDB).contains(&self.gain_millidb) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "增益必须介于 -60 和 +60 dB 之间",
+                SharedError::GainOutOfRange,
             ));
         }
         Ok(())
@@ -70,7 +71,7 @@ impl Settings {
     }
 
     pub fn try_load() -> io::Result<Self> {
-        Self::read(&paths::data_dir()?.join(paths::SETTINGS_FILE))
+        Self::read(&paths::data_dir()?.join(paths::APO_SETTINGS_FILE))
     }
 }
 
@@ -78,7 +79,7 @@ fn check_size(size: usize) -> io::Result<()> {
     if size > MAX_SETTINGS_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "VoiceBox 配置文件过大",
+            SharedError::SettingsTooLarge,
         ));
     }
     Ok(())

@@ -2,6 +2,8 @@ use super::{
     jobs::{JobResult, Jobs},
     widgets::hint,
 };
+use crate::app::i18n::Message;
+use crate::app::i18n::Text;
 use crate::app::{
     devices::{self, Microphone, PluginAction},
     setup::PluginStatus,
@@ -17,11 +19,20 @@ pub(super) struct MicrophonePanel {
 
 fn display_name(microphone: &Microphone) -> String {
     let status = match microphone.plugin_status {
-        PluginStatus::Installed => "已安装插件",
-        PluginStatus::NotInstalled => "插件未安装",
-        PluginStatus::NeedsUpdate => "插件需要更新",
+        PluginStatus::Installed => Text::PluginInstalled.text(),
+        PluginStatus::NotInstalled => Text::PluginNotInstalled.text(),
+        PluginStatus::NeedsUpdate => Text::PluginNeedsUpdate.text(),
     };
-    format!("{} ({status})", microphone.name)
+    let name = if microphone.is_default {
+        Message::DefaultDevice {
+            name: microphone.name.clone(),
+        }
+        .text()
+        .into_owned()
+    } else {
+        microphone.name.clone()
+    };
+    format!("{name} ({status})")
 }
 
 impl MicrophonePanel {
@@ -71,7 +82,7 @@ impl MicrophonePanel {
 
     pub(super) fn refresh(&mut self, ctx: &egui::Context, jobs: &mut Jobs) {
         self.confirm_uninstall = false;
-        jobs.begin(ctx, "正在读取麦克风列表…", || {
+        jobs.begin(ctx, Text::ReadingMicrophones, || {
             JobResult::Microphones(devices::enumerate_microphones())
         });
     }
@@ -83,10 +94,13 @@ impl MicrophonePanel {
         jobs: &mut Jobs,
     ) -> egui::Response {
         ui.horizontal(|ui| {
-            ui.strong("麦克风");
+            ui.strong(Text::Microphone.text());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .add_enabled(!jobs.busy() && !other_busy, egui::Button::new("刷新"))
+                    .add_enabled(
+                        !jobs.busy() && !other_busy,
+                        egui::Button::new(Text::Refresh.text()),
+                    )
                     .clicked()
                 {
                     self.refresh(ui.ctx(), jobs);
@@ -97,7 +111,7 @@ impl MicrophonePanel {
         let name = self
             .devices
             .get(self.selected)
-            .map_or_else(|| "暂无可用麦克风".to_owned(), display_name);
+            .map_or_else(|| Text::NoMicrophones.text().to_owned(), display_name);
         let response = ui
             .add_enabled_ui(
                 !jobs.busy() && !other_busy && !self.devices.is_empty(),
@@ -134,18 +148,18 @@ impl MicrophonePanel {
             self.preferred_guid = self.devices.get(self.selected).map(|mic| mic.guid.clone());
         }
         if self.devices.is_empty() {
-            hint(ui, "连接麦克风后，点击刷新重新查找。");
+            hint(ui, Text::ConnectMicrophoneHint.text());
         }
         self.plugin_ui(ui, other_busy, jobs);
         if jobs.busy() {
             ui.horizontal_top(|ui| {
                 ui.spinner();
-                ui.add(egui::Label::new(&jobs.status).wrap());
+                ui.add(egui::Label::new(jobs.status.text()).wrap());
             });
         } else if jobs.failed {
             ui.add(
                 egui::Label::new(
-                    egui::RichText::new(&jobs.status).color(ui.visuals().error_fg_color),
+                    egui::RichText::new(jobs.status.text()).color(ui.visuals().error_fg_color),
                 )
                 .wrap(),
             );
@@ -167,12 +181,12 @@ impl MicrophonePanel {
                         .add_enabled(
                             status != PluginStatus::Installed,
                             egui::Button::new(if needs_update {
-                                "更新插件"
+                                Text::UpdatePlugin.text()
                             } else {
-                                "安装插件"
+                                Text::InstallPlugin.text()
                             }),
                         )
-                        .on_hover_text("安装或更新所选麦克风的VoiceBox插件")
+                        .on_hover_text(Text::InstallPluginHint.text())
                         .clicked()
                         && !jobs.busy()
                     {
@@ -182,9 +196,9 @@ impl MicrophonePanel {
                         jobs.begin(
                             ui.ctx(),
                             if needs_update {
-                                "正在更新插件…"
+                                Text::UpdatingPlugin
                             } else {
-                                "正在安装插件…"
+                                Text::InstallingPlugin
                             },
                             move || {
                                 JobResult::Plugin(devices::execute_plugin_action(
@@ -199,7 +213,7 @@ impl MicrophonePanel {
                         if ui
                             .add_enabled(
                                 status != PluginStatus::NotInstalled,
-                                egui::Button::new("卸载插件"),
+                                egui::Button::new(Text::UninstallPlugin.text()),
                             )
                             .clicked()
                             && !jobs.busy()
@@ -214,18 +228,20 @@ impl MicrophonePanel {
             if self.confirm_uninstall {
                 ui.separator();
                 ui.add(
-                    egui::Label::new(format!(
-                        "确认卸载此麦克风的VoiceBox插件？\n{}",
-                        self.devices[self.selected].name
-                    ))
+                    egui::Label::new(
+                        Message::ConfirmPluginUninstall {
+                            name: self.devices[self.selected].name.clone(),
+                        }
+                        .text(),
+                    )
                     .wrap(),
                 );
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button("确认卸载").clicked() && !jobs.busy() {
+                    if ui.button(Text::ConfirmUninstall.text()).clicked() && !jobs.busy() {
                         self.confirm_uninstall = false;
                         let guid = self.devices[self.selected].guid.clone();
                         let guids = self.devices.iter().map(|mic| mic.guid.clone()).collect();
-                        jobs.begin(ui.ctx(), "正在卸载插件…", move || {
+                        jobs.begin(ui.ctx(), Text::UninstallingPlugin, move || {
                             JobResult::Plugin(devices::execute_plugin_action(
                                 guid,
                                 guids,
@@ -233,7 +249,7 @@ impl MicrophonePanel {
                             ))
                         });
                     }
-                    if ui.button("取消").clicked() {
+                    if ui.button(Text::Cancel.text()).clicked() {
                         self.confirm_uninstall = false;
                     }
                 });

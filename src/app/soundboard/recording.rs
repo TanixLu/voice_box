@@ -1,7 +1,9 @@
 //! Recording/import tool jobs; preview ranges always refer to complete frames.
 use super::library::{Sound, is_valid_file_name};
 use crate::app::audio::{capture::Recording, loopback, playback::playback};
-use anyhow::{Context, ensure};
+use crate::app::i18n::Text;
+use crate::app::i18n::{Details, Message, UserContext};
+use anyhow::ensure;
 use std::{
     fs::{self, OpenOptions},
     io::{BufWriter, Write},
@@ -110,7 +112,7 @@ pub(in crate::app) struct Recorder {
     pending_save: Option<(Selection, String)>,
     pending_record: bool,
     pub clip: Option<Clip>,
-    pub error: String,
+    pub error: Message,
 }
 impl Recorder {
     pub fn activity(&self) -> Option<Activity> {
@@ -208,7 +210,9 @@ impl Recorder {
                     ?activity,
                     "Failed to spawn recording import operation: {error}"
                 );
-                self.error = format!("无法开始操作：{error}");
+                self.error = Message::CannotStartOperation {
+                    error: Details::new(error),
+                };
             }
         }
     }
@@ -300,7 +304,9 @@ impl Recorder {
                         Ok(Outcome::Previewed) => {}
                         Ok(Outcome::Saved(sound)) => return Some(sound),
                         Err(error) => {
-                            self.error = format!("操作失败：{error:#}");
+                            self.error = Message::OperationFailed {
+                                error: Details::new(error),
+                            };
                             self.pending_preview = None;
                         }
                     }
@@ -313,7 +319,7 @@ impl Recorder {
                     );
                     self.job = None;
                     self.pending_preview = None;
-                    self.error = "录音工具意外退出，请重试".into();
+                    self.error = Text::RecorderExited.into();
                 }
             }
         }
@@ -360,11 +366,11 @@ fn write_wave(
     let total = audio.samples.len() / audio.channels as usize;
     ensure!(
         selection.start < selection.end && selection.end <= total,
-        "截取范围无效"
+        Text::InvalidSelection
     );
     ensure!(
         audio.channels == 2 && audio.sample_rate == 48_000,
-        "录音格式无效"
+        Text::InvalidRecordingFormat
     );
     let samples = &audio.samples[selection.start * 2..selection.end * 2];
     let bytes = u32::try_from(samples.len() * 4)?;
@@ -398,11 +404,8 @@ fn save_clip(
     name: &str,
 ) -> anyhow::Result<Sound> {
     let name = name.trim();
-    ensure!(
-        is_valid_file_name(name),
-        "名称不能为空，也不能包含路径或 Windows 文件名保留字符"
-    );
-    fs::create_dir_all(directory).context("无法创建音效库目录")?;
+    ensure!(is_valid_file_name(name), Text::InvalidRecordingName);
+    fs::create_dir_all(directory).user_context(Text::CannotCreateSoundLibrary)?;
     for number in 1_u64.. {
         let file_name = if number == 1 {
             format!("{name}.wav")
@@ -413,7 +416,7 @@ fn save_clip(
         let file = match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error).context("无法创建录音文件"),
+            Err(error) => return Err(error).user_context(Text::CreateRecordingFile),
         };
         let mut output = BufWriter::new(file);
         let result = write_wave(&mut output, audio, selection).and_then(|()| {
@@ -424,7 +427,7 @@ fn save_clip(
         drop(output);
         if let Err(error) = result {
             let _ = fs::remove_file(&path);
-            return Err(error).context("保存录音失败");
+            return Err(error).user_context(Text::SaveRecording);
         }
         return Ok(Sound {
             file_name,

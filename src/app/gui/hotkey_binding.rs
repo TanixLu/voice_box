@@ -1,4 +1,6 @@
 use super::widgets::{ButtonIcon, ICON_BUTTON_SIZE, icon_button};
+use crate::app::i18n::Text;
+use crate::app::i18n::{Details, Message};
 use crate::app::{
     hotkeys::{self, Hotkey, Hotkeys},
     soundboard::{
@@ -17,20 +19,26 @@ pub(super) enum PlaybackAction {
     Random(Option<Hotkey>),
 }
 
+#[derive(Default)]
 pub(super) struct HotkeyManager {
     listener: Option<Hotkeys>,
     bindings: Vec<Option<Hotkey>>,
     attempted_bindings: Vec<Option<Hotkey>>,
     revision: u64,
     capture: Option<KeyCapture>,
-    registration_error: String,
-    pub(super) message: String,
+    registration_error: Message,
+    pub(super) message: Message,
 }
 impl HotkeyManager {
     pub(super) fn new(ctx: &egui::Context) -> Self {
         let (listener, message) = match Hotkeys::new(super::wake_ui(ctx.clone())) {
-            Ok(listener) => (Some(listener), String::new()),
-            Err(error) => (None, format!("无法启用全局快捷键：{error}")),
+            Ok(listener) => (Some(listener), Message::default()),
+            Err(error) => (
+                None,
+                Message::EnableHotkeysFailed {
+                    error: Details::new(error),
+                },
+            ),
         };
         Self {
             listener,
@@ -38,14 +46,14 @@ impl HotkeyManager {
             attempted_bindings: Vec::new(),
             revision: 0,
             capture: None,
-            registration_error: String::new(),
+            registration_error: Message::default(),
             message,
         }
     }
     pub(super) fn target(&self) -> Option<BindingTarget> {
         self.capture.as_ref().map(|capture| capture.target)
     }
-    pub(super) fn error(&self) -> &str {
+    pub(super) fn error(&self) -> &Message {
         if self.message.is_empty() {
             &self.registration_error
         } else {
@@ -58,7 +66,7 @@ impl HotkeyManager {
     pub(super) fn validate(&self, key: Hotkey) -> anyhow::Result<()> {
         self.listener
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("全局快捷键服务不可用"))?
+            .ok_or_else(|| anyhow::anyhow!(Text::HotkeyServiceUnavailable))?
             .validate(key)
     }
     pub(super) fn poll(&mut self, enabled: bool, soundboard: &Soundboard) -> Vec<PlaybackAction> {
@@ -93,7 +101,7 @@ impl HotkeyManager {
                         self.bindings = bindings.clone();
                         self.registration_error.clear();
                     }
-                    Err(error) => self.registration_error = format!("{error:#}"),
+                    Err(error) => self.registration_error = Message::error(error),
                 }
                 self.attempted_bindings = bindings;
             }
@@ -167,7 +175,7 @@ impl HotkeyManager {
             Ok(()) => self.message.clear(),
             Err(error) => {
                 tracing::error!("Failed to bind hotkey: {error:#}");
-                self.message = format!("{error:#}");
+                self.message = Message::error(error);
             }
         }
     }
@@ -234,9 +242,9 @@ pub(super) fn hotkey_editor(
             let mut capture = false;
             let hotkey = *key;
             let button_text = if binding {
-                "请按键…"
+                Text::PressKey.text()
             } else {
-                "绑定快捷键"
+                Text::BindHotkey.text()
             };
             let available_width = ui.available_width();
             let button_width = if hotkey.is_some() {
@@ -282,9 +290,9 @@ pub(super) fn hotkey_editor(
                         capture = ui
                             .add_enabled(enabled, egui::Button::new(button_text).truncate())
                             .on_hover_text(if binding {
-                                "请按下快捷键，按 Esc 或再次点击取消"
+                                Text::CaptureHotkeyHint.text()
                             } else {
-                                "绑定快捷键"
+                                Text::BindHotkey.text()
                             })
                             .clicked();
                     }

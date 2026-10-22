@@ -1,6 +1,8 @@
 use super::decoder::SoundDecoder;
+use crate::app::i18n::Text;
+use crate::app::i18n::{Details, Message, UserContext};
 use crate::{app::hotkeys::Hotkey, shared::paths};
-use anyhow::{Context, ensure};
+use anyhow::ensure;
 use std::{
     collections::HashSet,
     fs::{self, OpenOptions},
@@ -17,7 +19,7 @@ pub(in crate::app) struct Sound {
     #[serde(skip)]
     pub duration: Option<f64>,
     #[serde(skip)]
-    pub duration_error: Option<String>,
+    pub duration_error: Option<Message>,
 }
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -32,7 +34,10 @@ impl Library {
         key: Option<Hotkey>,
         save: impl FnOnce(&Self) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
-        let sound = self.sounds.get_mut(index).context("音效不存在")?;
+        let sound = self
+            .sounds
+            .get_mut(index)
+            .user_context(Text::SoundNotFound)?;
         let previous = std::mem::replace(&mut sound.hotkey, key);
         if let Err(error) = save(self) {
             self.sounds[index].hotkey = previous;
@@ -47,12 +52,12 @@ impl Library {
         name: &str,
         save: impl FnOnce(&Self) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
-        let sound = self.sounds.get_mut(index).context("音效不存在")?;
+        let sound = self
+            .sounds
+            .get_mut(index)
+            .user_context(Text::SoundNotFound)?;
         let file_name = name.trim();
-        ensure!(
-            is_valid_file_name(file_name),
-            "名称不能为空，也不能包含路径、控制字符或 Windows 文件名保留字符"
-        );
+        ensure!(is_valid_file_name(file_name), Text::InvalidFileName);
         if file_name == sound.file_name {
             return save(self);
         }
@@ -65,17 +70,16 @@ impl Library {
                 windows::Win32::Storage::FileSystem::MOVE_FILE_FLAGS(0),
             )
         };
-        move_file(&sound.path, &destination)
-            .context("重命名音效文件失败，请检查名称是否重复或文件是否被占用")?;
+        move_file(&sound.path, &destination).user_context(Text::RenameSoundFailed)?;
         let original_path = std::mem::replace(&mut sound.path, destination);
         let original_name = std::mem::replace(&mut sound.file_name, file_name.to_owned());
         if let Err(error) = save(self) {
             let sound = &mut self.sounds[index];
             if let Err(rollback) = move_file(&sound.path, &original_path) {
-                return Err(error.context(format!(
-                    "无法还原音效文件名：{rollback}；音频保留在 {}",
-                    sound.path.display()
-                )));
+                return Err(error.user_context(Message::RestoreFileName {
+                    error: Details::new(rollback),
+                    path: sound.path.display().to_string(),
+                }));
             }
             sound.path = original_path;
             sound.file_name = original_name;
@@ -85,7 +89,7 @@ impl Library {
     }
 
     pub(super) fn remove(&mut self, index: usize) -> anyhow::Result<Sound> {
-        let sound = self.sounds.get(index).context("音效不存在")?;
+        let sound = self.sounds.get(index).user_context(Text::SoundNotFound)?;
         if let Err(error) = fs::remove_file(&sound.path)
             && error.kind() != std::io::ErrorKind::NotFound
         {
@@ -97,7 +101,7 @@ impl Library {
 
 pub(super) struct ImportedSounds {
     pub(super) sounds: Vec<Sound>,
-    pub(super) errors: Vec<String>,
+    pub(super) errors: Vec<Message>,
 }
 
 pub(in crate::app) fn is_valid_file_name(name: &str) -> bool {
@@ -137,21 +141,26 @@ pub(super) fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSoun
         return Ok(imported);
     }
     let directory = paths::sound_library_dir()?;
-    fs::create_dir_all(&directory).context("创建音效库目录失败")?;
+    fs::create_dir_all(&directory).user_context(Text::CreateSoundLibrary)?;
     let canonical_directory = directory.canonicalize()?;
     let mut seen = HashSet::new();
     for source in sources {
         let result = (|| -> anyhow::Result<Sound> {
-            let source = source.canonicalize().context("读取原音频路径失败")?;
-            ensure!(source.is_file(), "所选音频不是文件");
+            let source = source
+                .canonicalize()
+                .user_context(Text::ReadSourceAudioPath)?;
+            ensure!(source.is_file(), Text::AudioIsNotFile);
             let original_name = source
                 .file_name()
                 .and_then(|name| name.to_str())
-                .context("音频文件名无效")?;
-            ensure!(is_valid_file_name(original_name), "音频文件名无效");
+                .user_context(Text::InvalidAudioFileName)?;
+            ensure!(
+                is_valid_file_name(original_name),
+                Text::InvalidAudioFileName
+            );
             {
                 let mut decoder = SoundDecoder::open(&source)?;
-                ensure!(decoder.next_frame()?.is_some(), "音频文件没有可播放的数据");
+                ensure!(decoder.next_frame()?.is_some(), Text::NoPlayableAudio);
                 while decoder.next_frame()?.is_some() {}
             }
             let (file_name, path) = if source.parent() == Some(canonical_directory.as_path()) {
@@ -160,7 +169,7 @@ pub(super) fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSoun
                 let stem = source
                     .file_stem()
                     .and_then(|name| name.to_str())
-                    .context("音频文件名无效")?;
+                    .user_context(Text::InvalidAudioFileName)?;
                 let mut number = 1_u64;
                 loop {
                     let mut file_name = if number == 1 {
@@ -186,14 +195,14 @@ pub(super) fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSoun
                             drop(output);
                             if let Err(error) = copied {
                                 let _ = fs::remove_file(&destination);
-                                return Err(error).context("复制音频到音效库失败");
+                                return Err(error).user_context(Text::CopySoundFile);
                             }
                             break (file_name, destination);
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                             number += 1
                         }
-                        Err(error) => return Err(error).context("创建音效库文件失败"),
+                        Err(error) => return Err(error).user_context(Text::CreateSoundFile),
                     }
                 }
             };
@@ -208,9 +217,10 @@ pub(super) fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSoun
         match result {
             Ok(sound) if seen.insert(sound.file_name.to_lowercase()) => imported.sounds.push(sound),
             Ok(_) => {}
-            Err(error) => imported
-                .errors
-                .push(format!("{}：{error:#}", source.display())),
+            Err(error) => imported.errors.push(Message::ImportFileFailed {
+                path: source.display().to_string(),
+                error: Details::new(error),
+            }),
         }
     }
     Ok(imported)

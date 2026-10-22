@@ -1,3 +1,4 @@
+use crate::app::i18n::Text;
 pub(super) const ICON_BUTTON_SIZE: f32 = 30.0;
 
 #[derive(Clone, Copy)]
@@ -35,9 +36,9 @@ pub(super) fn icon_button(ui: &mut egui::Ui, enabled: bool, icon: ButtonIcon) ->
             painter.line_segment([point(-4.0, -4.0), point(4.0, 4.0)], stroke);
             painter.line_segment([point(-4.0, 4.0), point(4.0, -4.0)], stroke);
             if matches!(icon, ButtonIcon::Close) {
-                ("关闭", "关闭，放弃未保存的修改")
+                (Text::Close.text(), Text::CloseDiscardChanges.text())
             } else {
-                ("清除快捷键", "清除快捷键")
+                (Text::ClearHotkey.text(), Text::ClearHotkey.text())
             }
         }
         ButtonIcon::Delete => {
@@ -62,7 +63,7 @@ pub(super) fn icon_button(ui: &mut egui::Ui, enabled: bool, icon: ButtonIcon) ->
             ));
             painter.line_segment([point(-2.0, -1.0), point(-1.5, 4.0)], stroke);
             painter.line_segment([point(2.0, -1.0), point(1.5, 4.0)], stroke);
-            ("删除音效", "删除音效，点击后再次确认")
+            (Text::DeleteSound.text(), Text::DeleteSoundHint.text())
         }
         ButtonIcon::ConfirmDelete => {
             painter.add(egui::Shape::line(
@@ -70,8 +71,8 @@ pub(super) fn icon_button(ui: &mut egui::Ui, enabled: bool, icon: ButtonIcon) ->
                 stroke,
             ));
             (
-                "确认删除音效",
-                "再次点击确认删除音效及音效库副本，保留原文件；点击其他位置或按 Esc 取消",
+                Text::ConfirmDeleteSound.text(),
+                Text::ConfirmDeleteSoundHint.text(),
             )
         }
     };
@@ -109,9 +110,9 @@ pub(super) fn play_button(ui: &mut egui::Ui, enabled: bool, active: bool) -> egu
             egui::Role::Button,
             enabled,
             if active {
-                "停止播放"
+                Text::StopPlayback.text()
             } else {
-                "播放音效"
+                Text::PlaySound.text()
             },
         )
     });

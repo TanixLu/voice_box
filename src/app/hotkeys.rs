@@ -1,5 +1,7 @@
 //! Registered global shortcuts run on a message thread; simulated keys use RAII.
-use anyhow::Context;
+use crate::app::i18n::Text;
+use crate::app::i18n::{Details, Message, UserContext};
+
 use std::{mem::size_of, sync::mpsc, thread::JoinHandle};
 use windows::Win32::{
     Foundation::{LPARAM, WPARAM},
@@ -32,13 +34,19 @@ impl Hotkey {
         key_name(self.virtual_key_code).is_some() && self.modifiers & !0xf == 0
     }
     pub fn label(self) -> String {
+        self.label_in_language(crate::app::i18n::current_language())
+    }
+    pub fn label_in_language(self, language: crate::app::i18n::Language) -> String {
         let mut parts = Vec::new();
         for (flag, name) in [(2, "Ctrl"), (4, "Shift"), (1, "Alt"), (8, "Win")] {
             if self.modifiers & flag != 0 {
                 parts.push(name.to_owned());
             }
         }
-        parts.push(key_name(self.virtual_key_code).unwrap_or_else(|| "无效按键".into()));
+        parts.push(
+            key_name(self.virtual_key_code)
+                .unwrap_or_else(|| Text::InvalidKey.in_language(language).into()),
+        );
         parts.join(" + ")
     }
     pub fn pressed() -> Option<Self> {
@@ -132,7 +140,7 @@ impl Registration {
     }
 
     fn new(key: Hotkey) -> anyhow::Result<Self> {
-        anyhow::ensure!(key.is_valid(), "无效快捷键：{}", key.label());
+        anyhow::ensure!(key.is_valid(), Message::InvalidHotkey { key });
         unsafe {
             RegisterHotKey(
                 None,
@@ -141,7 +149,7 @@ impl Registration {
                 u32::from(key.virtual_key_code),
             )
         }
-        .with_context(|| format!("无法注册 {}，可能已被其他程序占用或由系统保留", key.label()))?;
+        .with_user_context(|| Message::RegisterHotkey { key })?;
         Ok(Self(key))
     }
 }
@@ -203,7 +211,7 @@ enum Command {
 
 pub(super) enum Event {
     Trigger { index: usize, revision: u64 },
-    Error(String),
+    Error(Message),
 }
 pub(super) struct Hotkeys {
     sender: mpsc::Sender<Command>,
@@ -230,7 +238,9 @@ impl Hotkeys {
                     let result = unsafe { GetMessageW(&mut msg, None, 0, 0) }.0;
                     if result == -1 {
                         let error = windows::core::Error::from_thread();
-                        let _ = events.send(Event::Error(format!("等待全局快捷键失败：{error}")));
+                        let _ = events.send(Event::Error(Message::WaitHotkeysFailed {
+                            error: Details::new(error),
+                        }));
                         wake();
                         break;
                     }
@@ -261,7 +271,7 @@ impl Hotkeys {
                 }
                 // Registrations are released here, on the thread that owns them.
             })?;
-        let thread_id = started.recv().context("快捷键线程启动失败")?;
+        let thread_id = started.recv().user_context(Text::HotkeyThreadStart)?;
         Ok(Self {
             sender,
             receiver,
@@ -277,10 +287,10 @@ impl Hotkeys {
         let (reply, result) = mpsc::channel();
         self.sender
             .send(command(reply))
-            .context("快捷键线程已退出")?;
+            .user_context(Text::HotkeyThreadExited)?;
         unsafe { PostThreadMessageW(self.thread_id, WM_COMMAND, WPARAM(0), LPARAM(0)) }
-            .context("无法通知快捷键线程")?;
-        result.recv().context("快捷键线程未返回结果")?
+            .user_context(Text::NotifyHotkeyThread)?;
+        result.recv().user_context(Text::HotkeyResultMissing)?
     }
 
     pub fn configure(&self, revision: u64, bindings: Vec<Option<Hotkey>>) -> anyhow::Result<()> {
@@ -309,7 +319,7 @@ impl Drop for Hotkeys {
 pub(super) struct HeldKeys(Vec<u16>);
 impl HeldKeys {
     pub fn press(key: Hotkey) -> anyhow::Result<Self> {
-        anyhow::ensure!(key.is_valid_for_hold(), "自动按键无效");
+        anyhow::ensure!(key.is_valid_for_hold(), Text::InvalidHoldKey);
         let mut held = Self::default();
         let mut keys = Vec::new();
         for (flag, vk) in [(2, 0x11), (4, 0x10), (1, 0x12), (8, 0x5b)] {
@@ -321,11 +331,7 @@ impl HeldKeys {
         for vk in keys {
             // Never release a key the user was already holding themselves.
             if !is_key_down(vk) {
-                anyhow::ensure!(
-                    send_key(vk, false),
-                    "无法自动按住 {}，请检查游戏与 VoiceBox 的权限",
-                    key.label()
-                );
+                anyhow::ensure!(send_key(vk, false), Message::HoldHotkey { key });
                 held.0.push(vk);
             }
         }

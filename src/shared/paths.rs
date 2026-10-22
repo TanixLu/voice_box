@@ -8,8 +8,7 @@ use windows::Win32::{
     UI::Shell::{FOLDERID_ProgramData, KF_FLAG_DEFAULT, SHGetKnownFolderPath},
 };
 
-pub const SETTINGS_FILE: &str = "settings.json";
-pub const SOUNDBOARD_SETTINGS_FILE: &str = "soundboard.json";
+pub const APO_SETTINGS_FILE: &str = "apo_settings.json";
 
 pub fn windows_dir() -> io::Result<PathBuf> {
     directory_from_api(|buffer| unsafe { GetSystemWindowsDirectoryW(Some(buffer)) })

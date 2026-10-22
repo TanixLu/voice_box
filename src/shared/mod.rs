@@ -1,6 +1,8 @@
 //! Audio primitives, settings, EXE/APO contracts and Windows helpers shared by both targets.
 #[allow(dead_code)] // These shared modules have different consumers in the two targets.
 pub mod audio;
+#[allow(dead_code)]
+pub mod error;
 #[allow(dead_code)] // Windows installation paths are only used by the EXE.
 pub mod paths;
 #[allow(dead_code)]

@@ -42,6 +42,7 @@ ul_unas_rs = "0.1.1"
 wasapi = "0.26.0"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
+    "Win32_Globalization",
     "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_Media_Audio",

@@ -1,5 +1,7 @@
+use crate::app::i18n::Text;
+use crate::app::i18n::{Details, Message};
 use crate::{
-    app::{settings_writer, soundboard::config::Config as SoundboardConfig},
+    app::{app_settings, settings_writer},
     shared::{paths, settings::Settings},
 };
 
@@ -29,7 +31,7 @@ fn wake_ui(ctx: egui::Context) -> impl Fn() + Clone + Send + 'static {
 
 pub fn run() -> anyhow::Result<()> {
     let settings = Settings::try_load()?;
-    let soundboard_config = SoundboardConfig::try_load()?;
+    let app_settings = app_settings::Settings::try_load()?;
     let icon =
         eframe::icon_data::from_png_bytes(include_bytes!(concat!(env!("OUT_DIR"), "/icon.png")))?;
     let options = eframe::NativeOptions {
@@ -44,9 +46,13 @@ pub fn run() -> anyhow::Result<()> {
     eframe::run_native(
         "VoiceBox",
         options,
-        Box::new(move |cc| Ok(Box::new(VoiceBoxApp::new(cc, settings, soundboard_config)))),
+        Box::new(move |cc| Ok(Box::new(VoiceBoxApp::new(cc, settings, app_settings)))),
     )
-    .map_err(|error| anyhow::anyhow!("无法打开 VoiceBox 窗口：{error}"))?;
+    .map_err(|error| {
+        anyhow::anyhow!(Message::OpenWindowFailed {
+            error: Details::new(anyhow::anyhow!(error.to_string()))
+        })
+    })?;
     // The cleanup process waits for this entire process to exit, including all
     // eframe persistence writes, before recycling the data directory.
     Ok(())
@@ -75,6 +81,7 @@ enum Tab {
 
 struct VoiceBoxApp {
     tab: Tab,
+    language_preference: crate::app::i18n::LanguagePreference,
     zoom_factor: f32,
     microphones: MicrophonePanel,
     voice: VoicePanel,
@@ -94,7 +101,7 @@ impl VoiceBoxApp {
     fn new(
         cc: &eframe::CreationContext<'_>,
         settings: Settings,
-        soundboard_config: SoundboardConfig,
+        app_settings: app_settings::Settings,
     ) -> Self {
         let ctx = &cc.egui_ctx;
         let preferences: UiPreferences = cc
@@ -108,10 +115,11 @@ impl VoiceBoxApp {
         apply_style(ctx);
         let mut app = Self {
             tab: Tab::Voice,
+            language_preference: app_settings.language,
             zoom_factor: ctx.zoom_factor(),
             microphones: MicrophonePanel::new(preferences.selected_microphone_guid),
             voice: VoicePanel::new(settings),
-            soundboard: SoundboardPanel::new(soundboard_config),
+            soundboard: SoundboardPanel::new(app_settings.soundboard),
             hotkeys: HotkeyManager::new(ctx),
             jobs: Jobs::default(),
             close_enabled: true,
@@ -165,11 +173,11 @@ impl VoiceBoxApp {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(64.0);
-                    ui.heading(egui::RichText::new("正在卸载 VoiceBox").size(25.0));
+                    ui.heading(egui::RichText::new(Text::UninstallingVoiceBox.text()).size(25.0));
                     ui.add_space(20.0);
                     ui.spinner();
                     ui.add_space(12.0);
-                    ui.label(&self.jobs.status);
+                    ui.label(self.jobs.status.text());
                 });
             });
             return;
@@ -186,19 +194,21 @@ impl VoiceBoxApp {
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(20))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.tab, Tab::Voice, "语音");
-                    ui.selectable_value(&mut self.tab, Tab::Soundboard, "音效");
+                    ui.selectable_value(&mut self.tab, Tab::Voice, Text::Voice.text());
+                    ui.selectable_value(&mut self.tab, Tab::Soundboard, Text::Soundboard.text());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let more = ui.button("其他");
+                        let more = ui.button(Text::More.text());
                         egui::Popup::menu(&more)
                             .align(egui::RectAlign::BOTTOM)
                             .show(|ui| {
+                                self.language_ui(ui);
+                                ui.separator();
                                 if ui
                                     .add_enabled(
                                         !self.jobs.busy()
                                             && !self.voice.session.busy()
                                             && !self.soundboard.model.busy(),
-                                        egui::Button::new("完全卸载"),
+                                        egui::Button::new(Text::FullUninstall.text()),
                                     )
                                     .clicked()
                                 {
@@ -206,7 +216,7 @@ impl VoiceBoxApp {
                                     self.confirm_full_uninstall = true;
                                     ui.close();
                                 }
-                                if ui.button("版权声明").clicked() {
+                                if ui.button(Text::Licenses.text()).clicked() {
                                     self.show_licenses = true;
                                     ui.close();
                                 }
@@ -247,7 +257,7 @@ impl VoiceBoxApp {
                                             {
                                                 self.jobs.begin(
                                                     ui.ctx(),
-                                                    "正在保存设置…",
+                                                    Text::SavingSettings,
                                                     move || JobResult::Saved {
                                                         result: settings_writer::save(
                                                             settings.clone(),
@@ -371,13 +381,45 @@ impl eframe::App for VoiceBoxApp {
             Ok(visible) => self.overlay_visible = visible,
             Err(error) => {
                 tracing::warn!("Failed to show playback overlay: {error:#}");
-                self.soundboard
-                    .model
-                    .set_error(format!("显示播放浮层失败：{error:#}"));
+                self.soundboard.model.set_error(Message::ShowOverlayFailed {
+                    error: Details::new(error),
+                });
             }
         }
     }
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0; 4]
+    }
+}
+
+impl VoiceBoxApp {
+    fn language_ui(&mut self, ui: &mut egui::Ui) {
+        use crate::app::i18n::{self, LanguagePreference};
+        let previous = self.language_preference;
+        ui.label(Text::LanguageLabel.text());
+        for preference in [
+            LanguagePreference::System,
+            LanguagePreference::English,
+            LanguagePreference::SimplifiedChinese,
+        ] {
+            ui.selectable_value(
+                &mut self.language_preference,
+                preference,
+                preference.label(),
+            );
+        }
+        if previous != self.language_preference {
+            match app_settings::save_language(self.language_preference) {
+                Ok(()) => {
+                    i18n::set_language(self.language_preference.resolve());
+                    ui.ctx().request_repaint();
+                }
+                Err(error) => {
+                    self.language_preference = previous;
+                    self.jobs.status = Message::error(error);
+                    self.jobs.failed = true;
+                }
+            }
+        }
     }
 }

@@ -1,7 +1,9 @@
 //! Use the installed APO DLL for offline preview, unloading after processing.
+use crate::app::i18n::Text;
+use crate::app::i18n::UserContext;
 use std::fs;
 
-use anyhow::{Context, anyhow, ensure};
+use anyhow::{anyhow, ensure};
 use windows::{
     Win32::{
         Foundation::{FreeLibrary, HMODULE},
@@ -21,14 +23,14 @@ struct PreviewDll(HMODULE);
 
 impl PreviewDll {
     fn load() -> anyhow::Result<Self> {
-        let apo_dll = paths::apo_dll_path().context("读取试听组件路径失败")?;
+        let apo_dll = paths::apo_dll_path().user_context(Text::ReadPreviewPath)?;
         // The unversioned ABI requires the installed DLL to match this EXE.
         ensure!(
             fs::read(&apo_dll)
-                .context("无法读取试听组件，请先安装或更新插件")?
+                .user_context(Text::ReadPreviewComponent)?
                 .as_slice()
                 == apo_dll_bytes(),
-            "已安装的试听组件与当前程序不一致，请先更新插件"
+            Text::PreviewComponentOutdated
         );
         let path = wide_null(&apo_dll);
         let module = unsafe {
@@ -38,13 +40,13 @@ impl PreviewDll {
                 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
             )
         }
-        .context("加载试听组件失败，请先安装或更新插件")?;
+        .user_context(Text::LoadPreviewComponent)?;
         Ok(Self(module))
     }
 
     fn resolve_process_function(&self) -> anyhow::Result<preview::Process> {
         let address = unsafe { GetProcAddress(self.0, PCSTR(preview::PROCESS_SYMBOL.as_ptr())) }
-            .ok_or_else(|| anyhow!("试听组件缺少处理接口，请更新 VoiceBox"))?;
+            .ok_or_else(|| anyhow!(Text::PreviewInterfaceMissing))?;
         // Matching DLL bytes above ensure this shared signature is compatible.
         Ok(unsafe {
             std::mem::transmute::<unsafe extern "system" fn() -> isize, preview::Process>(address)
@@ -69,7 +71,7 @@ pub(super) fn process(recording: &Recording, settings: &Settings) -> anyhow::Res
                 .samples
                 .len()
                 .is_multiple_of(recording.channels as usize),
-        "录音数据无效"
+        Text::InvalidRecordingData
     );
     let dll = PreviewDll::load()?;
     let process = dll.resolve_process_function()?;
@@ -86,6 +88,6 @@ pub(super) fn process(recording: &Recording, settings: &Settings) -> anyhow::Res
         )
         .ok()
     }
-    .context("处理试听录音失败")?;
+    .user_context(Text::ProcessPreview)?;
     Ok(output)
 }

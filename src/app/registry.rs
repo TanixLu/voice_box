@@ -1,3 +1,4 @@
+use crate::app::i18n::Message;
 use winreg::{
     RegKey,
     enums::{
@@ -7,7 +8,11 @@ use winreg::{
     types::{FromRegValue, ToRegValue},
 };
 fn split_registry_key_path(full_path: &str) -> anyhow::Result<(RegKey, &str)> {
-    let error_fn = || anyhow::anyhow!("Invalid registry full_path: {}", full_path);
+    let error_fn = || {
+        anyhow::anyhow!(Message::InvalidRegistryPath {
+            path: full_path.to_owned()
+        })
+    };
 
     let (root_str, tail) = full_path.split_once('\\').ok_or_else(error_fn)?;
 
@@ -20,15 +25,22 @@ fn split_registry_key_path(full_path: &str) -> anyhow::Result<(RegKey, &str)> {
         _ => return Err(error_fn()),
     };
 
-    anyhow::ensure!(!tail.is_empty(), "Invalid registry key path: {full_path}");
+    anyhow::ensure!(
+        !tail.is_empty(),
+        Message::InvalidRegistryPath {
+            path: full_path.to_owned()
+        }
+    );
     Ok((root, tail))
 }
 
 fn split_registry_value_path(full_path: &str) -> anyhow::Result<(RegKey, &str, &str)> {
     let (root, tail) = split_registry_key_path(full_path)?;
-    let (subkey, name) = tail
-        .rsplit_once('\\')
-        .ok_or_else(|| anyhow::anyhow!("Invalid registry full_path: {full_path}"))?;
+    let (subkey, name) = tail.rsplit_once('\\').ok_or_else(|| {
+        anyhow::anyhow!(Message::InvalidRegistryPath {
+            path: full_path.to_owned()
+        })
+    })?;
     Ok((root, subkey, name))
 }
 

@@ -1,4 +1,5 @@
 use super::{decoder::SoundDecoder, library::Library};
+use crate::app::i18n::{Details, Message};
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -10,7 +11,7 @@ use std::{
 };
 
 struct DurationJob {
-    receiver: mpsc::Receiver<(PathBuf, Result<f64, String>)>,
+    receiver: mpsc::Receiver<(PathBuf, Result<f64, Message>)>,
     stop: Arc<AtomicBool>,
 }
 
@@ -34,7 +35,7 @@ impl DurationReader {
         &mut self,
         library: &mut Library,
         wake: impl Fn() + Send + 'static,
-    ) -> Vec<String> {
+    ) -> Vec<Message> {
         let mut errors = Vec::new();
         if let Some(job) = &self.job {
             loop {
@@ -83,8 +84,8 @@ impl DurationReader {
                     if worker_stop.load(Ordering::Relaxed) {
                         break;
                     }
-                    let result = SoundDecoder::probe_duration(&path, &worker_stop)
-                        .map_err(|error| format!("{error:#}"));
+                    let result =
+                        SoundDecoder::probe_duration(&path, &worker_stop).map_err(Message::error);
                     if events.send((path, result)).is_err() {
                         break;
                     }
@@ -95,7 +96,9 @@ impl DurationReader {
                 self.scheduled_paths.extend(paths);
                 self.job = Some(DurationJob { receiver, stop });
             }
-            Err(error) => errors.push(format!("无法读取音效时长：{error}")),
+            Err(error) => errors.push(Message::ReadSoundDurationFailed {
+                error: Details::new(error),
+            }),
         }
         errors
     }

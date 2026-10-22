@@ -1,5 +1,6 @@
 //! Single-writer / multiple-reader PCM broadcast. Only background
 //! workers access the file mapping; the APO copies into its own locked memory.
+use crate::shared::error::SharedError;
 use anyhow::ensure;
 use std::{
     fs::{File, OpenOptions},
@@ -38,7 +39,7 @@ impl Clock {
         unsafe {
             QueryPerformanceFrequency(&mut frequency)?;
         }
-        ensure!(frequency > 0, "系统音频时钟不可用");
+        ensure!(frequency > 0, SharedError::AudioClockUnavailable);
         Ok(Self { frequency })
     }
     pub fn frame(self) -> u64 {
@@ -105,7 +106,7 @@ pub fn transport_path(guid: &str) -> anyhow::Result<PathBuf> {
     let id = guid.trim_matches(['{', '}']);
     ensure!(
         id.len() == 36 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'),
-        "麦克风标识无效"
+        SharedError::InvalidMicrophoneId
     );
     Ok(super::paths::data_dir()?.join(format!("soundboard-{}.pcm", id.to_ascii_lowercase())))
 }
@@ -132,7 +133,10 @@ impl Mapping {
                 file.set_len(bytes as u64)?;
             }
         }
-        ensure!(file.metadata()?.len() == bytes as u64, "播放缓冲区布局无效");
+        ensure!(
+            file.metadata()?.len() == bytes as u64,
+            SharedError::InvalidPlaybackLayout
+        );
         let handle = unsafe {
             CreateFileMappingW(
                 HANDLE(file.as_raw_handle()),
@@ -164,7 +168,7 @@ impl Mapping {
             unsafe {
                 let _ = CloseHandle(handle);
             }
-            anyhow::bail!("映射播放缓冲区失败");
+            anyhow::bail!(SharedError::MapPlaybackBuffer);
         }
         let result = Self {
             view,
@@ -178,7 +182,7 @@ impl Mapping {
         } else {
             ensure!(
                 result.header().magic.load(SeqCst) == MAGIC,
-                "播放缓冲区标识无效"
+                SharedError::InvalidPlaybackId
             );
         }
         Ok(result)

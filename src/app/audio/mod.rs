@@ -1,4 +1,5 @@
 //! WASAPI capture and playback, offline preview and session coordination.
+use crate::app::i18n::Message;
 use anyhow::bail;
 use wasapi::WaveFormat;
 use windows::Win32::{
@@ -40,7 +41,9 @@ impl AudioEvent {
     fn wait(&self) -> anyhow::Result<()> {
         match unsafe { WaitForSingleObject(self.0, 100) } {
             WAIT_OBJECT_0 | WAIT_TIMEOUT => Ok(()),
-            result => bail!("等待音频设备失败：{result:?}"),
+            result => bail!(Message::WaitAudioDeviceFailed {
+                result: format!("{result:?}")
+            }),
         }
     }
 }

@@ -1,4 +1,6 @@
 use super::VoiceBoxApp;
+use crate::app::i18n::Text;
+use crate::app::i18n::{Details, Message};
 use crate::{
     app::devices::{Microphone, PluginOperationResult},
     shared::settings::Settings,
@@ -18,7 +20,7 @@ pub(super) enum JobResult {
 #[derive(Default)]
 pub(super) struct Jobs {
     receiver: Option<mpsc::Receiver<JobResult>>,
-    pub(super) status: String,
+    pub(super) status: Message,
     pub(super) failed: bool,
 }
 
@@ -29,7 +31,7 @@ impl Jobs {
     pub(super) fn begin(
         &mut self,
         ctx: &egui::Context,
-        status: &str,
+        status: Text,
         operation: impl FnOnce() -> JobResult + Send + 'static,
     ) -> bool {
         let (sender, receiver) = mpsc::channel();
@@ -38,7 +40,7 @@ impl Jobs {
         self.status = status.into();
         self.failed = false;
         ctx.request_repaint();
-        let operation_name = status.to_owned();
+        let operation_name = status.in_language(crate::app::i18n::Language::English);
         if let Err(error) = std::thread::Builder::new()
             .name("VoiceBoxOperation".into())
             .spawn(move || {
@@ -71,11 +73,13 @@ impl Jobs {
             })
         {
             tracing::error!(
-                operation = status,
+                operation = %status,
                 "Failed to spawn background operation: {error}"
             );
             self.receiver = None;
-            self.status = format!("无法开始操作：{error}");
+            self.status = Message::CannotStartOperation {
+                error: Details::new(error),
+            };
             self.failed = true;
             return false;
         }
@@ -98,7 +102,7 @@ impl VoiceBoxApp {
                 );
                 self.jobs.receiver = None;
                 self.uninstalling = false;
-                self.jobs.status = "操作未完成，请重试。".into();
+                self.jobs.status = Text::OperationIncomplete.into();
                 self.jobs.failed = true;
                 return;
             }
@@ -108,7 +112,9 @@ impl VoiceBoxApp {
             JobResult::Uninstall(Ok(())) => self.uninstall_requested = true,
             JobResult::Uninstall(Err(error)) => {
                 self.uninstalling = false;
-                self.jobs.status = format!("卸载未完成：{error:#}");
+                self.jobs.status = Message::UninstallFailed {
+                    error: Details::new(error),
+                };
                 self.jobs.failed = true;
             }
             JobResult::Microphones(Ok((microphones, selected))) => {
@@ -119,7 +125,9 @@ impl VoiceBoxApp {
                 self.microphones.apply_statuses(statuses);
                 self.jobs.status.clear();
                 if let Err(error) = result {
-                    self.jobs.status = format!("操作失败：{error:#}");
+                    self.jobs.status = Message::OperationFailed {
+                        error: Details::new(error),
+                    };
                     self.jobs.failed = true;
                 }
             }
@@ -134,7 +142,9 @@ impl VoiceBoxApp {
             | JobResult::Saved {
                 result: Err(error), ..
             } => {
-                self.jobs.status = format!("操作失败：{error:#}");
+                self.jobs.status = Message::OperationFailed {
+                    error: Details::new(error),
+                };
                 self.jobs.failed = true;
             }
         }

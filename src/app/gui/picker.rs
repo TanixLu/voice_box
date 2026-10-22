@@ -1,3 +1,4 @@
+use crate::app::i18n::Text;
 use std::path::PathBuf;
 
 pub(super) fn choose_files() -> anyhow::Result<Vec<PathBuf>> {
@@ -12,7 +13,7 @@ pub(super) fn choose_files() -> anyhow::Result<Vec<PathBuf>> {
                 FOS_FORCEFILESYSTEM, FileOpenDialog, IFileOpenDialog, SIGDN_FILESYSPATH,
             },
         },
-        core::w,
+        core::{HSTRING, PCWSTR, w},
     };
     struct Apartment;
     impl Drop for Apartment {
@@ -28,18 +29,22 @@ pub(super) fn choose_files() -> anyhow::Result<Vec<PathBuf>> {
     let _apartment = Apartment;
     let dialog: IFileOpenDialog =
         unsafe { CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)? };
+    let language = crate::app::i18n::current_language();
+    let title = HSTRING::from(Text::ImportSoundsTitle.in_language(language));
+    let audio_files = HSTRING::from(Text::AudioFiles.in_language(language));
+    let all_files = HSTRING::from(Text::AllFiles.in_language(language));
     unsafe {
-        dialog.SetTitle(w!("批量导入音效"))?;
+        dialog.SetTitle(PCWSTR(title.as_ptr()))?;
         dialog.SetOptions(
             dialog.GetOptions()? | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM | FOS_ALLOWMULTISELECT,
         )?;
         dialog.SetFileTypes(&[
             COMDLG_FILTERSPEC {
-                pszName: w!("音频文件"),
+                pszName: PCWSTR(audio_files.as_ptr()),
                 pszSpec: w!("*.mp3;*.wav;*.flac;*.ogg"),
             },
             COMDLG_FILTERSPEC {
-                pszName: w!("所有文件"),
+                pszName: PCWSTR(all_files.as_ptr()),
                 pszSpec: w!("*.*"),
             },
         ])?;
