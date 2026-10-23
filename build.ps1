@@ -141,7 +141,7 @@ try {
     }
 
     Write-Host "[1/2] Building APO DLL ($buildProfile)..."
-    & $cargoPath build --lib @cargoArguments
+    & $cargoPath build --lib --features lib @cargoArguments
     if ($LASTEXITCODE -ne 0) { throw 'DLL build failed.' }
 
     Write-Host "[2/2] Compressing DLL and building EXE ($buildProfile)..."

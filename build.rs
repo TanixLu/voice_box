@@ -71,6 +71,12 @@ fn compress_apo_dll(out: &Path) {
 }
 
 fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    // DLL builds must not depend on EXE resources or the DLL they produce.
+    if env::var_os("CARGO_FEATURE_LIB").is_some() {
+        return;
+    }
+
     println!("cargo:rerun-if-changed=assets/icon.svg");
     println!("cargo:rerun-if-changed=assets/voice_box.manifest");
 

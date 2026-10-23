@@ -5,6 +5,9 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 default-run = "voice_box"
 
+[features]
+lib = []
+
 [lib]
 name = "voice_box_apo"
 crate-type = ["cdylib"]
