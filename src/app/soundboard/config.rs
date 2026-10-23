@@ -32,7 +32,7 @@ impl Default for Options {
         Self {
             speaker_output_volume: 1.0,
             microphone_output_volume: 1.0,
-            include_microphone_audio: false,
+            include_microphone_audio: true,
             auto_hold_hotkey: None,
             stop_hotkey: None,
             random_playback_hotkey: None,

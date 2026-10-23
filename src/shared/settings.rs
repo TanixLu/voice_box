@@ -21,7 +21,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            denoising_enabled: true,
+            denoising_enabled: false,
             gain_millidb: 0,
         }
     }
