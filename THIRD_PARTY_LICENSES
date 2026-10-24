@@ -5555,6 +5555,9 @@ limitations under the License.
 
 ===== Apache License 2.0 (Apache-2.0) =====
 - accesskit 0.25.1: https://github.com/AccessKit/accesskit
+- accesskit_consumer 0.39.1: https://github.com/AccessKit/accesskit
+- accesskit_windows 0.35.1: https://github.com/AccessKit/accesskit
+- accesskit_winit 0.34.1: https://github.com/AccessKit/accesskit
 - anyhow 1.0.104: https://github.com/dtolnay/anyhow
 - arboard 3.6.1: https://github.com/1Password/arboard
 - audio-codec-algorithms 0.8.1: https://github.com/karip/audio-codec-algorithms

@@ -16,6 +16,7 @@ crate-type = ["cdylib"]
 anyhow = "1.0.104"
 atomic-write-file = "0.3.1"
 eframe = { version = "0.37", default-features = false, features = [
+    "accesskit",
     "clipboard",
     "glow",
     "links",

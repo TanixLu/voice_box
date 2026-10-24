@@ -109,7 +109,8 @@ function Update-Licenses {
     # Keep the timestamp for identical text; replace only after every step succeeds.
     if (-not (Test-SameFile $licenseTemp $licenseFile)) {
         if (Test-Path -LiteralPath $licenseFile -PathType Leaf) {
-            [System.IO.File]::Replace($licenseTemp, $licenseFile, $null)
+            # PowerShell converts $null to an empty string for .NET string parameters.
+            [System.IO.File]::Replace($licenseTemp, $licenseFile, [System.Management.Automation.Language.NullString]::Value)
         } else {
             [System.IO.File]::Move($licenseTemp, $licenseFile)
         }
