@@ -117,6 +117,7 @@ messages! {
     CaptureProgress { time: String } => ("Recording · {time}", "正在录制 · {time}");
     RecordingLimit { minutes: u32 } => ("Default speaker · Up to {minutes} min", "默认扬声器 · 最长 {minutes} 分钟");
     DefaultDevice { name: String } => ("{name} (default)", "{name}（默认）");
+    UnavailableOutputDevice { name: String } => ("{name} (device unavailable)", "{name}（设备不可用）");
     ConfirmPluginUninstall { name: String } => ("Uninstall the VoiceBox plugin for this microphone?\n{name}", "确认卸载此麦克风的VoiceBox插件？\n{name}");
     PlayingSound { name: String } => ("Playing · {name}", "播放中 · {name}");
     RenameSoundHint { name: String } => ("{name}\nDouble-click to rename", "{name}\n双击重命名");
@@ -140,6 +141,7 @@ messages! {
     EnableHotkeysFailed { error: Details } => ("Cannot enable global hotkeys: {error}", "无法启用全局快捷键：{error}");
     WaitHotkeysFailed { error: Details } => ("Failed to wait for global hotkeys: {error}", "等待全局快捷键失败：{error}");
     SpeakerMonitorFailed { error: Details } => ("Speaker playback failed; microphone output continues: {error}", "扬声器播放失败，麦克风发送继续：{error}");
+    MicrophoneOutputFailed { error: Details } => ("Microphone output unavailable: {error}", "麦克风输出不可用：{error}");
     WaitAudioDeviceFailed { result: String } => ("Failed to wait for the audio device: {result}", "等待音频设备失败：{result}");
     ReadPathFailed { path: String } => ("Failed to read {path}", "读取 {path} 失败");
     RecycleCancelled { path: String } => ("Recycling {path} was cancelled or did not complete", "回收 {path} 的操作已取消或未完成");

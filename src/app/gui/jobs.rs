@@ -2,7 +2,10 @@ use super::VoiceBoxApp;
 use crate::app::i18n::Text;
 use crate::app::i18n::{Details, Message};
 use crate::{
-    app::devices::{Microphone, PluginOperationResult},
+    app::{
+        devices::{Microphone, PluginOperationResult, Speaker},
+        soundboard::config::OutputDevice,
+    },
     shared::settings::Settings,
 };
 use std::sync::mpsc;
@@ -10,6 +13,7 @@ use std::sync::mpsc;
 pub(super) enum JobResult {
     Uninstall(anyhow::Result<()>),
     Microphones(anyhow::Result<(Vec<Microphone>, usize)>),
+    OutputDevices(anyhow::Result<(Vec<Microphone>, Vec<Speaker>)>),
     Plugin(PluginOperationResult),
     Saved {
         settings: Settings,
@@ -50,6 +54,7 @@ impl Jobs {
                 match &result {
                     JobResult::Uninstall(Err(error))
                     | JobResult::Microphones(Err(error))
+                    | JobResult::OutputDevices(Err(error))
                     | JobResult::Plugin(PluginOperationResult {
                         result: Err(error), ..
                     })
@@ -121,6 +126,39 @@ impl VoiceBoxApp {
                 self.microphones.replace_devices(microphones, selected);
                 self.jobs.status.clear();
             }
+            JobResult::OutputDevices(Ok((microphones, speakers))) => {
+                self.soundboard.microphones = microphones
+                    .into_iter()
+                    .map(|mic| {
+                        let name = super::microphone::display_name(&mic);
+                        (
+                            OutputDevice {
+                                id: mic.device_id,
+                                name: mic.name,
+                            },
+                            name,
+                        )
+                    })
+                    .collect();
+                self.soundboard.speakers = speakers
+                    .into_iter()
+                    .map(|speaker| {
+                        let device = OutputDevice {
+                            id: speaker.device_id,
+                            name: speaker.name.clone(),
+                        };
+                        let name = if speaker.is_default {
+                            Message::DefaultDevice { name: speaker.name }
+                                .text()
+                                .into_owned()
+                        } else {
+                            speaker.name
+                        };
+                        (device, name)
+                    })
+                    .collect();
+                self.jobs.status.clear();
+            }
             JobResult::Plugin(PluginOperationResult { result, statuses }) => {
                 self.microphones.apply_statuses(statuses);
                 self.jobs.status.clear();
@@ -139,6 +177,7 @@ impl VoiceBoxApp {
                 self.jobs.status.clear();
             }
             JobResult::Microphones(Err(error))
+            | JobResult::OutputDevices(Err(error))
             | JobResult::Saved {
                 result: Err(error), ..
             } => {

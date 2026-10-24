@@ -4,7 +4,64 @@ use super::{
     setup::{self, PluginStatus},
 };
 use crate::shared::error::SharedError;
-use wasapi::{DeviceEnumerator, Direction};
+use wasapi::{DeviceEnumerator, DeviceState, Direction};
+
+pub(super) struct Speaker {
+    pub name: String,
+    pub device_id: String,
+    pub is_default: bool,
+}
+
+pub(super) fn enumerate_soundboard_devices() -> anyhow::Result<(Vec<Microphone>, Vec<Speaker>)> {
+    let (microphones, _) = enumerate_microphones()?;
+    let _apartment = Apartment::new()?;
+    let enumerator = DeviceEnumerator::new()?;
+    let default_id = enumerator
+        .get_default_device(&Direction::Render)
+        .and_then(|device| device.get_id())
+        .ok();
+    let collection = enumerator.get_device_collection(&Direction::Render)?;
+    let speakers = (&collection)
+        .into_iter()
+        .map(|device| {
+            let device = device?;
+            let id = device.get_id()?;
+            Ok(Speaker {
+                name: device.get_friendlyname()?,
+                is_default: default_id.as_deref() == Some(&id),
+                device_id: id,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok((microphones, speakers))
+}
+
+pub(super) fn soundboard_microphone_guid(device_id: Option<&str>) -> anyhow::Result<String> {
+    let _apartment = Apartment::new()?;
+    let enumerator = DeviceEnumerator::new()?;
+    let device = match device_id {
+        Some(id) => enumerator.get_device(id)?,
+        None => enumerator.get_default_device(&Direction::Capture)?,
+    };
+    anyhow::ensure!(
+        device.get_direction() == Direction::Capture,
+        SharedError::InvalidMicrophoneId
+    );
+    anyhow::ensure!(
+        device.get_state()? == DeviceState::Active,
+        crate::app::i18n::Text::OutputDeviceUnavailable
+    );
+    let id = device.get_id()?;
+    let guid = id
+        .rsplit('.')
+        .next()
+        .ok_or_else(|| anyhow::anyhow!(SharedError::InvalidMicrophoneId))?;
+    anyhow::ensure!(
+        setup::device_plugin_status(guid) == PluginStatus::Installed,
+        crate::app::i18n::Text::SoundboardMicrophonePluginRequired
+    );
+    Ok(guid.to_owned())
+}
 
 pub(super) struct Microphone {
     pub name: String,

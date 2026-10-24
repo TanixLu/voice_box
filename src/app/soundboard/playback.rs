@@ -2,8 +2,8 @@ use super::{config::Options, decoder::SoundDecoder};
 use crate::app::i18n::Text;
 use crate::app::i18n::{Details, Message, UserContext};
 use crate::{
-    app::{audio::monitor::Monitor, hotkeys::HeldKeys},
-    shared::pcm_transport::{Clock, DECODE_AHEAD_FRAMES, Mapping, SAMPLE_RATE},
+    app::{audio::monitor::Monitor, devices, hotkeys::HeldKeys},
+    shared::pcm_transport::{Clock, DECODE_AHEAD_FRAMES, Mapping, SAMPLE_RATE, transport_path},
 };
 use anyhow::ensure;
 use std::{
@@ -25,7 +25,7 @@ pub(super) enum Command {
 pub(super) enum Event {
     Started(Option<f64>),
     Progress(f64),
-    MonitorError(Message),
+    OutputError(Message),
     Finished(anyhow::Result<()>),
 }
 
@@ -37,13 +37,30 @@ pub(super) struct PlaybackOutcome {
 
 pub(super) fn run(
     path: PathBuf,
-    transport: PathBuf,
     mut options: Options,
     commands: &mpsc::Receiver<Command>,
     events: &mpsc::Sender<Event>,
 ) -> anyhow::Result<PlaybackOutcome> {
     let mut decoder = SoundDecoder::open(&path)?;
     let duration = decoder.duration;
+    let (guid, microphone_error) = match devices::soundboard_microphone_guid(
+        options
+            .microphone_output_device
+            .as_ref()
+            .map(|device| device.id.as_str()),
+    ) {
+        Ok(guid) => (Some(guid), None),
+        Err(error) => (
+            None,
+            Some(Message::MicrophoneOutputFailed {
+                error: Details::new(error),
+            }),
+        ),
+    };
+    let transport = transport_path(
+        guid.as_deref()
+            .unwrap_or("00000000-0000-0000-0000-000000000000"),
+    )?;
     let clock = Clock::new()?;
     let mapping = Mapping::open(&transport, true).user_context(Text::CreatePlaybackBuffer)?;
     let generation = (clock.frame() & 0xffff).max(1);
@@ -66,6 +83,8 @@ pub(super) fn run(
         "Soundboard playback started"
     );
     let _ = events.send(Event::Started(duration));
+    // Queue the initial options through the same output validation as live changes.
+    let mut configure = Some(options.clone());
     let reason = 'playback: loop {
         let now = clock.frame();
         while base < now && !pending.is_empty() {
@@ -86,11 +105,23 @@ pub(super) fn run(
                 }
                 Err(mpsc::TryRecvError::Disconnected) => break 'playback "controller_disconnected",
                 Ok(Command::Configure(next)) => {
-                    options = next;
+                    configure = Some(next);
                     monitor_failed = false;
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
             }
+        }
+        if let Some(next) = configure.take() {
+            if next.microphone_output_volume > 0.0
+                && let Some(error) = &microphone_error
+            {
+                if next.speaker_output_volume == 0.0 {
+                    return Err(anyhow::anyhow!(error.clone()));
+                }
+                tracing::warn!("{error}");
+                let _ = events.send(Event::OutputError(error.clone()));
+            }
+            options = next.for_output(guid.is_some());
         }
         if options.microphone_output_volume == 0.0 && options.speaker_output_volume == 0.0 {
             break "outputs_muted";
@@ -138,7 +169,12 @@ pub(super) fn run(
         if options.speaker_output_volume > 0.0 && !monitor_failed {
             let result = (|| -> anyhow::Result<()> {
                 if monitor.is_none() {
-                    monitor = Some(Monitor::open()?);
+                    monitor = Some(Monitor::open(
+                        options
+                            .speaker_output_device
+                            .as_ref()
+                            .map(|device| device.id.as_str()),
+                    )?);
                 }
                 monitor.as_mut().unwrap().fill(now, |frame| {
                     let stereo = mapping.read(frame, generation);
@@ -155,7 +191,7 @@ pub(super) fn run(
                 monitor = None;
                 monitor_failed = true;
                 tracing::warn!("Speaker playback failed; microphone output continues: {error:#}");
-                let _ = events.send(Event::MonitorError(Message::SpeakerMonitorFailed {
+                let _ = events.send(Event::OutputError(Message::SpeakerMonitorFailed {
                     error: Details::new(error),
                 }));
             }

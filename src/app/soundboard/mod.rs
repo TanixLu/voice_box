@@ -1,10 +1,7 @@
 //! Sound library operations and background playback coordination.
 use crate::app::i18n::Text;
 use crate::app::i18n::{Details, Message, UserContext};
-use crate::{
-    app::hotkeys::Hotkey,
-    shared::{paths, pcm_transport::transport_path},
-};
+use crate::{app::hotkeys::Hotkey, shared::paths};
 use anyhow::ensure;
 use std::{collections::HashSet, path::PathBuf, sync::mpsc, thread::JoinHandle};
 
@@ -25,7 +22,6 @@ struct PlaybackJob {
     sender: mpsc::Sender<Command>,
     receiver: mpsc::Receiver<Event>,
     thread: JoinHandle<()>,
-    microphone_available: bool,
 }
 
 #[derive(Default)]
@@ -39,7 +35,7 @@ pub(super) struct Soundboard {
     pub failed: bool,
     pub import_error: Option<Message>,
     playback_job: Option<PlaybackJob>,
-    queued_playback: Option<(usize, Option<String>)>,
+    queued_playback: Option<usize>,
     import_job: Option<mpsc::Receiver<anyhow::Result<ImportedSounds>>>,
     duration_reader: DurationReader,
     shuffle: shuffle::Shuffle,
@@ -81,6 +77,11 @@ impl Soundboard {
             library: self.library.clone(),
         }
         .save()?;
+        if options.microphone_output_device != self.options.microphone_output_device
+            || options.speaker_output_device != self.options.speaker_output_device
+        {
+            self.stop();
+        }
         self.options = options;
         self.update_playback_options();
         Ok(())
@@ -119,7 +120,7 @@ impl Soundboard {
         if let Some(index) = &mut self.active_sound_index {
             *index = moved_index(*index, from, to);
         }
-        if let Some((index, _)) = &mut self.queued_playback {
+        if let Some(index) = &mut self.queued_playback {
             *index = moved_index(*index, from, to);
         }
         Ok(())
@@ -303,7 +304,7 @@ impl Soundboard {
         self.duration_reader.invalidate(&sound.path);
         self.save_library();
     }
-    pub fn play(&mut self, index: usize, guid: Option<&str>, wake: impl Fn() + Send + 'static) {
+    pub fn play(&mut self, index: usize, wake: impl Fn() + Send + 'static) {
         let Some(sound) = self.library.sounds.get(index) else {
             return;
         };
@@ -316,24 +317,11 @@ impl Soundboard {
         wake();
         if self.playback_job.is_some() {
             self.stop_with_reason(StopReason::Replaced);
-            self.queued_playback = Some((index, guid.map(str::to_owned)));
+            self.queued_playback = Some(index);
             return;
         }
         let path = sound.path.clone();
-        let microphone_available = guid.is_some();
-        let options = self.options.for_output(microphone_available);
-        if options.speaker_output_volume == 0.0 && options.microphone_output_volume == 0.0 {
-            self.set_error(Text::NoPlaybackOutput.into());
-            return;
-        }
-        let transport = match transport_path(guid.unwrap_or("00000000-0000-0000-0000-000000000000"))
-        {
-            Ok(path) => path,
-            Err(e) => {
-                self.set_error(Message::error(e));
-                return;
-            }
-        };
+        let options = self.options.clone();
         let (tx, rx) = mpsc::channel();
         let (events, receiver) = mpsc::channel();
         self.failed = false;
@@ -344,7 +332,7 @@ impl Soundboard {
             .name("VoiceBoxSoundboard".into())
             .spawn(move || {
                 let started = std::time::Instant::now();
-                let result = playback::run(path, transport, options, &rx, &events);
+                let result = playback::run(path, options, &rx, &events);
                 match &result {
                     Err(e) => {
                         tracing::error!(
@@ -372,7 +360,6 @@ impl Soundboard {
                     sender: tx,
                     receiver,
                     thread,
-                    microphone_available,
                 });
             }
             Err(e) => {
@@ -397,9 +384,7 @@ impl Soundboard {
     }
     pub fn update_playback_options(&self) {
         if let Some(job) = &self.playback_job {
-            let _ = job.sender.send(Command::Configure(
-                self.options.for_output(job.microphone_available),
-            ));
+            let _ = job.sender.send(Command::Configure(self.options.clone()));
         }
     }
     pub fn poll(&mut self, wake: impl Fn() + Clone + Send + 'static) {
@@ -442,7 +427,7 @@ impl Soundboard {
                     self.message.clear();
                 }
                 Ok(Event::Progress(elapsed)) => self.elapsed = elapsed,
-                Ok(Event::MonitorError(error)) => self.set_error(error),
+                Ok(Event::OutputError(error)) => self.set_error(error),
                 Ok(Event::Finished(result)) => {
                     if let Some(job) = self.playback_job.take() {
                         let _ = job.thread.join();
@@ -471,9 +456,9 @@ impl Soundboard {
             }
         }
         if self.playback_job.is_none()
-            && let Some((index, guid)) = self.queued_playback.take()
+            && let Some(index) = self.queued_playback.take()
         {
-            self.play(index, guid.as_deref(), wake);
+            self.play(index, wake);
         }
     }
 }

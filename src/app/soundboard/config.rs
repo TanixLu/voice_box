@@ -16,8 +16,16 @@ pub(in crate::app) enum BindingTarget {
 }
 
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(in crate::app) struct OutputDevice {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub(in crate::app) struct Options {
+    pub microphone_output_device: Option<OutputDevice>,
+    pub speaker_output_device: Option<OutputDevice>,
     pub speaker_output_volume: f32,
     pub microphone_output_volume: f32,
     pub include_microphone_audio: bool,
@@ -30,6 +38,8 @@ pub(in crate::app) struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            microphone_output_device: None,
+            speaker_output_device: None,
             speaker_output_volume: 1.0,
             microphone_output_volume: 1.0,
             include_microphone_audio: true,
@@ -41,6 +51,7 @@ impl Default for Options {
         }
     }
 }
+
 impl Options {
     pub(super) fn validate_binding(
         &self,

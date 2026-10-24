@@ -1,9 +1,11 @@
 use super::{Apartment, Stream, enumerator};
+use crate::shared::utils::wide_null;
 use wasapi::{SampleType, WaveFormat};
 use windows::Win32::{
     Media::Audio::{IAudioClient, IAudioRenderClient, eConsole, eRender},
     System::Com::CLSCTX_ALL,
 };
+use windows::core::PCWSTR;
 
 /// The soundboard reuses the same WASAPI/COM lifetime and format negotiation as
 /// preview playback, with a shorter queue so route and volume changes feel quick.
@@ -15,9 +17,16 @@ pub(in crate::app) struct Monitor {
     _apartment: Apartment,
 }
 impl Monitor {
-    pub fn open() -> anyhow::Result<Self> {
+    pub fn open(device_id: Option<&str>) -> anyhow::Result<Self> {
         let apartment = Apartment::new()?;
-        let device = unsafe { enumerator()?.GetDefaultAudioEndpoint(eRender, eConsole)? };
+        let enumerator = enumerator()?;
+        let device = match device_id {
+            Some(id) => {
+                let id = wide_null(id);
+                unsafe { enumerator.GetDevice(PCWSTR(id.as_ptr()))? }
+            }
+            None => unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole)? },
+        };
         let client = unsafe { device.Activate::<IAudioClient>(CLSCTX_ALL, None)? };
         let format = WaveFormat::new(32, 32, &SampleType::Float, 48_000, 2, Some(3));
         let stream = Stream::with_buffer(client, &format, true, 200_000)?;

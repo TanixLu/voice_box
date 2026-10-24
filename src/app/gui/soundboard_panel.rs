@@ -7,7 +7,7 @@ use crate::app::i18n::Text;
 use crate::app::i18n::{Details, Message};
 use crate::app::soundboard::{
     Soundboard,
-    config::{BindingTarget, Config, Options},
+    config::{BindingTarget, Config, Options, OutputDevice},
 };
 
 struct SoundRenameEditor {
@@ -46,6 +46,8 @@ pub(super) struct SoundboardPanel {
     rename_editor: Option<SoundRenameEditor>,
     pending_delete_index: Option<usize>,
     recording_import: Option<super::recording_import::RecordingImport>,
+    pub(super) microphones: Vec<(OutputDevice, String)>,
+    pub(super) speakers: Vec<(OutputDevice, String)>,
 }
 
 impl SoundboardPanel {
@@ -57,6 +59,8 @@ impl SoundboardPanel {
             rename_editor: None,
             pending_delete_index: None,
             recording_import: None,
+            microphones: Vec::new(),
+            speakers: Vec::new(),
         }
     }
     pub(super) fn renaming(&self) -> bool {
@@ -115,18 +119,17 @@ impl SoundboardPanel {
         }
     }
 
-    pub(super) fn play_sound(&mut self, ctx: &egui::Context, index: usize, guid: Option<&str>) {
-        self.model.play(index, guid, super::wake_ui(ctx.clone()));
+    pub(super) fn play_sound(&mut self, ctx: &egui::Context, index: usize) {
+        self.model.play(index, super::wake_ui(ctx.clone()));
     }
 
     pub(super) fn play_random_sound(
         &mut self,
         ctx: &egui::Context,
         hotkey: Option<crate::app::hotkeys::Hotkey>,
-        guid: Option<&str>,
     ) {
         if let Some(index) = self.model.random_sound_index(hotkey) {
-            self.play_sound(ctx, index, guid);
+            self.play_sound(ctx, index);
         }
     }
 
@@ -136,7 +139,6 @@ impl SoundboardPanel {
         jobs: &mut Jobs,
         session_busy: bool,
         hotkeys: &mut HotkeyManager,
-        guid: Option<&str>,
     ) {
         let available =
             !jobs.busy() && !session_busy && self.draft_options.is_none() && !self.recording_open();
@@ -151,8 +153,11 @@ impl SoundboardPanel {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(Text::Settings.text()).clicked() {
                         self.draft_options = Some(self.model.options().clone());
-                        jobs.status.clear();
-                        jobs.failed = false;
+                        jobs.begin(ui.ctx(), Text::ReadingOutputDevices, || {
+                            super::jobs::JobResult::OutputDevices(
+                                crate::app::devices::enumerate_soundboard_devices(),
+                            )
+                        });
                     }
                     // This row is laid out right-to-left: recording sits to the right of import.
                     if ui
@@ -505,7 +510,7 @@ impl SoundboardPanel {
             if stop {
                 self.model.stop();
             } else if let Some(index) = play {
-                self.play_sound(ui.ctx(), index, guid);
+                self.play_sound(ui.ctx(), index);
             }
             if let Some(index) = remove {
                 self.pending_delete_index = None;
@@ -658,11 +663,25 @@ impl SoundboardPanel {
                                 Text::MicrophoneOutput.text(),
                                 &mut options.microphone_output_volume,
                             );
+                            output_device_picker(
+                                ui,
+                                "sound_microphone",
+                                &mut options.microphone_output_device,
+                                &self.microphones,
+                            );
+                            ui.add_space(8.0);
                             playback_volume(
                                 ui,
                                 Text::SpeakerOutput.text(),
                                 &mut options.speaker_output_volume,
                             );
+                            output_device_picker(
+                                ui,
+                                "sound_speaker",
+                                &mut options.speaker_output_device,
+                                &self.speakers,
+                            );
+                            ui.add_space(8.0);
                             ui.checkbox(
                                 &mut options.include_microphone_audio,
                                 Text::IncludeMicrophoneAudio.text(),
@@ -747,12 +766,7 @@ impl SoundboardPanel {
                 } else {
                     hint(ui, Text::SoundSettingsApplied.text());
                 }
-                if !idle {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(jobs.status.text());
-                    });
-                } else if jobs.failed {
+                if jobs.failed {
                     warning(ui, &jobs.status.text());
                 }
             });
@@ -794,6 +808,47 @@ impl SoundboardPanel {
             }
         }
     }
+}
+
+fn output_device_picker(
+    ui: &mut egui::Ui,
+    id: &str,
+    selected: &mut Option<OutputDevice>,
+    devices: &[(OutputDevice, String)],
+) {
+    let name = match selected {
+        None => Text::FollowSystemDefault.text().to_owned(),
+        Some(device) => devices
+            .iter()
+            .find(|(available, _)| available.id == device.id)
+            .map(|(_, label)| label.clone())
+            .unwrap_or_else(|| {
+                Message::UnavailableOutputDevice {
+                    name: device.name.clone(),
+                }
+                .text()
+                .into_owned()
+            }),
+    };
+    egui::ComboBox::from_id_salt(id)
+        .width(ui.available_width())
+        .wrap()
+        .selected_text(name)
+        .show_ui(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.selectable_value(selected, None, Text::FollowSystemDefault.text());
+            for (device, name) in devices {
+                let is_selected = selected
+                    .as_ref()
+                    .is_some_and(|selected| selected.id == device.id);
+                if ui
+                    .add(egui::Button::selectable(is_selected, name).wrap())
+                    .clicked()
+                {
+                    *selected = Some(device.clone());
+                }
+            }
+        });
 }
 
 pub(super) fn format_duration(seconds: f64) -> String {

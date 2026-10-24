@@ -133,7 +133,6 @@ catalog! {
     OpenSoundSettingsFirst => ("Open sound settings first", "请先打开音效设置");
     StopBeforeRename => ("Stop playback before renaming", "请先停止播放再重命名");
     OutputsMuted => ("Microphone and speaker volumes are both 0. Playback was not started", "麦克风和扬声器音量均为 0，未开始播放");
-    NoPlaybackOutput => ("The microphone plugin is not ready and speaker volume is 0. No playback output is available", "麦克风插件未就绪，且扬声器音量为 0，没有可用的播放输出");
     ImportThreadExited => ("The sound import thread exited unexpectedly", "音效导入线程意外退出");
     PlaybackThreadExited => ("The playback thread exited unexpectedly", "播放线程意外退出");
     CloseDiscardChanges => ("Close and discard unsaved changes", "关闭，放弃未保存的修改");
@@ -206,6 +205,10 @@ catalog! {
     SoundImportFailedTitle => ("Sound import failed", "音效导入失败");
     SoundSettings => ("Sound settings", "音效设置");
     MicrophoneOutput => ("Microphone output", "麦克风输出");
+    FollowSystemDefault => ("Follow system default", "跟随系统默认");
+    OutputDeviceUnavailable => ("Selected device unavailable", "所选设备不可用");
+    ReadingOutputDevices => ("Reading audio devices…", "正在读取音频设备…");
+    SoundboardMicrophonePluginRequired => ("Install or update the VoiceBox plugin for this microphone on the Voice tab", "请在降噪页为此麦克风安装或更新 VoiceBox 插件");
     SpeakerOutput => ("Speaker output", "扬声器输出");
     IncludeMicrophoneAudio => ("Keep microphone audio during playback", "音效播放时保持收音");
     ShowOverlay => ("Show playback overlay", "显示播放浮层");

@@ -14,7 +14,7 @@ pub(super) struct MicrophonePanel {
     confirm_uninstall: bool,
 }
 
-fn display_name(microphone: &Microphone) -> String {
+pub(super) fn display_name(microphone: &Microphone) -> String {
     let status = match microphone.plugin_status {
         PluginStatus::Installed => Text::PluginInstalled.text(),
         PluginStatus::NotInstalled => Text::PluginNotInstalled.text(),
@@ -41,11 +41,6 @@ impl MicrophonePanel {
     }
     pub(super) fn selected(&self) -> Option<&Microphone> {
         self.devices.get(self.selected)
-    }
-    pub(super) fn installed_guid(&self) -> Option<&str> {
-        self.selected()
-            .filter(|mic| mic.plugin_status == PluginStatus::Installed)
-            .map(|mic| mic.guid.as_str())
     }
     pub(super) fn preferred_guid(&self) -> Option<String> {
         self.preferred_guid.clone()

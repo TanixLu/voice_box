@@ -236,7 +236,6 @@ impl VoiceBoxApp {
                         &mut self.jobs,
                         self.voice.session.busy(),
                         &mut self.hotkeys,
-                        self.microphones.installed_guid(),
                     );
                 } else {
                     egui::ScrollArea::vertical()
@@ -343,12 +342,9 @@ impl eframe::App for VoiceBoxApp {
             && !self.confirm_full_uninstall
             && !(focused && (self.soundboard.renaming() || ctx.text_edit_focused()));
         for action in self.hotkeys.poll(shortcuts_enabled, &self.soundboard.model) {
-            let guid = self.microphones.installed_guid();
             match action {
                 PlaybackAction::Stop => self.soundboard.model.stop(),
-                PlaybackAction::Random(hotkey) => {
-                    self.soundboard.play_random_sound(ctx, hotkey, guid)
-                }
+                PlaybackAction::Random(hotkey) => self.soundboard.play_random_sound(ctx, hotkey),
             }
         }
         if self.uninstall_requested {
