@@ -30,6 +30,7 @@ pub(super) struct HotkeyManager {
     capture: Option<KeyCapture>,
     registration_error: Message,
     pub(super) message: Message,
+    pub(super) settings_message: Message,
 }
 impl HotkeyManager {
     pub(super) fn new(ctx: &egui::Context) -> Self {
@@ -50,6 +51,7 @@ impl HotkeyManager {
             capture: None,
             registration_error: Message::default(),
             message,
+            settings_message: Message::default(),
         }
     }
     pub(super) fn target(&self) -> Option<BindingTarget> {
@@ -66,6 +68,10 @@ impl HotkeyManager {
         } else {
             &self.message
         }
+    }
+    pub(super) fn clear_error(&mut self) {
+        self.message.clear();
+        self.registration_error.clear();
     }
     pub(super) fn cancel_capture(&mut self) {
         self.capture = None;
@@ -145,7 +151,9 @@ impl HotkeyManager {
             return;
         };
         ctx.request_repaint_after(std::time::Duration::from_millis(20));
-        if !ctx.input(|input| input.focused) {
+        if !ctx.input(|input| input.focused)
+            || ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
             self.cancel_capture();
             return;
         }
@@ -186,11 +194,16 @@ impl HotkeyManager {
                 soundboard.bind_hotkey(target, Some(key), draft)
             }
         });
+        let message = if matches!(target, BindingTarget::Sound(_)) {
+            &mut self.message
+        } else {
+            &mut self.settings_message
+        };
         match result {
-            Ok(()) => self.message.clear(),
+            Ok(()) => message.clear(),
             Err(error) => {
                 tracing::error!("Failed to bind hotkey: {error:#}");
-                self.message = Message::error(error);
+                *message = Message::error(error);
             }
         }
     }
@@ -203,7 +216,11 @@ impl HotkeyManager {
             armed: false,
             modifier: None,
         });
-        self.message.clear();
+        if matches!(target, BindingTarget::Sound(_)) {
+            self.message.clear();
+        } else {
+            self.settings_message.clear();
+        }
     }
 
     pub(super) fn begin_batch_capture(
@@ -255,7 +272,9 @@ pub(super) fn hotkey_badge(ui: &mut egui::Ui, key: Hotkey, max_width: f32) {
     );
     ui.place(
         rect.shrink2(egui::vec2(9.0, 5.0)),
-        egui::Label::new(egui::RichText::new(&text).font(font)).truncate(),
+        egui::Label::new(egui::RichText::new(&text).font(font))
+            .truncate()
+            .show_tooltip_when_elided(false),
     );
     response.on_hover_text(text);
 }
@@ -336,4 +355,49 @@ pub(super) fn hotkey_editor(
         .inner
     })
     .inner
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{
+        gui::soundboard_panel::SoundboardPanel,
+        soundboard::{
+            config::Config,
+            library::{Library, Sound},
+        },
+    };
+
+    #[test]
+    fn playback_clears_old_hotkey_errors_and_preserves_new_playback_errors() {
+        let ctx = egui::Context::default();
+        for random in [false, true] {
+            let mut panel = SoundboardPanel::new(Config {
+                options: Options {
+                    speaker_output_volume: 0.0,
+                    microphone_output_volume: 0.0,
+                    ..Options::default()
+                },
+                library: Library {
+                    sounds: vec![Sound {
+                        file_name: "test.wav".into(),
+                        ..Sound::default()
+                    }],
+                },
+            });
+            let mut hotkeys = HotkeyManager {
+                message: Message::error(anyhow::anyhow!("old binding error")),
+                registration_error: Message::error(anyhow::anyhow!("old registration error")),
+                ..HotkeyManager::default()
+            };
+            if random {
+                panel.play_random_sound(&ctx, None, &mut hotkeys);
+            } else {
+                panel.play_sound(&ctx, 0, &mut hotkeys);
+            }
+            assert!(hotkeys.error().is_empty());
+            assert!(panel.model.failed);
+            assert_eq!(panel.model.message.text(), Text::OutputsMuted.text());
+        }
+    }
 }

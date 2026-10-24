@@ -145,7 +145,10 @@ impl VoiceBoxApp {
         self.zoom_factor = ui.ctx().zoom_factor();
         if self.tab != Tab::Soundboard {
             self.soundboard.cancel_batch();
-            if self.hotkeys.batch_capturing() {
+            if matches!(
+                self.hotkeys.target(),
+                Some(crate::app::soundboard::config::BindingTarget::Sound(_))
+            ) {
                 self.hotkeys.cancel_capture();
             }
         }
@@ -207,6 +210,9 @@ impl VoiceBoxApp {
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(20))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    if self.hotkeys.target().is_some() {
+                        ui.disable();
+                    }
                     ui.selectable_value(&mut self.tab, Tab::Voice, Text::Voice.text());
                     ui.selectable_value(&mut self.tab, Tab::Soundboard, Text::Soundboard.text());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -351,7 +357,10 @@ impl eframe::App for VoiceBoxApp {
         for action in self.hotkeys.poll(shortcuts_enabled, &self.soundboard.model) {
             match action {
                 PlaybackAction::Stop => self.soundboard.model.stop(),
-                PlaybackAction::Random(hotkey) => self.soundboard.play_random_sound(ctx, hotkey),
+                PlaybackAction::Random(hotkey) => {
+                    self.soundboard
+                        .play_random_sound(ctx, hotkey, &mut self.hotkeys)
+                }
             }
         }
         if self.uninstall_requested {
@@ -443,6 +452,240 @@ impl VoiceBoxApp {
                     self.jobs.failed = true;
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::soundboard::{
+        config::{BindingTarget, Config},
+        library::{Library, Sound},
+    };
+
+    fn app() -> VoiceBoxApp {
+        VoiceBoxApp {
+            window_settings: None,
+            tab: Tab::Soundboard,
+            language_preference: Default::default(),
+            zoom_factor: 1.0,
+            microphones: MicrophonePanel::default(),
+            voice: VoicePanel::new(Settings::default()),
+            soundboard: SoundboardPanel::new(Config {
+                library: Library {
+                    sounds: ["test.wav", "other.wav"]
+                        .into_iter()
+                        .map(|name| Sound {
+                            file_name: name.into(),
+                            path: name.into(),
+                            ..Default::default()
+                        })
+                        .collect(),
+                },
+                ..Default::default()
+            }),
+            hotkeys: HotkeyManager::default(),
+            jobs: Jobs::default(),
+            close_enabled: true,
+            confirm_full_uninstall: false,
+            uninstalling: false,
+            uninstall_requested: false,
+            show_licenses: false,
+            overlay: Default::default(),
+            overlay_visible: false,
+        }
+    }
+
+    fn draw(
+        app: &mut VoiceBoxApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(560.0, 760.0),
+                )),
+                focused: true,
+                events,
+                ..Default::default()
+            },
+            |ui| app.show(ui),
+        );
+        output.textures_delta.clear();
+        output
+    }
+
+    fn click(output: &egui::FullOutput, label: &str) -> Vec<egui::Event> {
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(shape) if shape.galley.text() == label => {
+                    Some(shape.pos + shape.galley.size() * 0.5)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing control: {label}"));
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    #[test]
+    fn capture_disables_navigation_toolbar_and_search_until_cancelled() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.hotkeys
+            .begin_capture(BindingTarget::Sound(0), &mut app.soundboard.model);
+        let mut output = draw(&mut app, &ctx, vec![]);
+        for label in [
+            Text::Voice,
+            Text::More,
+            Text::Settings,
+            Text::Import,
+            Text::RecordImport,
+            Text::BatchManage,
+            Text::SearchSounds,
+        ] {
+            output = draw(&mut app, &ctx, click(&output, label.text()));
+            assert!(app.tab == Tab::Soundboard);
+            assert!(app.hotkeys.target() == Some(BindingTarget::Sound(0)));
+            assert!(app.soundboard.draft_options.is_none());
+            assert!(!app.jobs.busy());
+            assert!(!app.soundboard.recording_open());
+            assert!(!app.soundboard.model.importing());
+            assert!(!ctx.any_popup_open());
+            assert!(!ctx.text_edit_focused());
+        }
+        let _ = draw(&mut app, &ctx, click(&output, Text::PressKey.text()));
+        assert!(app.hotkeys.target().is_none());
+        output = draw(&mut app, &ctx, vec![]);
+        let _ = draw(&mut app, &ctx, click(&output, Text::Voice.text()));
+        assert!(app.tab == Tab::Voice);
+    }
+
+    #[test]
+    fn settings_capture_disables_options_and_escape_only_cancels_capture() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let options = app.soundboard.model.options().clone();
+        app.soundboard.draft_options = Some(options.clone());
+        app.hotkeys
+            .begin_capture(BindingTarget::Stop, &mut app.soundboard.model);
+        let _ = draw(&mut app, &ctx, vec![]);
+        let mut output = draw(&mut app, &ctx, vec![]);
+        for label in [
+            Text::IncludeMicrophoneAudio,
+            Text::ShowOverlay,
+            Text::RepeatPlayback,
+        ] {
+            output = draw(&mut app, &ctx, click(&output, label.text()));
+            assert!(app.soundboard.draft_options.as_ref() == Some(&options));
+            assert!(app.hotkeys.target() == Some(BindingTarget::Stop));
+        }
+        let _ = draw(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(app.hotkeys.target().is_none());
+        assert!(app.soundboard.draft_options.as_ref() == Some(&options));
+        output = draw(&mut app, &ctx, vec![]);
+        let _ = draw(&mut app, &ctx, click(&output, Text::RepeatPlayback.text()));
+        assert_eq!(
+            app.soundboard.draft_options.as_ref().unwrap().repeat,
+            !options.repeat
+        );
+    }
+
+    #[test]
+    fn batch_capture_disables_navigation_selection_and_actions_until_cancelled() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let mut output = draw(&mut app, &ctx, vec![]);
+        for label in [
+            Text::BatchManage,
+            Text::SelectSearchResults,
+            Text::Hotkeys,
+            Text::BindHotkey,
+        ] {
+            let _ = draw(&mut app, &ctx, click(&output, label.text()));
+            output = draw(&mut app, &ctx, vec![]);
+        }
+        assert!(app.hotkeys.batch_capturing());
+        let selected = Message::SelectedSounds { count: 2 }.text();
+        let delete = Message::DeleteSelectedSounds { count: 2 }.text();
+        for label in [
+            Text::Voice.text(),
+            Text::More.text(),
+            Text::Done.text(),
+            Text::SearchSounds.text(),
+            Text::SelectSearchResults.text(),
+            Text::ClearSelection.text(),
+            &delete,
+            "test.wav",
+            "other.wav",
+        ] {
+            output = draw(&mut app, &ctx, click(&output, label));
+            assert!(
+                app.hotkeys.batch_capturing(),
+                "capture ended after clicking {label}"
+            );
+            assert!(app.tab == Tab::Soundboard);
+            assert_eq!(app.soundboard.model.library().sounds.len(), 2);
+            assert!(!ctx.any_popup_open());
+            assert!(!ctx.text_edit_focused());
+            assert!(ctx.memory(|memory| memory.top_modal_layer().is_none()));
+            assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+                egui::epaint::Shape::Text(shape) if shape.galley.text() == selected
+            )));
+        }
+        let _ = draw(&mut app, &ctx, click(&output, Text::PressKey.text()));
+        assert!(app.hotkeys.target().is_none());
+        output = draw(&mut app, &ctx, vec![]);
+        let _ = draw(&mut app, &ctx, click(&output, Text::Done.text()));
+        output = draw(&mut app, &ctx, vec![]);
+        let _ = draw(&mut app, &ctx, click(&output, Text::Voice.text()));
+        assert!(app.tab == Tab::Voice);
+    }
+
+    #[test]
+    fn leaving_soundboard_cancels_single_and_batch_capture() {
+        for batch in [false, true] {
+            let ctx = egui::Context::default();
+            let mut app = app();
+            if batch {
+                app.hotkeys
+                    .begin_batch_capture(&["test.wav".into()].into(), &mut app.soundboard.model);
+            } else {
+                app.hotkeys
+                    .begin_capture(BindingTarget::Sound(0), &mut app.soundboard.model);
+            }
+            app.tab = Tab::Voice;
+            let _ = draw(&mut app, &ctx, vec![]);
+            assert!(app.hotkeys.target().is_none());
+            assert!(app.soundboard.model.library().sounds[0].hotkey.is_none());
         }
     }
 }

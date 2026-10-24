@@ -157,7 +157,13 @@ impl SoundboardPanel {
         }
     }
 
-    pub(super) fn play_sound(&mut self, ctx: &egui::Context, index: usize) {
+    pub(super) fn play_sound(
+        &mut self,
+        ctx: &egui::Context,
+        index: usize,
+        hotkeys: &mut HotkeyManager,
+    ) {
+        hotkeys.clear_error();
         self.model.play(index, super::wake_ui(ctx.clone()));
     }
 
@@ -165,9 +171,10 @@ impl SoundboardPanel {
         &mut self,
         ctx: &egui::Context,
         hotkey: Option<crate::app::hotkeys::Hotkey>,
+        hotkeys: &mut HotkeyManager,
     ) {
         if let Some(index) = self.model.random_sound_index(hotkey) {
-            self.play_sound(ctx, index);
+            self.play_sound(ctx, index, hotkeys);
         }
     }
 
@@ -199,6 +206,9 @@ impl SoundboardPanel {
                 self.cancel_batch();
             }
             ui.horizontal(|ui| {
+                if hotkeys.target().is_some() {
+                    ui.disable();
+                }
                 ui.strong(
                     Message::SoundCount {
                         count: self.model.library().sounds.len(),
@@ -214,8 +224,7 @@ impl SoundboardPanel {
                     .add_enabled(
                         !self.model.library().sounds.is_empty()
                             && !self.model.importing()
-                            && !self.renaming()
-                            && hotkeys.target().is_none(),
+                            && !self.renaming(),
                         egui::Button::new(Text::BatchManage.text()),
                     )
                     .clicked()
@@ -271,7 +280,8 @@ impl SoundboardPanel {
                 );
             });
             if ui
-                .add(
+                .add_enabled(
+                    hotkeys.target().is_none(),
                     egui::TextEdit::singleline(&mut self.filter)
                         .hint_text(Text::SearchSounds.text())
                         .desired_width(f32::INFINITY),
@@ -489,7 +499,9 @@ impl SoundboardPanel {
                                                 });
                                             ui.add_sized(
                                                 [48.0, 30.0],
-                                                egui::Label::new(duration).truncate(),
+                                                egui::Label::new(duration)
+                                                    .truncate()
+                                                    .show_tooltip_when_elided(false),
                                             )
                                             .on_hover_text(
                                                 sound
@@ -561,22 +573,27 @@ impl SoundboardPanel {
                                                     sound.file_name.clone()
                                                 };
                                                 let response = ui
-                                                    .add_sized(
-                                                        [ui.available_width().max(16.0), 30.0],
-                                                        egui::Button::new(())
-                                                            .left_text(name)
-                                                            .frame_when_inactive(false)
-                                                            .selected(
-                                                                self.selection
-                                                                    .as_ref()
-                                                                    .is_some_and(|selection| {
-                                                                        selection
-                                                                            .paths
-                                                                            .contains(&sound.path)
-                                                                    }),
-                                                            )
-                                                            .truncate(),
-                                                    )
+                                                    .add_enabled_ui(!capturing, |ui| {
+                                                        ui.add_sized(
+                                                            [ui.available_width().max(16.0), 30.0],
+                                                            egui::Button::new(())
+                                                                .left_text(name)
+                                                                .frame_when_inactive(false)
+                                                                .selected(
+                                                                    self.selection
+                                                                        .as_ref()
+                                                                        .is_some_and(|selection| {
+                                                                            selection
+                                                                                .paths
+                                                                                .contains(
+                                                                                    &sound.path,
+                                                                                )
+                                                                        }),
+                                                                )
+                                                                .truncate(),
+                                                        )
+                                                    })
+                                                    .inner
                                                     .on_hover_text(if self.selection.is_some() {
                                                         format!(
                                                             "{}\n{}",
@@ -697,7 +714,7 @@ impl SoundboardPanel {
             if stop {
                 self.model.stop();
             } else if let Some(index) = play {
-                self.play_sound(ui.ctx(), index);
+                self.play_sound(ui.ctx(), index, hotkeys);
             }
             if let Some(index) = remove {
                 self.pending_delete_index = None;
@@ -710,6 +727,7 @@ impl SoundboardPanel {
                 } else {
                     hotkeys.begin_capture(target, &mut self.model);
                 }
+                ui.ctx().request_repaint();
             }
             if let Some((index, name)) = rename {
                 self.model.stop();
@@ -801,6 +819,7 @@ impl SoundboardPanel {
             if let Some(selection) = &self.selection {
                 if bind_selected {
                     hotkeys.begin_batch_capture(&selection.paths, &mut self.model);
+                    ui.ctx().request_repaint();
                 }
                 if clear_selected {
                     match self.model.bind_sound_hotkeys(&selection.paths, None) {
@@ -820,7 +839,10 @@ impl SoundboardPanel {
                     .map(|key| Message::StopPlaybackHotkey { key }.text().into_owned())
                     .unwrap_or_else(|| Text::StopPlayback.text().into());
                 if ui
-                    .add_enabled(self.model.playing(), egui::Button::new(key))
+                    .add_enabled(
+                        self.model.playing() && hotkeys.target().is_none(),
+                        egui::Button::new(key),
+                    )
                     .clicked()
                 {
                     self.model.stop();
@@ -837,7 +859,8 @@ impl SoundboardPanel {
                         egui::Label::new(
                             egui::RichText::new(error.text()).color(ui.visuals().error_fg_color),
                         )
-                        .truncate(),
+                        .truncate()
+                        .show_tooltip_when_elided(false),
                     )
                     .on_hover_text(error.text());
                 } else if let Some(index) = self.model.active_sound_index {
@@ -855,8 +878,12 @@ impl SoundboardPanel {
                             "{} / {duration}",
                             format_duration(self.model.elapsed)
                         ));
-                        ui.add(egui::Label::new(name).truncate())
-                            .on_hover_text(name);
+                        ui.add(
+                            egui::Label::new(name)
+                                .truncate()
+                                .show_tooltip_when_elided(false),
+                        )
+                        .on_hover_text(name);
                     });
                 }
             });
@@ -993,7 +1020,7 @@ impl SoundboardPanel {
                             .strong(),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        close = icon_button(ui, idle, ButtonIcon::Close).clicked();
+                        close = icon_button(ui, idle && !capturing, ButtonIcon::Close).clicked();
                     });
                 });
                 ui.add_space(12.0);
@@ -1002,36 +1029,38 @@ impl SoundboardPanel {
                     .show(ui, |ui| {
                         ui.add_enabled_ui(idle, |ui| {
                             let options = self.draft_options.as_mut().unwrap();
-                            playback_volume(
-                                ui,
-                                Text::MicrophoneOutput.text(),
-                                &mut options.microphone_output_volume,
-                            );
-                            output_device_picker(
-                                ui,
-                                "sound_microphone",
-                                &mut options.microphone_output_device,
-                                &self.microphones,
-                            );
-                            ui.add_space(8.0);
-                            playback_volume(
-                                ui,
-                                Text::SpeakerOutput.text(),
-                                &mut options.speaker_output_volume,
-                            );
-                            output_device_picker(
-                                ui,
-                                "sound_speaker",
-                                &mut options.speaker_output_device,
-                                &self.speakers,
-                            );
-                            ui.add_space(8.0);
-                            ui.checkbox(
-                                &mut options.include_microphone_audio,
-                                Text::IncludeMicrophoneAudio.text(),
-                            );
-                            ui.checkbox(&mut options.show_overlay, Text::ShowOverlay.text());
-                            ui.checkbox(&mut options.repeat, Text::RepeatPlayback.text());
+                            ui.add_enabled_ui(!capturing, |ui| {
+                                playback_volume(
+                                    ui,
+                                    Text::MicrophoneOutput.text(),
+                                    &mut options.microphone_output_volume,
+                                );
+                                output_device_picker(
+                                    ui,
+                                    "sound_microphone",
+                                    &mut options.microphone_output_device,
+                                    &self.microphones,
+                                );
+                                ui.add_space(8.0);
+                                playback_volume(
+                                    ui,
+                                    Text::SpeakerOutput.text(),
+                                    &mut options.speaker_output_volume,
+                                );
+                                output_device_picker(
+                                    ui,
+                                    "sound_speaker",
+                                    &mut options.speaker_output_device,
+                                    &self.speakers,
+                                );
+                                ui.add_space(8.0);
+                                ui.checkbox(
+                                    &mut options.include_microphone_audio,
+                                    Text::IncludeMicrophoneAudio.text(),
+                                );
+                                ui.checkbox(&mut options.show_overlay, Text::ShowOverlay.text());
+                                ui.checkbox(&mut options.repeat, Text::RepeatPlayback.text());
+                            });
                             if hotkey_editor(
                                 ui,
                                 Text::RandomHotkey.text(),
@@ -1059,8 +1088,8 @@ impl SoundboardPanel {
                             ) {
                                 capture = Some(BindingTarget::Hold);
                             }
-                            if !hotkeys.error().is_empty() {
-                                warning(ui, &hotkeys.error().text());
+                            if !hotkeys.settings_message.is_empty() {
+                                warning(ui, &hotkeys.settings_message.text());
                             }
                         });
                     });
@@ -1084,7 +1113,7 @@ impl SoundboardPanel {
                         .clicked()
                     {
                         self.draft_options = Some(self.model.options().clone());
-                        hotkeys.message.clear();
+                        hotkeys.settings_message.clear();
                     }
                     if trailing_button(
                         ui,
@@ -1098,7 +1127,7 @@ impl SoundboardPanel {
                     .clicked()
                     {
                         self.draft_options = Some(Options::default());
-                        hotkeys.message.clear();
+                        hotkeys.settings_message.clear();
                     }
                 });
                 if self
@@ -1123,6 +1152,7 @@ impl SoundboardPanel {
         {
             self.draft_options = None;
             hotkeys.cancel_capture();
+            hotkeys.settings_message.clear();
         } else if save {
             self.save_soundboard_options(jobs, hotkeys);
         } else if let Some(target) = capture {
@@ -1331,6 +1361,93 @@ mod tests {
         );
         output.textures_delta.clear();
         output
+    }
+
+    #[test]
+    fn settings_only_show_their_own_hotkey_errors() {
+        let ctx = egui::Context::default();
+        let mut panel = SoundboardPanel::new(Config::default());
+        panel.draft_options = Some(Options::default());
+        let mut hotkeys = HotkeyManager::default();
+        hotkeys.message = Message::error(anyhow::anyhow!("sound hotkey error"));
+        for settings_error in ["", "settings hotkey error"] {
+            hotkeys.settings_message = if settings_error.is_empty() {
+                Message::default()
+            } else {
+                Message::error(anyhow::anyhow!(settings_error))
+            };
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ctx| {
+                panel.settings_ui(ctx, &mut Jobs::default(), &mut hotkeys);
+            });
+            output.textures_delta.clear();
+            let texts: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(shape) => Some(shape.galley.text()),
+                    _ => None,
+                })
+                .collect();
+            assert!(!texts.contains(&"sound hotkey error"));
+            if !settings_error.is_empty() {
+                assert!(texts.contains(&settings_error));
+            }
+            assert_eq!(hotkeys.error().text(), "sound hotkey error");
+        }
+    }
+
+    #[test]
+    fn truncated_errors_show_one_tooltip() {
+        let error = "Cannot register F1: Hot key is already registered. ".repeat(4);
+        for hotkey_error in [false, true] {
+            let ctx = egui::Context::default();
+            ctx.all_styles_mut(|style| {
+                style.interaction.tooltip_delay = 0.0;
+                style.interaction.show_tooltips_only_when_still = false;
+            });
+            let mut panel = SoundboardPanel::new(Config::default());
+            let mut hotkeys = HotkeyManager::default();
+            if hotkey_error {
+                hotkeys.message = Message::error(anyhow::anyhow!(error.clone()));
+            } else {
+                panel
+                    .model
+                    .set_error(Message::error(anyhow::anyhow!(error.clone())));
+            }
+            let output = draw_with_hotkeys(&mut panel, &ctx, vec![], &mut hotkeys);
+            let position = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(shape) if shape.galley.text() == error => {
+                        assert!(shape.galley.elided);
+                        Some(shape.pos + shape.galley.size() * 0.5)
+                    }
+                    _ => None,
+                })
+                .expect("missing truncated error");
+            let mut output = output;
+            for _ in 0..3 {
+                output = draw_with_hotkeys(
+                    &mut panel,
+                    &ctx,
+                    vec![egui::Event::PointerMoved(position)],
+                    &mut hotkeys,
+                );
+            }
+            assert_eq!(
+                output
+                    .shapes
+                    .iter()
+                    .filter(|shape| matches!(&shape.shape,
+                        egui::epaint::Shape::Text(shape)
+                            if shape.galley.text() == error && !shape.galley.elided
+                    ))
+                    .count(),
+                1,
+                "expected a single complete error tooltip"
+            );
+        }
     }
 
     fn click(output: &egui::FullOutput, text: &str) -> Vec<egui::Event> {
