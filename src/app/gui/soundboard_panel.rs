@@ -79,6 +79,7 @@ pub(super) struct SoundboardPanel {
     rename_editor: Option<SoundRenameEditor>,
     pending_delete_index: Option<usize>,
     selection: Option<SoundSelection>,
+    batch_rename: Option<super::batch_rename::BatchRename>,
     recording_import: Option<super::recording_import::RecordingImport>,
     pub(super) microphones: Vec<(OutputDevice, String)>,
     pub(super) speakers: Vec<(OutputDevice, String)>,
@@ -93,13 +94,14 @@ impl SoundboardPanel {
             rename_editor: None,
             pending_delete_index: None,
             selection: None,
+            batch_rename: None,
             recording_import: None,
             microphones: Vec::new(),
             speakers: Vec::new(),
         }
     }
     pub(super) fn renaming(&self) -> bool {
-        self.rename_editor.is_some()
+        self.rename_editor.is_some() || self.batch_rename.is_some()
     }
     pub(super) fn cancel_rename(&mut self) {
         self.rename_editor = None;
@@ -108,7 +110,11 @@ impl SoundboardPanel {
         self.pending_delete_index = None;
     }
     pub(super) fn cancel_batch(&mut self) {
+        if self.model.batch_renaming() {
+            return;
+        }
         self.selection = None;
+        self.batch_rename = None;
     }
     pub(super) fn recording_open(&self) -> bool {
         self.recording_import.is_some()
@@ -187,7 +193,7 @@ impl SoundboardPanel {
     ) {
         let available =
             !jobs.busy() && !session_busy && self.draft_options.is_none() && !self.recording_open();
-        ui.add_enabled_ui(available, |ui| {
+        ui.add_enabled_ui(available && !self.model.batch_renaming(), |ui| {
             if hotkeys.batch_capturing()
                 && ui.is_enabled()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
@@ -750,6 +756,8 @@ impl SoundboardPanel {
             }
             let mut bind_selected = false;
             let mut clear_selected = false;
+            let mut move_selected = None;
+            let mut rename_selected = false;
             if let Some(selection) = &mut self.selection {
                 ui.horizontal(|ui| {
                     if ui
@@ -813,10 +821,44 @@ impl SoundboardPanel {
                                 });
                             });
                         }
+                        ui.add_enabled_ui(
+                            !selection.paths.is_empty()
+                                && !hotkeys.batch_capturing()
+                                && !self.model.importing(),
+                            |ui| {
+                                rename_selected = ui.button(Text::BatchRename.text()).clicked();
+                                ui.menu_button(Text::MoveSounds.text(), |ui| {
+                                    if ui.button(Text::MoveToTop.text()).clicked() {
+                                        move_selected = Some(true);
+                                        ui.close();
+                                    }
+                                    if ui.button(Text::MoveToBottom.text()).clicked() {
+                                        move_selected = Some(false);
+                                        ui.close();
+                                    }
+                                });
+                            },
+                        );
                     });
                 });
             }
             if let Some(selection) = &self.selection {
+                if let Some(to_top) = move_selected {
+                    match self.model.move_sounds(&selection.paths, to_top) {
+                        Ok(()) => {
+                            self.model.message.clear();
+                            self.model.failed = false;
+                        }
+                        Err(error) => self.model.set_error(Message::error(error)),
+                    }
+                }
+                if rename_selected {
+                    self.batch_rename = Some(super::batch_rename::BatchRename::new(
+                        ui.ctx(),
+                        self.model.library(),
+                        selection.paths.clone(),
+                    ));
+                }
                 if bind_selected {
                     hotkeys.begin_batch_capture(&selection.paths, &mut self.model);
                     ui.ctx().request_repaint();
@@ -889,6 +931,13 @@ impl SoundboardPanel {
             });
         });
         self.batch_delete_ui(ui.ctx(), available);
+        if let Some(tool) = &mut self.batch_rename
+            && let Some(selection) = &mut self.selection
+            && tool.ui(ui.ctx(), &mut self.model, &mut selection.paths, available)
+        {
+            selection.anchor = None;
+            self.batch_rename = None;
+        }
     }
 
     fn batch_delete_ui(&mut self, ctx: &egui::Context, available: bool) {

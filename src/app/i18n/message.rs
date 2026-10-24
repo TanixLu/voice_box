@@ -115,6 +115,7 @@ messages! {
     PlaybackProgress { elapsed: f64, duration: f64 } => ("Playing {elapsed:.1} / {duration:.1} s", "正在播放 {elapsed:.1} / {duration:.1} 秒");
     SoundCount { count: usize } => ("Sounds: {count}", "音效库 · {count} 个");
     SelectedSounds { count: usize } => ("{count} selected", "已选 {count} 项");
+    RenameSummary { count: usize, changed: usize, errors: usize } => ("{count} files · {changed} changes · {errors} errors", "共 {count} 项 · 修改 {changed} 项 · 错误 {errors} 项");
     SelectedSoundsWithHidden { count: usize, hidden: usize } => ("{count} selected · {hidden} hidden", "已选 {count} 项 · 当前结果外 {hidden} 项");
     DeleteSelectedSounds { count: usize } => ("Delete ({count})", "删除（{count}）");
     ConfirmDeleteSounds { count: usize } => ("Delete {count} sounds and their library files? This cannot be undone.", "删除这 {count} 个音效及其库内文件？此操作无法撤销。");

@@ -5,6 +5,7 @@ use crate::{
     shared::{paths, settings::Settings},
 };
 
+mod batch_rename;
 mod dialogs;
 mod fonts;
 mod hotkey_binding;
@@ -198,7 +199,10 @@ impl VoiceBoxApp {
             });
             return;
         }
-        if self.jobs.busy() || self.soundboard.recording_saving() {
+        if self.jobs.busy()
+            || self.soundboard.recording_saving()
+            || self.soundboard.model.batch_renaming()
+        {
             // An elevated GUI can stop the audio service itself; let registration
             // finish and restart the service before allowing the process to exit.
             if ui.ctx().input(|input| input.viewport().close_requested()) {
@@ -310,7 +314,9 @@ impl VoiceBoxApp {
 
         // Apply after drawing so a job started by a button click disables the
         // native close button in the same frame. Every completion path restores it.
-        let close_enabled = !self.jobs.busy() && !self.soundboard.recording_saving();
+        let close_enabled = !self.jobs.busy()
+            && !self.soundboard.recording_saving()
+            && !self.soundboard.model.batch_renaming();
         if self.close_enabled != close_enabled {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::EnableButtons {
@@ -346,6 +352,7 @@ impl eframe::App for VoiceBoxApp {
             self.hotkeys.cancel_capture();
         }
         let shortcuts_enabled = !self.jobs.busy()
+            && !self.soundboard.model.batch_renaming()
             && !self.voice.session.busy()
             && !self.soundboard.model.importing()
             && self.soundboard.model.import_error.is_none()

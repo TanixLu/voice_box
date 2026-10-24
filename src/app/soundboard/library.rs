@@ -6,7 +6,7 @@ use anyhow::ensure;
 use std::{
     collections::HashSet,
     fs::{self, OpenOptions},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -28,6 +28,33 @@ pub(in crate::app) struct Library {
 }
 
 impl Library {
+    pub(super) fn move_sounds(
+        &mut self,
+        paths: &HashSet<PathBuf>,
+        to_top: bool,
+        save: impl FnOnce(&Self) -> anyhow::Result<()>,
+    ) -> anyhow::Result<Vec<usize>> {
+        ensure!(
+            !paths.is_empty()
+                && self
+                    .sounds
+                    .iter()
+                    .filter(|sound| paths.contains(&sound.path))
+                    .count()
+                    == paths.len(),
+            Text::SoundNotFound
+        );
+        let mut order: Vec<_> = (0..self.sounds.len()).collect();
+        order.sort_by_key(|&index| paths.contains(&self.sounds[index].path) != to_top);
+        let original = self.sounds.clone();
+        self.sounds = order.iter().map(|&index| original[index].clone()).collect();
+        if let Err(error) = save(self) {
+            self.sounds = original;
+            return Err(error);
+        }
+        Ok(order)
+    }
+
     pub(super) fn move_sound(
         &mut self,
         from: usize,
@@ -97,15 +124,8 @@ impl Library {
             return save(self);
         }
         let destination = sound.path.with_file_name(file_name);
-        // Do not replace an existing library file when names collide.
-        let move_file = |from: &Path, to: &Path| unsafe {
-            windows::Win32::Storage::FileSystem::MoveFileExW(
-                windows::core::PCWSTR(crate::shared::utils::wide_null(from).as_ptr()),
-                windows::core::PCWSTR(crate::shared::utils::wide_null(to).as_ptr()),
-                windows::Win32::Storage::FileSystem::MOVE_FILE_FLAGS(0),
-            )
-        };
-        move_file(&sound.path, &destination).user_context(Text::RenameSoundFailed)?;
+        let move_file = super::rename::move_file;
+        move_file(&sound.path, &destination)?;
         let original_path = std::mem::replace(&mut sound.path, destination);
         let original_name = std::mem::replace(&mut sound.file_name, file_name.to_owned());
         if let Err(error) = save(self) {
@@ -152,6 +172,7 @@ pub(super) struct ImportedSounds {
 
 pub(in crate::app) fn is_valid_file_name(name: &str) -> bool {
     if name.is_empty()
+        || name.encode_utf16().count() > 255
         || name.ends_with(['.', ' '])
         || name
             .chars()

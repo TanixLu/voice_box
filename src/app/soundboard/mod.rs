@@ -11,6 +11,7 @@ pub(super) mod library;
 mod metadata;
 mod playback;
 pub(super) mod recording;
+pub(super) mod rename;
 mod shuffle;
 
 use config::{BindingTarget, Config, Options};
@@ -37,6 +38,8 @@ pub(super) struct Soundboard {
     playback_job: Option<PlaybackJob>,
     queued_playback: Option<usize>,
     import_job: Option<mpsc::Receiver<anyhow::Result<ImportedSounds>>>,
+    rename_job: Option<mpsc::Receiver<(Library, anyhow::Result<()>)>>,
+    rename_result: Option<anyhow::Result<()>>,
     duration_reader: DurationReader,
     shuffle: shuffle::Shuffle,
 }
@@ -119,6 +122,63 @@ impl Soundboard {
         }
         Ok(())
     }
+    pub fn move_sounds(&mut self, paths: &HashSet<PathBuf>, to_top: bool) -> anyhow::Result<()> {
+        let options = &self.options;
+        let order = self.library.move_sounds(paths, to_top, |library| {
+            Config {
+                options: options.clone(),
+                library: library.clone(),
+            }
+            .save()
+        })?;
+        self.active_sound_index = self
+            .active_sound_index
+            .and_then(|index| order.iter().position(|&old| old == index));
+        self.queued_playback = self
+            .queued_playback
+            .and_then(|index| order.iter().position(|&old| old == index));
+        Ok(())
+    }
+
+    pub fn batch_renaming(&self) -> bool {
+        self.rename_job.is_some()
+    }
+
+    pub fn take_rename_result(&mut self) -> Option<anyhow::Result<()>> {
+        self.rename_result.take()
+    }
+
+    pub fn rename_sounds(
+        &mut self,
+        plan: rename::RenamePlan,
+        wake: impl Fn() + Send + 'static,
+    ) -> anyhow::Result<()> {
+        ensure!(!self.playing(), Text::StopBeforeRename);
+        ensure!(
+            !self.importing() && !self.batch_renaming(),
+            Text::RenameBusy
+        );
+        let mut library = self.library.clone();
+        let options = self.options.clone();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("VoiceBoxBatchRename".into())
+            .spawn(move || {
+                let result = library.rename_batch(plan, |library| {
+                    Config {
+                        options: options.clone(),
+                        library: library.clone(),
+                    }
+                    .save()
+                });
+                let _ = sender.send((library, result));
+                wake();
+            })
+            .user_context(Text::RenameSoundFailed)?;
+        self.rename_result = None;
+        self.rename_job = Some(receiver);
+        Ok(())
+    }
     pub fn bind_hotkey(
         &mut self,
         target: BindingTarget,
@@ -188,7 +248,7 @@ impl Soundboard {
         })
     }
     pub fn busy(&self) -> bool {
-        self.playback_job.is_some() || self.import_job.is_some()
+        self.playback_job.is_some() || self.import_job.is_some() || self.batch_renaming()
     }
     pub fn playing(&self) -> bool {
         self.playback_job.is_some()
@@ -344,6 +404,9 @@ impl Soundboard {
         }
     }
     pub fn play(&mut self, index: usize, wake: impl Fn() + Send + 'static) {
+        if self.batch_renaming() {
+            return;
+        }
         let Some(sound) = self.library.sounds.get(index) else {
             return;
         };
@@ -427,6 +490,27 @@ impl Soundboard {
         }
     }
     pub fn poll(&mut self, wake: impl Fn() + Clone + Send + 'static) {
+        if let Some(job) = &self.rename_job {
+            match job.try_recv() {
+                Ok((library, result)) => {
+                    self.library = library;
+                    self.duration_reader = DurationReader::default();
+                    self.rename_job = None;
+                    self.failed = result.is_err();
+                    self.message.clear();
+                    self.rename_result = Some(result.map_err(|error| {
+                        self.message = Message::error(error);
+                        anyhow::anyhow!(self.message.clone())
+                    }));
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.rename_job = None;
+                    self.rename_result = Some(Err(anyhow::anyhow!(Text::RenameThreadExited)));
+                    self.set_error(Text::RenameThreadExited.into());
+                }
+                Err(mpsc::TryRecvError::Empty) => return,
+            }
+        }
         for error in self.duration_reader.poll(&mut self.library, wake.clone()) {
             self.set_error(error);
         }
