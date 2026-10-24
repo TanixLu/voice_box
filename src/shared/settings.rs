@@ -11,20 +11,11 @@ pub const MIN_GAIN_MILLIDB: i32 = -60_000;
 pub const MAX_GAIN_MILLIDB: i32 = 60_000;
 const MAX_SETTINGS_BYTES: usize = 16_384;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub denoising_enabled: bool,
     pub gain_millidb: i32,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            denoising_enabled: false,
-            gain_millidb: 0,
-        }
-    }
 }
 
 impl Settings {

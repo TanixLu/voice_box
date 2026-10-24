@@ -6,6 +6,7 @@ use crate::{
 };
 
 mod dialogs;
+mod fonts;
 mod hotkey_binding;
 mod jobs;
 mod microphone;
@@ -115,6 +116,7 @@ impl VoiceBoxApp {
             ctx.set_zoom_factor(preferences.zoom_factor);
         }
         apply_style(ctx);
+        fonts::install(ctx);
         let mut app = Self {
             window_settings: cc
                 .storage

@@ -5,9 +5,6 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 default-run = "voice_box"
 
-[features]
-lib = []
-
 [lib]
 name = "voice_box_apo"
 crate-type = ["cdylib"]
@@ -52,6 +49,7 @@ wasapi = "0.26.0"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Globalization",
+    "Win32_Graphics_DirectWrite",
     "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_Media_Audio",
@@ -66,6 +64,7 @@ windows = { version = "0.62.2", features = [
     "Win32_System_ProcessStatus",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
     "Win32_System_Threading",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_Shell_Common",
@@ -86,6 +85,9 @@ lz4_flex = { version = "0.14.0", default-features = false, features = [
     "checked-decode",
 ] }
 resvg = { version = "0.48.1", default-features = false }
+
+[features]
+lib = []
 
 [profile.release]
 opt-level = 3
