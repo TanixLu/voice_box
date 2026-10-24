@@ -8,38 +8,38 @@ use crate::app::i18n::{Details, Message};
 use crate::app::soundboard::{
     Soundboard,
     config::{BindingTarget, Config, Options, OutputDevice},
-    library::Library,
+    library::{Library, SoundId},
 };
-use std::{collections::HashSet, path::PathBuf};
+use std::collections::HashSet;
 
 #[derive(Default)]
 struct SoundSelection {
-    paths: HashSet<PathBuf>,
-    anchor: Option<PathBuf>,
+    ids: HashSet<SoundId>,
+    anchor: Option<SoundId>,
     confirming_delete: bool,
 }
 
 impl SoundSelection {
     fn toggle(&mut self, library: &Library, indices: &[usize], row: usize, extend: bool) {
-        let path = &library.sounds[indices[row]].path;
-        let selected = !self.paths.contains(path);
+        let id = &library.sounds[indices[row]].id;
+        let selected = !self.ids.contains(id);
         let start = if extend {
             indices
                 .iter()
-                .position(|&index| self.anchor.as_ref() == Some(&library.sounds[index].path))
+                .position(|&index| self.anchor.as_ref() == Some(&library.sounds[index].id))
                 .unwrap_or(row)
         } else {
             row
         };
         for &index in &indices[start.min(row)..=start.max(row)] {
-            let path = &library.sounds[index].path;
+            let id = &library.sounds[index].id;
             if selected {
-                self.paths.insert(path.clone());
+                self.ids.insert(*id);
             } else {
-                self.paths.remove(path);
+                self.ids.remove(id);
             }
         }
-        self.anchor = Some(path.clone());
+        self.anchor = Some(*id);
     }
 }
 
@@ -307,7 +307,7 @@ impl SoundboardPanel {
                     self.rename_editor
                         .as_ref()
                         .is_some_and(|edit| edit.index == *index)
-                        || sound.file_name.to_lowercase().contains(&filter)
+                        || sound.name.to_lowercase().contains(&filter)
                 })
                 .map(|(index, _)| index)
                 .collect();
@@ -317,8 +317,8 @@ impl SoundboardPanel {
                         .iter()
                         .filter(|&&index| {
                             selection
-                                .paths
-                                .contains(&self.model.library().sounds[index].path)
+                                .ids
+                                .contains(&self.model.library().sounds[index].id)
                         })
                         .count();
                     let mut all = !indices.is_empty() && visible_selected == indices.len();
@@ -341,17 +341,17 @@ impl SoundboardPanel {
                         });
                     if select_all || shortcut {
                         for &index in &indices {
-                            let path = &self.model.library().sounds[index].path;
+                            let id = &self.model.library().sounds[index].id;
                             if all || shortcut {
-                                selection.paths.insert(path.clone());
+                                selection.ids.insert(*id);
                             } else {
-                                selection.paths.remove(path);
+                                selection.ids.remove(id);
                             }
                         }
                         selection.anchor = None;
                         visible_selected = if all || shortcut { indices.len() } else { 0 };
                     }
-                    let count = selection.paths.len();
+                    let count = selection.ids.len();
                     let hidden = count - visible_selected;
                     let message = if hidden > 0 {
                         Message::SelectedSoundsWithHidden { count, hidden }
@@ -404,10 +404,10 @@ impl SoundboardPanel {
                             let active = self.model.active_sound_index == Some(index);
                             let sound = &self.model.library().sounds[index];
                             let mut toggle_selection = false;
-                            ui.push_id(&sound.path, |ui| {
+                            ui.push_id(sound.id, |ui| {
                                 ui.horizontal(|ui| {
                                     if let Some(selection) = &self.selection {
-                                        let mut selected = selection.paths.contains(&sound.path);
+                                        let mut selected = selection.ids.contains(&sound.id);
                                         let checkbox = ui
                                             .add_sized(
                                                 [30.0, 30.0],
@@ -419,7 +419,7 @@ impl SoundboardPanel {
                                                 egui::Role::CheckBox,
                                                 ui.is_enabled(),
                                                 selected,
-                                                &sound.file_name,
+                                                &sound.name,
                                             )
                                         });
                                         toggle_selection = checkbox.clicked();
@@ -493,31 +493,12 @@ impl SoundboardPanel {
                                                     }
                                                 }
                                             }
-                                            let duration = sound
-                                                .duration
-                                                .map(format_duration)
-                                                .unwrap_or_else(|| {
-                                                    if sound.duration_error.is_some() {
-                                                        Text::Failed.text().into()
-                                                    } else {
-                                                        "…".into()
-                                                    }
-                                                });
                                             ui.add_sized(
                                                 [48.0, 30.0],
-                                                egui::Label::new(duration)
-                                                    .truncate()
-                                                    .show_tooltip_when_elided(false),
+                                                egui::Label::new(format_duration(sound.duration))
+                                                    .truncate(),
                                             )
-                                            .on_hover_text(
-                                                sound
-                                                    .duration_error
-                                                    .as_ref()
-                                                    .map(Message::text)
-                                                    .unwrap_or_else(|| {
-                                                        Text::AudioLength.text().into()
-                                                    }),
-                                            );
+                                            .on_hover_text(Text::AudioLength.text());
                                             if let Some(key) = sound.hotkey {
                                                 if self.selection.is_none()
                                                     && icon_button(
@@ -571,12 +552,12 @@ impl SoundboardPanel {
                                             } else {
                                                 let name = if active {
                                                     Message::PlayingSound {
-                                                        name: sound.file_name.clone(),
+                                                        name: sound.name.clone(),
                                                     }
                                                     .text()
                                                     .into_owned()
                                                 } else {
-                                                    sound.file_name.clone()
+                                                    sound.name.clone()
                                                 };
                                                 let response = ui
                                                     .add_enabled_ui(!capturing, |ui| {
@@ -590,10 +571,8 @@ impl SoundboardPanel {
                                                                         .as_ref()
                                                                         .is_some_and(|selection| {
                                                                             selection
-                                                                                .paths
-                                                                                .contains(
-                                                                                    &sound.path,
-                                                                                )
+                                                                                .ids
+                                                                                .contains(&sound.id)
                                                                         }),
                                                                 )
                                                                 .truncate(),
@@ -603,12 +582,12 @@ impl SoundboardPanel {
                                                     .on_hover_text(if self.selection.is_some() {
                                                         format!(
                                                             "{}\n{}",
-                                                            sound.path.display(),
+                                                            sound.name,
                                                             Text::SelectSoundHint.text()
                                                         )
                                                     } else {
                                                         Message::RenameSoundHint {
-                                                            name: sound.path.display().to_string(),
+                                                            name: sound.name.clone(),
                                                         }
                                                         .text()
                                                         .into_owned()
@@ -621,7 +600,7 @@ impl SoundboardPanel {
                                                     && !renaming
                                                     && self.selection.is_none()
                                                 {
-                                                    rename = Some((index, sound.file_name.clone()));
+                                                    rename = Some((index, sound.name.clone()));
                                                 }
                                             }
                                         },
@@ -724,8 +703,8 @@ impl SoundboardPanel {
             }
             if let Some(index) = remove {
                 self.pending_delete_index = None;
-                let path = self.model.library().sounds[index].path.clone();
-                self.model.remove(&HashSet::from([path]));
+                let id = self.model.library().sounds[index].id;
+                self.model.remove(&HashSet::from([id]));
             }
             if let Some(target) = capture {
                 if capture_target == Some(target) {
@@ -762,7 +741,7 @@ impl SoundboardPanel {
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(
-                            !selection.paths.is_empty() && !hotkeys.batch_capturing(),
+                            !selection.ids.is_empty() && !hotkeys.batch_capturing(),
                             egui::Button::new(Text::ClearSelection.text()),
                         )
                         .clicked()
@@ -772,10 +751,10 @@ impl SoundboardPanel {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add_enabled(
-                                !selection.paths.is_empty() && !hotkeys.batch_capturing(),
+                                !selection.ids.is_empty() && !hotkeys.batch_capturing(),
                                 egui::Button::new(
                                     Message::DeleteSelectedSounds {
-                                        count: selection.paths.len(),
+                                        count: selection.ids.len(),
                                     }
                                     .text(),
                                 ),
@@ -793,7 +772,7 @@ impl SoundboardPanel {
                                 hotkeys.cancel_capture();
                             }
                         } else {
-                            ui.add_enabled_ui(!selection.paths.is_empty(), |ui| {
+                            ui.add_enabled_ui(!selection.ids.is_empty(), |ui| {
                                 ui.menu_button(Text::Hotkeys.text(), |ui| {
                                     if ui
                                         .button(Text::BindHotkey.text())
@@ -805,7 +784,7 @@ impl SoundboardPanel {
                                     }
                                     let has_hotkey =
                                         self.model.library().sounds.iter().any(|sound| {
-                                            selection.paths.contains(&sound.path)
+                                            selection.ids.contains(&sound.id)
                                                 && sound.hotkey.is_some()
                                         });
                                     if ui
@@ -822,7 +801,7 @@ impl SoundboardPanel {
                             });
                         }
                         ui.add_enabled_ui(
-                            !selection.paths.is_empty()
+                            !selection.ids.is_empty()
                                 && !hotkeys.batch_capturing()
                                 && !self.model.importing(),
                             |ui| {
@@ -844,7 +823,7 @@ impl SoundboardPanel {
             }
             if let Some(selection) = &self.selection {
                 if let Some(to_top) = move_selected {
-                    match self.model.move_sounds(&selection.paths, to_top) {
+                    match self.model.move_sounds(&selection.ids, to_top) {
                         Ok(()) => {
                             self.model.message.clear();
                             self.model.failed = false;
@@ -854,17 +833,16 @@ impl SoundboardPanel {
                 }
                 if rename_selected {
                     self.batch_rename = Some(super::batch_rename::BatchRename::new(
-                        ui.ctx(),
                         self.model.library(),
-                        selection.paths.clone(),
+                        selection.ids.clone(),
                     ));
                 }
                 if bind_selected {
-                    hotkeys.begin_batch_capture(&selection.paths, &mut self.model);
+                    hotkeys.begin_batch_capture(&selection.ids, &mut self.model);
                     ui.ctx().request_repaint();
                 }
                 if clear_selected {
-                    match self.model.bind_sound_hotkeys(&selection.paths, None) {
+                    match self.model.bind_sound_hotkeys(&selection.ids, None) {
                         Ok(()) => hotkeys.message.clear(),
                         Err(error) => {
                             tracing::error!("Failed to clear selected hotkeys: {error:#}");
@@ -907,11 +885,11 @@ impl SoundboardPanel {
                     .on_hover_text(error.text());
                 } else if let Some(index) = self.model.active_sound_index {
                     let sound = self.model.library().sounds.get(index);
-                    let name = sound.map(|sound| sound.file_name.as_str()).unwrap_or("");
+                    let name = sound.map(|sound| sound.name.as_str()).unwrap_or("");
                     let duration = self
                         .model
                         .duration
-                        .or(sound.and_then(|sound| sound.duration))
+                        .or(sound.map(|sound| sound.duration))
                         .filter(|duration| duration.is_finite() && *duration > 0.0)
                         .map(format_duration)
                         .unwrap_or_else(|| "…".into());
@@ -933,7 +911,7 @@ impl SoundboardPanel {
         self.batch_delete_ui(ui.ctx(), available);
         if let Some(tool) = &mut self.batch_rename
             && let Some(selection) = &mut self.selection
-            && tool.ui(ui.ctx(), &mut self.model, &mut selection.paths, available)
+            && tool.ui(ui.ctx(), &mut self.model, &mut selection.ids, available)
         {
             selection.anchor = None;
             self.batch_rename = None;
@@ -961,7 +939,7 @@ impl SoundboardPanel {
                 ui.add(
                     egui::Label::new(
                         Message::ConfirmDeleteSounds {
-                            count: selection.paths.len(),
+                            count: selection.ids.len(),
                         }
                         .text(),
                     )
@@ -974,8 +952,8 @@ impl SoundboardPanel {
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         for sound in &self.model.library().sounds {
-                            if selection.paths.contains(&sound.path) {
-                                ui.add(egui::Label::new(&sound.file_name).wrap().selectable(true));
+                            if selection.ids.contains(&sound.id) {
+                                ui.add(egui::Label::new(&sound.name).wrap().selectable(true));
                             }
                         }
                     });
@@ -986,7 +964,7 @@ impl SoundboardPanel {
                             available,
                             egui::Button::new(
                                 Message::DeleteSelectedSounds {
-                                    count: selection.paths.len(),
+                                    count: selection.ids.len(),
                                 }
                                 .text(),
                             ),
@@ -998,13 +976,13 @@ impl SoundboardPanel {
                 });
             });
         if delete {
-            self.model.remove(&selection.paths);
-            selection.paths.retain(|path| {
+            self.model.remove(&selection.ids);
+            selection.ids.retain(|id| {
                 self.model
                     .library()
                     .sounds
                     .iter()
-                    .any(|sound| &sound.path == path)
+                    .any(|sound| &sound.id == id)
             });
             selection.anchor = None;
         }
@@ -1221,7 +1199,7 @@ impl SoundboardPanel {
         if !edit.request_focus && (!soundboard_tab_selected || self.draft_options.is_some()) {
             edit.save_requested = true;
         }
-        // Stopping playback is asynchronous; keep the edit until the file is released.
+        // Stopping playback is asynchronous; keep the edit until it finishes.
         if edit.save_requested && !self.model.playing() {
             match self.model.rename(edit.index, &edit.name) {
                 Ok(()) => {

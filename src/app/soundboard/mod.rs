@@ -1,22 +1,20 @@
 //! Sound library operations and background playback coordination.
+use crate::app::hotkeys::Hotkey;
 use crate::app::i18n::Text;
 use crate::app::i18n::{Details, Message, UserContext};
-use crate::{app::hotkeys::Hotkey, shared::paths};
 use anyhow::ensure;
 use std::{collections::HashSet, path::PathBuf, sync::mpsc, thread::JoinHandle};
 
 pub(super) mod config;
 mod decoder;
 pub(super) mod library;
-mod metadata;
 mod playback;
 pub(super) mod recording;
 pub(super) mod rename;
 mod shuffle;
 
 use config::{BindingTarget, Config, Options};
-use library::{ImportedSounds, Library, import_files, is_valid_file_name};
-use metadata::DurationReader;
+use library::{ImportedSounds, Library, SoundId, import_files};
 use playback::{Command, Event, StopReason};
 
 struct PlaybackJob {
@@ -40,34 +38,15 @@ pub(super) struct Soundboard {
     import_job: Option<mpsc::Receiver<anyhow::Result<ImportedSounds>>>,
     rename_job: Option<mpsc::Receiver<(Library, anyhow::Result<()>)>>,
     rename_result: Option<anyhow::Result<()>>,
-    duration_reader: DurationReader,
     shuffle: shuffle::Shuffle,
 }
 impl Soundboard {
     pub fn new(config: Config) -> Self {
         let Config {
             mut options,
-            mut library,
+            library,
         } = config;
         options.sanitize();
-        let directory = match paths::sound_library_dir() {
-            Ok(directory) => directory,
-            Err(error) => {
-                let mut result = Self::default();
-                result.options = options;
-                result.set_error(Message::ReadLibraryFailed {
-                    error: Details::new(error),
-                });
-                return result;
-            }
-        };
-        library
-            .sounds
-            .retain(|sound| is_valid_file_name(&sound.file_name));
-        for sound in &mut library.sounds {
-            sound.path = directory.join(&sound.file_name);
-            sound.hotkey = sound.hotkey.filter(|key| key.is_valid());
-        }
         let mut result = Self::default();
         result.options = options;
         result.library = library;
@@ -89,13 +68,7 @@ impl Soundboard {
         self.update_playback_options();
         Ok(())
     }
-    fn save(&self) -> anyhow::Result<()> {
-        Config {
-            options: self.options.clone(),
-            library: self.library.clone(),
-        }
-        .save()
-    }
+
     pub fn library(&self) -> &Library {
         &self.library
     }
@@ -122,9 +95,9 @@ impl Soundboard {
         }
         Ok(())
     }
-    pub fn move_sounds(&mut self, paths: &HashSet<PathBuf>, to_top: bool) -> anyhow::Result<()> {
+    pub fn move_sounds(&mut self, ids: &HashSet<SoundId>, to_top: bool) -> anyhow::Result<()> {
         let options = &self.options;
-        let order = self.library.move_sounds(paths, to_top, |library| {
+        let order = self.library.move_sounds(ids, to_top, |library| {
             Config {
                 options: options.clone(),
                 library: library.clone(),
@@ -194,16 +167,15 @@ impl Soundboard {
         }
         match target {
             BindingTarget::Sound(index) => {
-                let path = self
+                let id = self
                     .library
                     .sounds
                     .get(index)
                     .user_context(Text::SoundNotFound)?
-                    .path
-                    .clone();
+                    .id;
                 let options = &self.options;
                 self.library
-                    .set_hotkeys(&HashSet::from([path]), key, |library| {
+                    .set_hotkeys(&HashSet::from([id]), key, |library| {
                         Config {
                             options: options.clone(),
                             library: library.clone(),
@@ -225,7 +197,7 @@ impl Soundboard {
     }
     pub fn bind_sound_hotkeys(
         &mut self,
-        paths: &HashSet<PathBuf>,
+        ids: &HashSet<SoundId>,
         key: Option<Hotkey>,
     ) -> anyhow::Result<()> {
         if let Some(key) = key {
@@ -233,13 +205,13 @@ impl Soundboard {
                 .library
                 .sounds
                 .iter()
-                .position(|sound| paths.contains(&sound.path))
+                .position(|sound| ids.contains(&sound.id))
                 .user_context(Text::SoundNotFound)?;
             self.options
                 .validate_binding(&self.library, BindingTarget::Sound(index), key)?;
         }
         let options = &self.options;
-        self.library.set_hotkeys(paths, key, |library| {
+        self.library.set_hotkeys(ids, key, |library| {
             Config {
                 options: options.clone(),
                 library: library.clone(),
@@ -256,23 +228,11 @@ impl Soundboard {
     pub fn importing(&self) -> bool {
         self.import_job.is_some()
     }
-    pub fn add_recording(&mut self, sound: library::Sound) -> anyhow::Result<()> {
-        let path = sound.path.clone();
+    pub fn add_recording(&mut self, sound: library::Sound) {
+        tracing::info!(sound_id = sound.id, "Recorded sound committed to library");
         self.library.sounds.push(sound);
-        if let Err(error) = self.save() {
-            self.library.sounds.pop();
-            if let Err(cleanup) = std::fs::remove_file(&path) {
-                return Err(error.user_context(Message::CleanupRecording {
-                    error: Details::new(cleanup),
-                    path: path.display().to_string(),
-                }));
-            }
-            return Err(error);
-        }
         self.failed = false;
         self.message.clear();
-        tracing::info!(path = %path.display(), "Recorded sound committed to library");
-        Ok(())
     }
     pub fn import(
         &mut self,
@@ -304,22 +264,7 @@ impl Soundboard {
     }
     fn finish_import(&mut self, mut imported: ImportedSounds) {
         let previous_count = self.library.sounds.len();
-        let mut known: HashSet<_> = self
-            .library
-            .sounds
-            .iter()
-            .map(|sound| sound.file_name.to_lowercase())
-            .collect();
-        for sound in imported.sounds {
-            if !known.insert(sound.file_name.to_lowercase()) {
-                continue;
-            }
-            self.library.sounds.push(sound);
-        }
-        if let Err(error) = self.save() {
-            tracing::error!("Failed to save soundboard after import: {error:#}");
-            imported.errors.push(Message::error(error));
-        }
+        self.library.sounds.append(&mut imported.sounds);
         if !imported.errors.is_empty() {
             tracing::warn!(
                 errors = ?imported.errors,
@@ -341,66 +286,42 @@ impl Soundboard {
     }
     pub fn rename(&mut self, index: usize, name: &str) -> anyhow::Result<()> {
         ensure!(!self.playing(), Text::StopBeforeRename);
-        let original_path = self
-            .library
-            .sounds
-            .get(index)
-            .user_context(Text::SoundNotFound)?
-            .path
-            .clone();
         let options = &self.options;
-        let result = self.library.rename(index, name, |library| {
+        self.library.rename(index, name, |library| {
             Config {
                 options: options.clone(),
                 library: library.clone(),
             }
             .save()
-        });
-        self.duration_reader.invalidate(&original_path);
-        self.duration_reader
-            .invalidate(&self.library.sounds[index].path);
-        result
+        })
     }
-    pub fn remove(&mut self, paths: &HashSet<PathBuf>) {
-        let active_path = self
+    pub fn remove(&mut self, ids: &HashSet<SoundId>) {
+        let active_id = self
             .active_sound_index
             .and_then(|index| self.library.sounds.get(index))
-            .map(|sound| sound.path.clone());
-        if active_path
-            .as_ref()
-            .is_some_and(|path| paths.contains(path))
-        {
+            .map(|sound| sound.id);
+        if active_id.is_some_and(|id| ids.contains(&id)) {
             self.stop();
             if let Some(job) = self.playback_job.take() {
                 let _ = job.thread.join();
             }
             self.active_sound_index = None;
         }
-        let (removed, mut errors) = self.library.remove(paths);
-        if !removed.is_empty() {
-            if let Some(path) = active_path
-                && self.active_sound_index.is_some()
-            {
-                self.active_sound_index = self
-                    .library
-                    .sounds
-                    .iter()
-                    .position(|sound| sound.path == path);
+        match crate::app::database::open()
+            .and_then(|mut connection| self.library.remove(&mut connection, ids))
+        {
+            Ok(()) => {
+                if self.active_sound_index.is_some() {
+                    self.active_sound_index = active_id
+                        .and_then(|id| self.library.sounds.iter().position(|sound| sound.id == id));
+                }
+                self.queued_playback = None;
+                self.failed = false;
+                self.message.clear();
             }
-            self.queued_playback = None;
-            for sound in removed {
-                self.duration_reader.invalidate(&sound.path);
-            }
-            if let Err(error) = self.save() {
-                tracing::error!("Failed to save soundboard after deletion: {error:#}");
-                errors.push(Message::error(error));
-            }
-        }
-        if errors.is_empty() {
-            self.failed = false;
-            self.message.clear();
-        } else {
-            self.set_error(Message::Many(errors));
+            Err(error) => self.set_error(Message::DeleteSoundFailed {
+                error: Details::new(error),
+            }),
         }
     }
     pub fn play(&mut self, index: usize, wake: impl Fn() + Send + 'static) {
@@ -415,26 +336,26 @@ impl Soundboard {
             self.set_error(Text::OutputsMuted.into());
             return;
         }
-        self.shuffle.last = Some(sound.path.clone());
+        self.shuffle.last = Some(sound.id);
         wake();
         if self.playback_job.is_some() {
             self.stop_with_reason(StopReason::Replaced);
             self.queued_playback = Some(index);
             return;
         }
-        let path = sound.path.clone();
+        let id = sound.id;
         let options = self.options.clone();
         let (tx, rx) = mpsc::channel();
         let (events, receiver) = mpsc::channel();
         self.failed = false;
         self.elapsed = 0.0;
-        self.duration = None;
+        self.duration = Some(sound.duration);
         self.message.clear();
         match std::thread::Builder::new()
             .name("VoiceBoxSoundboard".into())
             .spawn(move || {
                 let started = std::time::Instant::now();
-                let result = playback::run(path, options, &rx, &events);
+                let result = playback::run(id, options, &rx, &events);
                 match &result {
                     Err(e) => {
                         tracing::error!(
@@ -494,7 +415,6 @@ impl Soundboard {
             match job.try_recv() {
                 Ok((library, result)) => {
                     self.library = library;
-                    self.duration_reader = DurationReader::default();
                     self.rename_job = None;
                     self.failed = result.is_err();
                     self.message.clear();
@@ -510,9 +430,6 @@ impl Soundboard {
                 }
                 Err(mpsc::TryRecvError::Empty) => return,
             }
-        }
-        for error in self.duration_reader.poll(&mut self.library, wake.clone()) {
-            self.set_error(error);
         }
         if let Some(import_job) = &self.import_job {
             match import_job.try_recv() {
@@ -539,14 +456,7 @@ impl Soundboard {
         while let Some(job) = &self.playback_job {
             match job.receiver.try_recv() {
                 Ok(Event::Started(duration)) => {
-                    self.duration = duration;
-                    if let Some(sound) = self
-                        .active_sound_index
-                        .and_then(|index| self.library.sounds.get_mut(index))
-                        && duration.is_some()
-                    {
-                        sound.duration = duration;
-                    }
+                    self.duration = duration.or(self.duration);
                     self.message.clear();
                 }
                 Ok(Event::Progress(elapsed)) => self.elapsed = elapsed,

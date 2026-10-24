@@ -30,6 +30,7 @@ lz4_flex = { version = "0.14.0", default-features = false, features = [
 ] }
 restart-manager = "0.1.0"
 rubato = { version = "5.0", default-features = false }
+rusqlite = { version = "0.41.0", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 single-instance = "0.3.3"

@@ -1,28 +1,30 @@
 use super::decoder::SoundDecoder;
-use crate::app::i18n::Text;
-use crate::app::i18n::{Details, Message, UserContext};
-use crate::{app::hotkeys::Hotkey, shared::paths};
+use crate::app::{
+    database,
+    hotkeys::Hotkey,
+    i18n::{Details, Message, Text, UserContext},
+};
+use crate::shared::pcm_transport::SAMPLE_RATE;
 use anyhow::ensure;
+use rusqlite::{Connection, TransactionBehavior, params};
 use std::{
     collections::HashSet,
-    fs::{self, OpenOptions},
-    path::PathBuf,
+    fs::File,
+    io::{self, Seek, Write},
+    path::{Path, PathBuf},
 };
 
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
+pub(in crate::app) type SoundId = i64;
+
+#[derive(Clone, Debug)]
 pub(in crate::app) struct Sound {
-    pub file_name: String,
-    #[serde(skip)]
-    pub path: PathBuf,
+    pub id: SoundId,
+    pub name: String,
     pub hotkey: Option<Hotkey>,
-    #[serde(skip)]
-    pub duration: Option<f64>,
-    #[serde(skip)]
-    pub duration_error: Option<Message>,
+    pub duration: f64,
 }
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
+
+#[derive(Clone, Default)]
 pub(in crate::app) struct Library {
     pub sounds: Vec<Sound>,
 }
@@ -30,22 +32,22 @@ pub(in crate::app) struct Library {
 impl Library {
     pub(super) fn move_sounds(
         &mut self,
-        paths: &HashSet<PathBuf>,
+        ids: &HashSet<SoundId>,
         to_top: bool,
         save: impl FnOnce(&Self) -> anyhow::Result<()>,
     ) -> anyhow::Result<Vec<usize>> {
         ensure!(
-            !paths.is_empty()
+            !ids.is_empty()
                 && self
                     .sounds
                     .iter()
-                    .filter(|sound| paths.contains(&sound.path))
+                    .filter(|sound| ids.contains(&sound.id))
                     .count()
-                    == paths.len(),
+                    == ids.len(),
             Text::SoundNotFound
         );
         let mut order: Vec<_> = (0..self.sounds.len()).collect();
-        order.sort_by_key(|&index| paths.contains(&self.sounds[index].path) != to_top);
+        order.sort_by_key(|&index| ids.contains(&self.sounds[index].id) != to_top);
         let original = self.sounds.clone();
         self.sounds = order.iter().map(|&index| original[index].clone()).collect();
         if let Err(error) = save(self) {
@@ -80,7 +82,7 @@ impl Library {
 
     pub(super) fn set_hotkeys(
         &mut self,
-        paths: &HashSet<PathBuf>,
+        ids: &HashSet<SoundId>,
         key: Option<Hotkey>,
         save: impl FnOnce(&Self) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
@@ -88,11 +90,11 @@ impl Library {
             .sounds
             .iter()
             .enumerate()
-            .filter(|(_, sound)| paths.contains(&sound.path))
+            .filter(|(_, sound)| ids.contains(&sound.id))
             .map(|(index, _)| index)
             .collect();
         ensure!(
-            !indices.is_empty() && indices.len() == paths.len(),
+            !indices.is_empty() && indices.len() == ids.len(),
             Text::SoundNotFound
         );
         let previous: Vec<_> = indices
@@ -114,54 +116,64 @@ impl Library {
         name: &str,
         save: impl FnOnce(&Self) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
+        let name = name.trim();
+        ensure!(is_valid_name(name), Text::InvalidSoundName);
         let sound = self
             .sounds
             .get_mut(index)
             .user_context(Text::SoundNotFound)?;
-        let file_name = name.trim();
-        ensure!(is_valid_file_name(file_name), Text::InvalidFileName);
-        if file_name == sound.file_name {
-            return save(self);
-        }
-        let destination = sound.path.with_file_name(file_name);
-        let move_file = super::rename::move_file;
-        move_file(&sound.path, &destination)?;
-        let original_path = std::mem::replace(&mut sound.path, destination);
-        let original_name = std::mem::replace(&mut sound.file_name, file_name.to_owned());
+        let original = std::mem::replace(&mut sound.name, name.to_owned());
         if let Err(error) = save(self) {
-            let sound = &mut self.sounds[index];
-            if let Err(rollback) = move_file(&sound.path, &original_path) {
-                return Err(error.user_context(Message::RestoreFileName {
-                    error: Details::new(rollback),
-                    path: sound.path.display().to_string(),
-                }));
-            }
-            sound.path = original_path;
-            sound.file_name = original_name;
+            self.sounds[index].name = original;
             return Err(error);
         }
         Ok(())
     }
 
-    pub(super) fn remove(&mut self, paths: &HashSet<PathBuf>) -> (Vec<Sound>, Vec<Message>) {
-        let mut removed = Vec::new();
-        let mut errors = Vec::new();
-        for index in (0..self.sounds.len()).rev() {
-            let sound = &self.sounds[index];
-            if !paths.contains(&sound.path) {
-                continue;
-            }
-            if let Err(error) = fs::remove_file(&sound.path)
-                && error.kind() != std::io::ErrorKind::NotFound
-            {
-                errors.push(Message::DeleteSoundFailed {
-                    error: Details::new(anyhow::Error::new(error).context(sound.file_name.clone())),
-                });
-                continue;
-            }
-            removed.push(self.sounds.remove(index));
+    pub(super) fn remove(
+        &mut self,
+        connection: &mut Connection,
+        ids: &HashSet<SoundId>,
+    ) -> anyhow::Result<()> {
+        let transaction = connection.transaction()?;
+        for id in ids {
+            transaction.execute("DELETE FROM sounds WHERE id = ?1", [id])?;
         }
-        (removed, errors)
+        transaction.commit()?;
+        self.sounds.retain(|sound| !ids.contains(&sound.id));
+        Ok(())
+    }
+
+    pub(in crate::app) fn load(connection: &Connection) -> anyhow::Result<Self> {
+        let mut query = connection
+            .prepare("SELECT id, name, duration, hotkey FROM sounds ORDER BY position, id")?;
+        let rows = query.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+        let mut sounds = Vec::new();
+        for row in rows {
+            let (id, name, duration, hotkey) = row?;
+            ensure!(is_valid_name(&name), Text::InvalidSoundName);
+            ensure!(
+                duration.is_finite() && duration > 0.0,
+                Text::InvalidAudioDuration
+            );
+            sounds.push(Sound {
+                id,
+                name,
+                duration,
+                hotkey: hotkey
+                    .map(|value| serde_json::from_str::<Hotkey>(&value))
+                    .transpose()?
+                    .filter(|key| key.is_valid()),
+            });
+        }
+        Ok(Self { sounds })
     }
 }
 
@@ -170,32 +182,88 @@ pub(super) struct ImportedSounds {
     pub(super) errors: Vec<Message>,
 }
 
-pub(in crate::app) fn is_valid_file_name(name: &str) -> bool {
-    if name.is_empty()
-        || name.encode_utf16().count() > 255
-        || name.ends_with(['.', ' '])
-        || name
-            .chars()
-            .any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
-    {
-        return false;
+pub(in crate::app) fn is_valid_name(name: &str) -> bool {
+    !name.trim().is_empty() && !name.chars().any(char::is_control)
+}
+
+struct AudioWriter<'a> {
+    connection: &'a Connection,
+    id: SoundId,
+    chunk: i64,
+    buffer: Vec<u8>,
+    written: u64,
+    length: u64,
+}
+
+impl Write for AudioWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let count = bytes
+            .len()
+            .min(database::AUDIO_CHUNK_BYTES - self.buffer.len())
+            .min((self.length - self.written) as usize);
+        self.buffer.extend_from_slice(&bytes[..count]);
+        self.written += count as u64;
+        if self.buffer.len() == database::AUDIO_CHUNK_BYTES {
+            self.flush()?;
+            self.buffer.clear();
+            self.chunk += 1;
+        }
+        Ok(count)
     }
-    let stem = name
-        .split('.')
-        .next()
-        .unwrap_or("")
-        .trim_end()
-        .to_ascii_uppercase();
-    !matches!(
-        stem.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
-    ) && !["COM", "LPT"].iter().any(|prefix| {
-        stem.strip_prefix(prefix).is_some_and(|suffix| {
-            matches!(
-                suffix,
-                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-            )
-        })
+
+    fn flush(&mut self) -> io::Result<()> {
+        if !self.buffer.is_empty() {
+            self.connection
+                .prepare_cached(
+                    "INSERT INTO sound_data(sound_id, chunk_index, content) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(sound_id, chunk_index) DO UPDATE SET content = excluded.content",
+                )
+                .and_then(|mut insert| insert.execute(params![self.id, self.chunk, self.buffer]))
+                .map_err(io::Error::other)?;
+        }
+        Ok(())
+    }
+}
+
+pub(in crate::app) fn insert_sound(
+    connection: &mut Connection,
+    name: &str,
+    duration: f64,
+    length: u64,
+    write: impl FnOnce(&mut dyn Write) -> anyhow::Result<()>,
+) -> anyhow::Result<Sound> {
+    let name = name.trim();
+    ensure!(is_valid_name(name), Text::InvalidSoundName);
+    ensure!(length > 0, Text::NoPlayableAudio);
+    ensure!(
+        duration.is_finite() && duration > 0.0,
+        Text::InvalidAudioDuration
+    );
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute(
+        "INSERT INTO sounds(name, duration, byte_length, position) SELECT ?1, ?2, ?3, COALESCE(MAX(position) + 1, 0) FROM sounds",
+        params![name, duration, i64::try_from(length)?],
+    )?;
+    let id = transaction.last_insert_rowid();
+    {
+        let mut output = AudioWriter {
+            connection: &transaction,
+            id,
+            chunk: 0,
+            buffer: Vec::with_capacity(database::AUDIO_CHUNK_BYTES),
+            written: 0,
+            length,
+        };
+        write(&mut output)?;
+        output.flush()?;
+        ensure!(output.written == length, Text::AudioChangedDuringImport);
+    }
+    transaction.commit()?;
+    Ok(Sound {
+        id,
+        name: name.to_owned(),
+        duration,
+        hotkey: None,
     })
 }
 
@@ -207,83 +275,21 @@ pub(super) fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSoun
     if sources.is_empty() {
         return Ok(imported);
     }
-    let directory = paths::sound_library_dir()?;
-    fs::create_dir_all(&directory).user_context(Text::CreateSoundLibrary)?;
-    let canonical_directory = directory.canonicalize()?;
+    let mut connection = database::open()?;
     let mut seen = HashSet::new();
     for source in sources {
-        let result = (|| -> anyhow::Result<Sound> {
+        let result = (|| -> anyhow::Result<Option<Sound>> {
             let source = source
                 .canonicalize()
                 .user_context(Text::ReadSourceAudioPath)?;
-            ensure!(source.is_file(), Text::AudioIsNotFile);
-            let original_name = source
-                .file_name()
-                .and_then(|name| name.to_str())
-                .user_context(Text::InvalidAudioFileName)?;
-            ensure!(
-                is_valid_file_name(original_name),
-                Text::InvalidAudioFileName
-            );
-            {
-                let mut decoder = SoundDecoder::open(&source)?;
-                ensure!(decoder.next_frame()?.is_some(), Text::NoPlayableAudio);
-                while decoder.next_frame()?.is_some() {}
+            if !seen.insert(source.clone()) {
+                return Ok(None);
             }
-            let (file_name, path) = if source.parent() == Some(canonical_directory.as_path()) {
-                (original_name.to_owned(), directory.join(original_name))
-            } else {
-                let stem = source
-                    .file_stem()
-                    .and_then(|name| name.to_str())
-                    .user_context(Text::InvalidAudioFileName)?;
-                let mut number = 1_u64;
-                loop {
-                    let mut file_name = if number == 1 {
-                        stem.to_owned()
-                    } else {
-                        format!("{stem} ({number})")
-                    };
-                    if let Some(extension) = source.extension().and_then(|ext| ext.to_str()) {
-                        file_name.push('.');
-                        file_name.push_str(extension);
-                    }
-                    let destination = directory.join(&file_name);
-                    match OpenOptions::new()
-                        .write(true)
-                        .create_new(true)
-                        .open(&destination)
-                    {
-                        Ok(mut output) => {
-                            let copied = (|| -> std::io::Result<()> {
-                                std::io::copy(&mut fs::File::open(&source)?, &mut output)?;
-                                output.sync_all()
-                            })();
-                            drop(output);
-                            if let Err(error) = copied {
-                                let _ = fs::remove_file(&destination);
-                                return Err(error).user_context(Text::CopySoundFile);
-                            }
-                            break (file_name, destination);
-                        }
-                        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                            number += 1
-                        }
-                        Err(error) => return Err(error).user_context(Text::CreateSoundFile),
-                    }
-                }
-            };
-            Ok(Sound {
-                file_name,
-                path,
-                hotkey: None,
-                duration: None,
-                duration_error: None,
-            })
+            import_file(&mut connection, &source).map(Some)
         })();
         match result {
-            Ok(sound) if seen.insert(sound.file_name.to_lowercase()) => imported.sounds.push(sound),
-            Ok(_) => {}
+            Ok(Some(sound)) => imported.sounds.push(sound),
+            Ok(None) => {}
             Err(error) => imported.errors.push(Message::ImportFileFailed {
                 path: source.display().to_string(),
                 error: Details::new(error),
@@ -291,4 +297,31 @@ pub(super) fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSoun
         }
     }
     Ok(imported)
+}
+
+fn import_file(connection: &mut Connection, source: &Path) -> anyhow::Result<Sound> {
+    let mut file = File::open(source).user_context(Text::OpenAudioFile)?;
+    let metadata = file.metadata()?;
+    ensure!(metadata.is_file(), Text::AudioIsNotFile);
+    let name = source
+        .file_stem()
+        .user_context(Text::InvalidAudioFileName)?
+        .to_string_lossy();
+    let mut decoder = SoundDecoder::new(Box::new(file.try_clone()?))?;
+    let mut frames = 0_u64;
+    while decoder.next_frame()?.is_some() {
+        frames += 1;
+    }
+    ensure!(frames > 0, Text::NoPlayableAudio);
+    file.rewind()?;
+    insert_sound(
+        connection,
+        &name,
+        frames as f64 / f64::from(SAMPLE_RATE),
+        metadata.len(),
+        |output| {
+            io::copy(&mut file, output)?;
+            Ok(())
+        },
+    )
 }

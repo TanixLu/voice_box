@@ -1,4 +1,4 @@
-use super::{config::Options, decoder::SoundDecoder};
+use super::{config::Options, decoder::SoundDecoder, library::SoundId};
 use crate::app::i18n::Text;
 use crate::app::i18n::{Details, Message, UserContext};
 use crate::{
@@ -8,7 +8,6 @@ use crate::{
 use anyhow::ensure;
 use std::{
     collections::VecDeque,
-    path::PathBuf,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -36,12 +35,12 @@ pub(super) struct PlaybackOutcome {
 }
 
 pub(super) fn run(
-    path: PathBuf,
+    id: SoundId,
     mut options: Options,
     commands: &mpsc::Receiver<Command>,
     events: &mpsc::Sender<Event>,
 ) -> anyhow::Result<PlaybackOutcome> {
-    let mut decoder = SoundDecoder::open(&path)?;
+    let mut decoder = SoundDecoder::new(Box::new(crate::app::database::AudioSource::open(id)?))?;
     let duration = decoder.duration;
     let (guid, microphone_error) = match devices::soundboard_microphone_guid(
         options
@@ -75,7 +74,7 @@ pub(super) fn run(
     let mut held_binding = None;
     let mut progress = Instant::now();
     tracing::info!(
-        path = %path.display(),
+        sound_id = id,
         duration_secs = ?duration,
         speaker_volume = options.speaker_output_volume,
         microphone_volume = options.microphone_output_volume,
@@ -136,7 +135,7 @@ pub(super) fn run(
             held_binding = options.auto_hold_hotkey;
         }
         if eof && options.repeat {
-            decoder = SoundDecoder::open(&path)?;
+            decoder = SoundDecoder::new(Box::new(crate::app::database::AudioSource::open(id)?))?;
             decoded = 0;
             eof = false;
         }
@@ -150,7 +149,8 @@ pub(super) fn run(
                     decoded += 1;
                 }
                 None if options.repeat && decoded > 0 => {
-                    decoder = SoundDecoder::open(&path)?;
+                    decoder =
+                        SoundDecoder::new(Box::new(crate::app::database::AudioSource::open(id)?))?;
                     decoded = 0;
                 }
                 None => {

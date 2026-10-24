@@ -1,11 +1,11 @@
 use super::widgets::{ButtonIcon, hint, icon_button, warning};
+use crate::app::i18n::Message;
 use crate::app::i18n::Text;
-use crate::app::i18n::{Details, Message};
 use crate::app::{
     audio::loopback::MAX_RECORD_SECONDS,
     soundboard::{
         Soundboard,
-        library::is_valid_file_name,
+        library::is_valid_name,
         recording::{Activity, Edge, Recorder, Selection},
     },
 };
@@ -26,15 +26,8 @@ impl RecordingImport {
     pub fn poll(&mut self, ctx: &egui::Context, model: &mut Soundboard) -> bool {
         let had_clip = self.recorder.clip.is_some();
         if let Some(sound) = self.recorder.poll(super::wake_ui(ctx.clone())) {
-            match model.add_recording(sound) {
-                Ok(()) => return true,
-                Err(error) => {
-                    tracing::error!("Failed to commit recorded sound to library: {error:#}");
-                    self.recorder.error = Message::ImportRecordingFailed {
-                        error: Details::new(error),
-                    };
-                }
-            }
+            model.add_recording(sound);
+            return true;
         }
         if !had_clip && let Some(clip) = &self.recorder.clip {
             self.selection = Some(Selection::full(&clip.audio));
@@ -234,7 +227,7 @@ impl RecordingImport {
         );
         ui.add_space(12.0);
         ui.horizontal_wrapped(|ui| {
-            let valid_name = is_valid_file_name(self.name.trim());
+            let valid_name = is_valid_name(self.name.trim());
             if ui
                 .add_enabled(
                     editable && selection.start < selection.end && valid_name,
@@ -249,8 +242,8 @@ impl RecordingImport {
                 ui.label(Text::Saving.text());
             }
         });
-        if !self.name.trim().is_empty() && !is_valid_file_name(self.name.trim()) {
-            warning(ui, Text::InvalidFileNameHint.text());
+        if !self.name.trim().is_empty() && !is_valid_name(self.name.trim()) {
+            warning(ui, Text::InvalidSoundNameHint.text());
         }
     }
 }

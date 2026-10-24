@@ -2,54 +2,36 @@ use crate::app::{
     i18n::{Message, Text},
     soundboard::{
         Soundboard,
-        library::Library,
-        rename::{DirectorySnapshot, RenameLocation, RenamePlan, RenameRule},
+        library::{Library, SoundId},
+        rename::{RenameLocation, RenamePlan, RenameRule},
     },
 };
-use std::{
-    collections::HashSet,
-    ops::Range,
-    path::PathBuf,
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+use std::{collections::HashSet, ops::Range};
 
 pub(super) struct BatchRename {
-    selected: HashSet<PathBuf>,
+    selected: HashSet<SoundId>,
     rule: RenameRule,
     plan: RenamePlan,
-    snapshot: Option<DirectorySnapshot>,
-    scan: Option<mpsc::Receiver<anyhow::Result<Option<DirectorySnapshot>>>>,
-    next_check: Instant,
-    scan_error: Message,
     error: Message,
     applying: bool,
 }
 
 impl BatchRename {
-    pub fn new(ctx: &egui::Context, library: &Library, selected: HashSet<PathBuf>) -> Self {
+    pub fn new(library: &Library, selected: HashSet<SoundId>) -> Self {
         let rule = RenameRule::default();
         let plan = RenamePlan::new(library, &selected, &rule);
-        let mut tool = Self {
+        Self {
             selected,
             rule,
             plan,
-            snapshot: None,
-            scan: None,
-            next_check: Instant::now(),
-            scan_error: Message::Empty,
             error: Message::Empty,
             applying: false,
-        };
-        tool.check_directory(ctx);
-        tool
+        }
     }
 
     fn rebuild(&mut self, library: &Library) {
         self.plan = RenamePlan::new(library, &self.selected, &self.rule);
-        if let Some(snapshot) = &self.snapshot {
-            self.plan.validate(library, snapshot);
-        }
+        self.plan.validate(library);
     }
 
     fn error_text(&self) -> String {
@@ -62,7 +44,7 @@ impl BatchRename {
             }
         }
         let mut messages = Vec::new();
-        for message in [&self.scan_error, &self.error]
+        for message in [&self.error]
             .into_iter()
             .filter(|message| !message.is_empty())
             .map(|message| message.text().into_owned())
@@ -75,38 +57,11 @@ impl BatchRename {
         messages.join("；")
     }
 
-    fn check_directory(&mut self, ctx: &egui::Context) {
-        self.next_check = Instant::now() + Duration::from_secs(2);
-        let Some(directory) = self
-            .plan
-            .entries
-            .first()
-            .and_then(|entry| entry.original.parent())
-        else {
-            self.scan_error = Text::SoundNotFound.into();
-            return;
-        };
-        let directory = directory.to_path_buf();
-        let modified = self.snapshot.as_ref().map(|snapshot| snapshot.modified);
-        let (sender, receiver) = mpsc::channel();
-        let wake = super::wake_ui(ctx.clone());
-        match std::thread::Builder::new()
-            .name("VoiceBoxRenameScan".into())
-            .spawn(move || {
-                let _ = sender.send(DirectorySnapshot::read_if_changed(&directory, modified));
-                wake();
-            }) {
-            Ok(_) => self.scan = Some(receiver),
-            Err(error) => self.scan_error = Message::error(error),
-        }
-    }
-
-    // Returns true when the dialog can close. Selection follows the actual paths, even after rollback errors.
     pub fn ui(
         &mut self,
         ctx: &egui::Context,
         model: &mut Soundboard,
-        selected: &mut HashSet<PathBuf>,
+        selected: &mut HashSet<SoundId>,
         available: bool,
     ) -> bool {
         if self.applying
@@ -118,48 +73,17 @@ impl BatchRename {
                 .entries
                 .iter()
                 .filter_map(|entry| model.library().sounds.get(entry.index))
-                .map(|sound| sound.path.clone())
+                .map(|sound| sound.id)
                 .collect();
             self.selected.clone_from(selected);
             match result {
                 Ok(()) => return true,
                 Err(error) => {
                     tracing::error!("Batch rename failed: {error:#}");
-                    self.snapshot = None;
-                    self.scan = None;
                     self.rebuild(model.library());
-                    self.check_directory(ctx);
                     self.error = Message::error(error);
                 }
             }
-        }
-        if let Some(scan) = &self.scan {
-            match scan.try_recv() {
-                Ok(result) => {
-                    self.scan = None;
-                    match result {
-                        Ok(Some(snapshot)) => {
-                            self.scan_error.clear();
-                            self.snapshot = Some(snapshot);
-                            self.rebuild(model.library());
-                        }
-                        Ok(None) => self.scan_error.clear(),
-                        Err(error) => {
-                            self.snapshot = None;
-                            self.scan_error = Message::error(error);
-                        }
-                    }
-                }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    self.scan = None;
-                    self.snapshot = None;
-                    self.scan_error = Text::RenameThreadExited.into();
-                }
-                Err(mpsc::TryRecvError::Empty) => {}
-            }
-        }
-        if !self.applying && self.scan.is_none() && Instant::now() >= self.next_check {
-            self.check_directory(ctx);
         }
         let mut apply = false;
         let mut close = false;
@@ -239,9 +163,7 @@ impl BatchRename {
                                         .changed();
                                 });
                                 if changed {
-                                    if self.snapshot.is_some() {
-                                        self.error.clear();
-                                    }
+                                    self.error.clear();
                                     self.rebuild(model.library());
                                 }
                             });
@@ -279,8 +201,7 @@ impl BatchRename {
                                 .show_rows(ui, row_height, self.plan.entries.len(), |ui, rows| {
                                     for row in rows {
                                         let entry = &self.plan.entries[row];
-                                        let old =
-                                            entry.original.file_name().unwrap().to_string_lossy();
+                                        let old = entry.original.as_str();
                                         ui.push_id(row, |ui| {
                                             ui.allocate_ui_with_layout(
                                                 egui::vec2(ui.available_width(), row_height),
@@ -294,7 +215,7 @@ impl BatchRename {
                                                         name_label(
                                                             ui,
                                                             width,
-                                                            &old,
+                                                            old,
                                                             &entry.old_marks,
                                                             false,
                                                         );
@@ -343,15 +264,11 @@ impl BatchRename {
                                     available
                                         && !model.busy()
                                         && !self.applying
-                                        && self.snapshot.is_some()
-                                        && self.scan_error.is_empty()
                                         && self.plan.error_count() == 0
                                         && self.plan.change_count() > 0,
                                     egui::Button::new(
                                         if self.applying {
                                             Text::RenameApplying
-                                        } else if self.snapshot.is_none() && self.scan.is_some() {
-                                            Text::RenameChecking
                                         } else {
                                             Text::ApplyRename
                                         }
@@ -363,7 +280,7 @@ impl BatchRename {
                         close = ui
                             .add_enabled(!self.applying, egui::Button::new(Text::Cancel.text()))
                             .clicked();
-                        if self.applying || (self.snapshot.is_none() && self.scan.is_some()) {
+                        if self.applying {
                             ui.add(egui::Spinner::new().size(line_height));
                         }
                         let errors = self.error_text();
@@ -387,17 +304,15 @@ impl BatchRename {
                 });
             });
         if apply {
-            // Rebuild once more from the current rule; the worker re-scans before touching files.
+            // Validate against the current library again before committing.
             let plan = RenamePlan::new(model.library(), &self.selected, &self.rule);
             match model.rename_sounds(plan, super::wake_ui(ctx.clone())) {
                 Ok(()) => self.applying = true,
                 Err(error) => self.error = Message::error(error),
             }
         }
-        if self.scan.is_some() || self.applying {
-            ctx.request_repaint_after(Duration::from_millis(50));
-        } else {
-            ctx.request_repaint_after(self.next_check.saturating_duration_since(Instant::now()));
+        if self.applying {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
         !self.applying && (close || response.should_close())
     }

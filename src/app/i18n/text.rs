@@ -25,6 +25,8 @@ macro_rules! catalog {
 }
 
 catalog! {
+    OpenDatabase => ("Cannot open voice_box.db", "无法打开 voice_box.db");
+    AudioChangedDuringImport => ("The audio file changed during import. Try again", "导入过程中音频文件已变化，请重试");
     OpeningMicrophone => ("Opening microphone…", "正在打开麦克风…");
     PreparingProcessedAudio => ("Preparing processed audio…", "正在准备处理后的声音…");
     OpeningPlaybackDevice => ("Opening playback device…", "正在打开播放设备…");
@@ -86,9 +88,6 @@ catalog! {
     WriteTemporarySettings => ("Failed to write the temporary settings file", "写入临时配置文件失败");
     CommitSettings => ("Failed to commit the settings file", "提交配置文件失败");
     NoAudioTrack => ("The file has no audio track", "文件没有音轨");
-    MissingTimeBase => ("The audio track has no time base", "音轨缺少时间基准");
-    ReadAudioDuration => ("Failed to read the audio duration", "读取音频时长失败");
-    DurationCancelled => ("Reading the duration was cancelled", "已取消读取时长");
     InvalidAudioDuration => ("Invalid audio duration", "音频时长无效");
     InvalidTrackParameters => ("Invalid audio track parameters", "音轨参数无效");
     MissingSampleRate => ("The audio track has no sample rate", "音轨缺少采样率");
@@ -106,15 +105,12 @@ catalog! {
     BindHotkey => ("Bind hotkey", "绑定快捷键");
     CaptureHotkeyHint => ("Press a shortcut. Press Esc or click again to cancel", "请按下快捷键，按 Esc 或再次点击取消");
     SoundNotFound => ("The sound does not exist", "音效不存在");
-    InvalidFileName => ("The name must not be empty or contain paths, control characters, or characters reserved by Windows", "名称不能为空，也不能包含路径、控制字符或 Windows 文件名保留字符");
-    RenameSoundFailed => ("Failed to rename the sound file. Check for duplicate names or whether the file is in use", "重命名音效文件失败，请检查名称是否重复或文件是否被占用");
-    CreateSoundLibrary => ("Failed to create the sound library directory", "创建音效库目录失败");
+    InvalidSoundName => ("The name must not be empty or contain control characters", "音效名称不能为空，也不能包含控制字符");
+    RenameSoundFailed => ("Failed to rename the sound", "重命名音效失败");
     ReadSourceAudioPath => ("Failed to read the original audio path", "读取原音频路径失败");
     AudioIsNotFile => ("The selected audio is not a file", "所选音频不是文件");
     InvalidAudioFileName => ("Invalid audio file name", "音频文件名无效");
     NoPlayableAudio => ("The audio file contains no playable data", "音频文件没有可播放的数据");
-    CopySoundFile => ("Failed to copy audio into the sound library", "复制音频到音效库失败");
-    CreateSoundFile => ("Failed to create the sound library file", "创建音效库文件失败");
     UninstallVoiceBox => ("Uninstall VoiceBox", "卸载 VoiceBox");
     ConfirmFullUninstall => ("All VoiceBox components and settings will be removed.\n\nDo you want to continue?", "将卸载 VoiceBox 的所有组件及配置。\n\n确定要继续吗？");
     Uninstall => ("Uninstall", "卸载");
@@ -129,7 +125,6 @@ catalog! {
     InvalidPlaybackVolume => ("Invalid playback volume", "播放音量无效");
     SaveSoundboardConfig => ("Failed to save soundboard settings", "保存音效配置失败");
     InvalidAppSettings => ("Invalid application settings format", "应用配置格式无效");
-    ReadAppSettings => ("Failed to read application settings", "读取应用配置失败");
     OpenSoundSettingsFirst => ("Open sound settings first", "请先打开音效设置");
     StopBeforeRename => ("Stop playback before renaming", "请先停止播放再重命名");
     OutputsMuted => ("Microphone and speaker volumes are both 0. Playback was not started", "麦克风和扬声器音量均为 0，未开始播放");
@@ -146,27 +141,21 @@ catalog! {
     MoveToBottom => ("Move to bottom", "移至底部");
     BatchRename => ("Rename", "重命名");
     RenameLocation => ("Locate", "定位到");
-    RenameStart => ("Start of file name", "文件名开头");
-    RenameEnd => ("End of file name", "文件名结尾");
+    RenameStart => ("Start of sound name", "音效名称开头");
+    RenameEnd => ("End of sound name", "音效名称结尾");
     RenameMatches => ("Matching text", "匹配的文字");
-    RenameEntire => ("Entire file name", "整个文件名");
+    RenameEntire => ("Entire sound name", "整个音效名称");
     RenameFind => ("Find text", "查找文字");
     RenameContent => ("Write content", "写入内容");
     RenameSequence => ("<index>", "<序号>");
     RenameSoundName => ("Sound", "音效");
     RenamePreview => ("Live preview", "实时预览");
-    RenameOldName => ("Original file name", "原文件名");
-    RenameNewName => ("New file name", "新文件名");
+    RenameOldName => ("Original name", "原名称");
+    RenameNewName => ("New name", "新名称");
     ApplyRename => ("Apply rename", "应用重命名");
-    RenameChecking => ("Checking directory…", "正在检查目录…");
     RenameApplying => ("Renaming…", "正在重命名…");
-    RenameConflict => ("A file or folder with this name already exists", "已有其他文件或文件夹使用此名称");
-    RenameDuplicate => ("Selected files would have the same full file name", "选中项改名后的完整文件名重复");
-    RenameSourceMissing => ("The original file is missing or has changed", "原文件不存在或已发生变化");
-    RenameNameTooLong => ("The file name or path exceeds the Windows length limit", "文件名或路径超出 Windows 长度限制");
-    RenameValidationFailed => ("Names are invalid or conflict with existing files. Check the preview again.", "名称无效或与现有文件冲突，请重新检查预览。");
-    RenameBusy => ("Wait for the current file operation to finish", "请等待当前文件操作完成");
-    ReadRenameDirectory => ("Cannot read the sound library directory", "无法读取音效库目录");
+    RenameValidationFailed => ("Invalid sound names or changed entries. Check the preview again.", "音效名称无效或选中项已变化，请重新检查预览。");
+    RenameBusy => ("Wait for the current library operation to finish", "请等待当前音效库操作完成");
     RenameThreadExited => ("The rename worker exited unexpectedly", "重命名任务意外退出");
     Done => ("Done", "完成");
     SelectSearchResults => ("Select all results", "全选当前结果");
@@ -174,7 +163,7 @@ catalog! {
     SelectSoundHint => ("Click to select; Shift-click to select a range", "点击选择，Shift + 点击选择连续区间");
     DeleteSoundHint => ("Delete sound; click again to confirm", "删除音效，点击后再次确认");
     ConfirmDeleteSound => ("Confirm sound deletion", "确认删除音效");
-    ConfirmDeleteSoundHint => ("Click again to delete the sound and its library copy, keeping the original file. Click elsewhere or press Esc to cancel", "再次点击确认删除音效及音效库副本，保留原文件；点击其他位置或按 Esc 取消");
+    ConfirmDeleteSoundHint => ("Click again to delete the sound from the library, keeping the original import file. Click elsewhere or press Esc to cancel", "再次点击确认从音效库删除音效，保留导入来源文件；点击其他位置或按 Esc 取消");
     StopPlayback => ("Stop playback", "停止播放");
     PlaySound => ("Play sound", "播放音效");
     CreatePlaybackBuffer => ("Failed to create the playback transport buffer", "创建播放传输缓冲区失败");
@@ -222,7 +211,7 @@ catalog! {
     Repeat => ("Repeat", "循环");
     WrongOverlayProcess => ("The overlay window does not belong to this process", "浮层窗口不属于当前进程");
     InstallOverlayCallback => ("Failed to install the overlay window callback", "安装浮层窗口回调失败");
-    RenameHint => ("Edit the full file name. Press Enter or click elsewhere to save; Esc to cancel", "编辑完整文件名；Enter 或点击别处保存，Esc 取消");
+    RenameHint => ("Edit the sound name. Press Enter or click elsewhere to save; Esc to cancel", "编辑音效名称；Enter 或点击别处保存，Esc 取消");
     Settings => ("Settings", "设置");
     RecordImport => ("Record audio", "录制导入");
     Import => ("Import", "导入");
@@ -232,7 +221,6 @@ catalog! {
     MoveSoundToTop => ("Move to top", "移至顶部");
     MoveSoundToBottom => ("Move to bottom", "移至底部");
     ClearSearchToReorder => ("Clear the search to reorder sounds", "清空搜索后可调整顺序");
-    Failed => ("Failed", "失败");
     AudioLength => ("Audio duration", "音频长度");
     ImportSoundsHint => ("Click Import to add sounds. You can select multiple files at once", "点击「导入」添加音效，可一次选择多个文件");
     NoMatchingSounds => ("No matching sounds", "没有匹配的音效");
@@ -268,7 +256,7 @@ catalog! {
     EnterName => ("Enter a name", "输入名称");
     ImportIntoLibrary => ("Add to library", "导入音效库");
     Saving => ("Saving…", "正在保存…");
-    InvalidFileNameHint => ("Names cannot contain paths, control characters, or characters reserved by Windows.", "名称不能包含路径、控制字符或 Windows 文件名保留字符。");
+    InvalidSoundNameHint => ("Names must not be empty or contain control characters.", "名称不能为空，也不能包含控制字符。");
     UninstallingVoiceBox => ("Uninstalling VoiceBox", "正在卸载 VoiceBox");
     Voice => ("Voice", "语音");
     Soundboard => ("Sounds", "音效");
@@ -278,9 +266,7 @@ catalog! {
     RecorderExited => ("The recording tool exited unexpectedly. Please try again", "录音工具意外退出，请重试");
     InvalidSelection => ("Invalid selection range", "截取范围无效");
     InvalidRecordingFormat => ("Invalid recording format", "录音格式无效");
-    InvalidRecordingName => ("The name must not be empty or contain paths or characters reserved by Windows", "名称不能为空，也不能包含路径或 Windows 文件名保留字符");
-    CannotCreateSoundLibrary => ("Cannot create the sound library directory", "无法创建音效库目录");
-    CreateRecordingFile => ("Cannot create the recording file", "无法创建录音文件");
+    InvalidRecordingName => ("The name must not be empty or contain control characters", "名称不能为空，也不能包含控制字符");
     SaveRecording => ("Failed to save the recording", "保存录音失败");
     LanguageLabel => ("Language", "语言");
     FollowSystem => ("System default", "跟随系统");

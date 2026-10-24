@@ -6,16 +6,11 @@ use crate::shared::{
     resample::Resampler,
 };
 use anyhow::ensure;
-use std::{
-    collections::VecDeque,
-    fs::File,
-    path::Path,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use std::collections::VecDeque;
 use symphonia::core::{
     codecs::audio::{AudioDecoder, AudioDecoderOptions},
     formats::{FormatReader, TrackType, probe::Hint},
-    io::MediaSourceStream,
+    io::{MediaSource, MediaSourceStream},
 };
 
 pub(super) struct SoundDecoder {
@@ -35,47 +30,8 @@ pub(super) struct SoundDecoder {
 }
 
 impl SoundDecoder {
-    /// Reads container timing, scanning packets only when the header lacks it.
-    pub fn probe_duration(path: &Path, stop: &AtomicBool) -> anyhow::Result<f64> {
-        let mut format = open_format(path)?;
-        let track = format
-            .default_track(TrackType::Audio)
-            .user_context(Text::NoAudioTrack)?;
-        let time_base = track.time_base.user_context(Text::MissingTimeBase)?;
-        if let Some(duration) = track
-            .duration
-            .and_then(|duration| time_base.calc_duration(duration))
-        {
-            return Ok(duration.as_secs_f64());
-        }
-        if let Some(frames) = track.num_frames
-            && let Some(rate) = track
-                .codec_params
-                .as_ref()
-                .and_then(|params| params.audio())
-                .and_then(|params| params.sample_rate)
-                .filter(|&rate| rate > 0)
-        {
-            return Ok(frames as f64 / f64::from(rate));
-        }
-        let id = track.id;
-        let mut ticks = symphonia::core::units::Duration::ZERO;
-        while !stop.load(Ordering::Relaxed) {
-            let Some(packet) = format.next_packet().user_context(Text::ReadAudioDuration)? else {
-                break;
-            };
-            if packet.track_id == id {
-                ticks = ticks.saturating_add(packet.dur);
-            }
-        }
-        ensure!(!stop.load(Ordering::Relaxed), Text::DurationCancelled);
-        Ok(time_base
-            .calc_duration(ticks)
-            .user_context(Text::InvalidAudioDuration)?
-            .as_secs_f64())
-    }
-    pub fn open(path: &Path) -> anyhow::Result<Self> {
-        let format = open_format(path)?;
+    pub fn new(source: Box<dyn MediaSource>) -> anyhow::Result<Self> {
+        let format = open_format(source)?;
         let track = format
             .default_track(TrackType::Audio)
             .user_context(Text::NoAudioTrack)?;
@@ -199,16 +155,11 @@ impl SoundDecoder {
     }
 }
 
-fn open_format(path: &Path) -> anyhow::Result<Box<dyn FormatReader>> {
-    let file = File::open(path).user_context(Text::OpenAudioFile)?;
-    let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-        hint.with_extension(ext);
-    }
+fn open_format(source: Box<dyn MediaSource>) -> anyhow::Result<Box<dyn FormatReader>> {
     symphonia::default::get_probe()
         .probe(
-            &hint,
-            MediaSourceStream::new(Box::new(file), Default::default()),
+            &Hint::new(),
+            MediaSourceStream::new(source, Default::default()),
             Default::default(),
             Default::default(),
         )

@@ -39,7 +39,3 @@ pub fn data_dir() -> io::Result<PathBuf> {
     }
     Ok(PathBuf::from(path.map_err(io::Error::other)?).join("VoiceBox"))
 }
-
-pub fn sound_library_dir() -> io::Result<PathBuf> {
-    Ok(data_dir()?.join("sounds"))
-}

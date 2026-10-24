@@ -115,10 +115,10 @@ messages! {
     PlaybackProgress { elapsed: f64, duration: f64 } => ("Playing {elapsed:.1} / {duration:.1} s", "正在播放 {elapsed:.1} / {duration:.1} 秒");
     SoundCount { count: usize } => ("Sounds: {count}", "音效库 · {count} 个");
     SelectedSounds { count: usize } => ("{count} selected", "已选 {count} 项");
-    RenameSummary { count: usize, changed: usize, errors: usize } => ("{count} files · {changed} changes · {errors} errors", "共 {count} 项 · 修改 {changed} 项 · 错误 {errors} 项");
+    RenameSummary { count: usize, changed: usize, errors: usize } => ("{count} sounds · {changed} changes · {errors} errors", "共 {count} 项 · 修改 {changed} 项 · 错误 {errors} 项");
     SelectedSoundsWithHidden { count: usize, hidden: usize } => ("{count} selected · {hidden} hidden", "已选 {count} 项 · 当前结果外 {hidden} 项");
     DeleteSelectedSounds { count: usize } => ("Delete ({count})", "删除（{count}）");
-    ConfirmDeleteSounds { count: usize } => ("Delete {count} sounds and their library files? This cannot be undone.", "删除这 {count} 个音效及其库内文件？此操作无法撤销。");
+    ConfirmDeleteSounds { count: usize } => ("Delete {count} sounds from the library? This cannot be undone.", "从音效库删除这 {count} 个音效？此操作无法撤销。");
     CaptureProgress { time: String } => ("Recording · {time}", "正在录制 · {time}");
     RecordingLimit { minutes: u32 } => ("Default speaker · Up to {minutes} min", "默认扬声器 · 最长 {minutes} 分钟");
     DefaultDevice { name: String } => ("{name} (default)", "{name}（默认）");
@@ -135,14 +135,11 @@ messages! {
     OpenWindowFailed { error: Details } => ("Cannot open the VoiceBox window: {error}", "无法打开 VoiceBox 窗口：{error}");
     ShowOverlayFailed { error: Details } => ("Failed to show the playback overlay: {error}", "显示播放浮层失败：{error}");
     LoggingFailed { error: Details } => ("Failed to initialize VoiceBox logging: {error}", "初始化 VoiceBox 日志失败：{error}");
-    ReadLibraryFailed { error: Details } => ("Failed to locate the sound library: {error}", "读取音效库目录失败：{error}");
     OpenPickerFailed { error: Details } => ("Failed to open the file picker: {error}", "打开文件选择器失败：{error}");
-    DeleteSoundFailed { error: Details } => ("Failed to delete the sound file: {error}", "删除音效文件失败：{error}");
+    DeleteSoundFailed { error: Details } => ("Failed to delete the sound: {error}", "删除音效失败：{error}");
     StartPlaybackFailed { error: Details } => ("Cannot start playback: {error}", "无法开始播放：{error}");
     ImportSoundsFailed { error: Details } => ("Failed to import sounds: {error}", "导入音效失败：{error}");
-    ImportRecordingFailed { error: Details } => ("Import failed: {error}", "导入失败：{error}");
     PlaybackFailed { error: Details } => ("Playback failed: {error}", "播放失败：{error}");
-    ReadSoundDurationFailed { error: Details } => ("Cannot read the sound duration: {error}", "无法读取音效时长：{error}");
     EnableHotkeysFailed { error: Details } => ("Cannot enable global hotkeys: {error}", "无法启用全局快捷键：{error}");
     WaitHotkeysFailed { error: Details } => ("Failed to wait for global hotkeys: {error}", "等待全局快捷键失败：{error}");
     SpeakerMonitorFailed { error: Details } => ("Speaker playback failed; microphone output continues: {error}", "扬声器播放失败，麦克风发送继续：{error}");
@@ -159,8 +156,6 @@ messages! {
     RegisterHotkey { key: Hotkey } => ("Cannot register {key}. It may be in use by another application or reserved by Windows", "无法注册 {key}，可能已被其他程序占用或由系统保留");
     HoldHotkey { key: Hotkey } => ("Cannot hold {key} automatically. Check the game and VoiceBox permissions", "无法自动按住 {key}，请检查游戏与 VoiceBox 的权限");
     HotkeyConflict { key: Hotkey } => ("{key} is already assigned to another action. Choose a different shortcut", "{key} 已绑定其他操作，请使用另一个快捷键");
-    CleanupRecording { error: Details, path: String } => ("Cannot remove the recording file: {error}; audio was kept at {path}", "无法清理录音文件：{error}；文件保留在 {path}");
-    RestoreFileName { error: Details, path: String } => ("Cannot restore the sound file name: {error}; audio was kept at {path}", "无法还原音效文件名：{error}；音频保留在 {path}");
     ImportFileFailed { path: String, error: Details } => ("{path}: {error}", "{path}：{error}");
 }
 

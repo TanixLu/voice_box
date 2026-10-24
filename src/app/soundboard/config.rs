@@ -140,8 +140,7 @@ impl Options {
     }
 }
 
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
+#[derive(Clone, Default)]
 pub(in crate::app) struct Config {
     pub options: Options,
     pub library: Library,

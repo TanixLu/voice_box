@@ -1,14 +1,12 @@
 //! Recording/import tool jobs; preview ranges always refer to complete frames.
-use super::library::{Sound, is_valid_file_name};
+use super::library::{Sound, insert_sound, is_valid_name};
 use crate::app::audio::{capture::Recording, loopback, playback::playback};
 use crate::app::i18n::Text;
 use crate::app::i18n::{Details, Message, UserContext};
 use anyhow::ensure;
 use std::{
-    fs::{self, OpenOptions},
-    io::{BufWriter, Write},
+    io::Write,
     ops::Range,
-    path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -275,16 +273,11 @@ impl Recorder {
         };
         let audio = clip.audio.clone();
         self.begin(Activity::Saving, selection.range(), wake, move |_, _| {
-            save_clip(
-                &crate::shared::paths::sound_library_dir()?,
-                &audio,
-                selection,
-                &name,
-            )
-            .map(Outcome::Saved)
+            save_clip(&mut crate::app::database::open()?, &audio, selection, &name)
+                .map(Outcome::Saved)
         });
     }
-    // Returns a newly written file. The caller commits it to the configuration.
+    // Returns an audio entry already committed to the database.
     pub fn poll(&mut self, wake: impl Fn() + Send + 'static) -> Option<Sound> {
         while let Some(job) = &mut self.job {
             match job.receiver.try_recv() {
@@ -359,19 +352,10 @@ impl Drop for Recorder {
 }
 
 fn write_wave(
-    output: &mut impl Write,
+    output: &mut dyn Write,
     audio: &Recording,
     selection: Selection,
 ) -> anyhow::Result<()> {
-    let total = audio.samples.len() / audio.channels as usize;
-    ensure!(
-        selection.start < selection.end && selection.end <= total,
-        Text::InvalidSelection
-    );
-    ensure!(
-        audio.channels == 2 && audio.sample_rate == 48_000,
-        Text::InvalidRecordingFormat
-    );
     let samples = &audio.samples[selection.start * 2..selection.end * 2];
     let bytes = u32::try_from(samples.len() * 4)?;
     // IEEE float WAV with a fact chunk preserves recorded samples without quantization.
@@ -398,43 +382,26 @@ fn write_wave(
 }
 
 fn save_clip(
-    directory: &Path,
+    connection: &mut rusqlite::Connection,
     audio: &Recording,
     selection: Selection,
     name: &str,
 ) -> anyhow::Result<Sound> {
     let name = name.trim();
-    ensure!(is_valid_file_name(name), Text::InvalidRecordingName);
-    fs::create_dir_all(directory).user_context(Text::CannotCreateSoundLibrary)?;
-    for number in 1_u64.. {
-        let file_name = if number == 1 {
-            format!("{name}.wav")
-        } else {
-            format!("{name} ({number}).wav")
-        };
-        let path = directory.join(&file_name);
-        let file = match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error).user_context(Text::CreateRecordingFile),
-        };
-        let mut output = BufWriter::new(file);
-        let result = write_wave(&mut output, audio, selection).and_then(|()| {
-            output.flush()?;
-            output.get_ref().sync_all()?;
-            Ok(())
-        });
-        drop(output);
-        if let Err(error) = result {
-            let _ = fs::remove_file(&path);
-            return Err(error).user_context(Text::SaveRecording);
-        }
-        return Ok(Sound {
-            file_name,
-            path,
-            duration: Some((selection.end - selection.start) as f64 / f64::from(audio.sample_rate)),
-            ..Default::default()
-        });
-    }
-    unreachable!()
+    ensure!(is_valid_name(name), Text::InvalidRecordingName);
+    ensure!(
+        audio.channels == 2 && audio.sample_rate == 48_000,
+        Text::InvalidRecordingFormat
+    );
+    ensure!(
+        selection.start < selection.end && selection.end <= audio.samples.len() / 2,
+        Text::InvalidSelection
+    );
+    // The float WAV header is 58 bytes; encode directly into the buffered BLOB writer.
+    let length = 58 + (selection.end - selection.start) as u64 * 8;
+    let duration = (selection.end - selection.start) as f64 / f64::from(audio.sample_rate);
+    insert_sound(connection, name, duration, length, |output| {
+        write_wave(output, audio, selection)
+    })
+    .user_context(Text::SaveRecording)
 }

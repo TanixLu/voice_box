@@ -6,13 +6,14 @@ use crate::app::{
     soundboard::{
         Soundboard,
         config::{BindingTarget, Options},
+        library::SoundId,
     },
 };
-use std::{collections::HashSet, path::PathBuf};
+use std::collections::HashSet;
 
 struct KeyCapture {
     target: BindingTarget,
-    paths: Option<HashSet<PathBuf>>,
+    ids: Option<HashSet<SoundId>>,
     armed: bool,
     modifier: Option<Hotkey>,
 }
@@ -60,7 +61,7 @@ impl HotkeyManager {
     pub(super) fn batch_capturing(&self) -> bool {
         self.capture
             .as_ref()
-            .is_some_and(|capture| capture.paths.is_some())
+            .is_some_and(|capture| capture.ids.is_some())
     }
     pub(super) fn error(&self) -> &Message {
         if self.message.is_empty() {
@@ -176,7 +177,7 @@ impl HotkeyManager {
             return;
         };
         let target = capture.target;
-        let paths = capture.paths.take();
+        let ids = capture.ids.take();
         self.capture = None;
         if key.virtual_key_code == 0x1b {
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
@@ -188,8 +189,8 @@ impl HotkeyManager {
             self.validate(key)
         }
         .and_then(|()| {
-            if let Some(paths) = paths {
-                soundboard.bind_sound_hotkeys(&paths, Some(key))
+            if let Some(ids) = ids {
+                soundboard.bind_sound_hotkeys(&ids, Some(key))
             } else {
                 soundboard.bind_hotkey(target, Some(key), draft)
             }
@@ -212,7 +213,7 @@ impl HotkeyManager {
         soundboard.stop();
         self.capture = Some(KeyCapture {
             target,
-            paths: None,
+            ids: None,
             armed: false,
             modifier: None,
         });
@@ -225,19 +226,19 @@ impl HotkeyManager {
 
     pub(super) fn begin_batch_capture(
         &mut self,
-        paths: &HashSet<PathBuf>,
+        ids: &HashSet<SoundId>,
         soundboard: &mut Soundboard,
     ) {
         let Some(index) = soundboard
             .library()
             .sounds
             .iter()
-            .position(|sound| paths.contains(&sound.path))
+            .position(|sound| ids.contains(&sound.id))
         else {
             return;
         };
         self.begin_capture(BindingTarget::Sound(index), soundboard);
-        self.capture.as_mut().unwrap().paths = Some(paths.clone());
+        self.capture.as_mut().unwrap().ids = Some(ids.clone());
     }
 }
 

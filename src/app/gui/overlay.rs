@@ -46,9 +46,9 @@ impl Overlay {
             Ok(builder) => {
                 self.builder = Some(builder);
                 Some((
-                    sound.file_name.clone(),
+                    sound.name.clone(),
                     model.elapsed,
-                    model.duration.or(sound.duration),
+                    model.duration.or(Some(sound.duration)),
                     model.options().repeat,
                 ))
             }

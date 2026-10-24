@@ -2,6 +2,7 @@
 use crate::app::i18n::Text;
 mod app_settings;
 mod audio;
+mod database;
 mod devices;
 mod gui;
 mod hotkeys;
@@ -50,6 +51,7 @@ pub fn run() {
         }
         std::process::exit(1);
     }
+    tracing::info!("VoiceBox exited");
 }
 
 fn run_inner() -> anyhow::Result<()> {

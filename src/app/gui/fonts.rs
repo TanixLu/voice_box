@@ -136,6 +136,16 @@ impl DirectWriteFonts {
 }
 
 impl FontProvider for DirectWriteFonts {
+    fn fonts_for_family(&self, family: &FontFamily) -> Vec<FontInsert> {
+        // Seed the family before egui requests individual missing characters.
+        self.font_for(&FallbackRequest {
+            cluster: "A",
+            family,
+        })
+        .into_iter()
+        .collect()
+    }
+
     fn font_for(&self, request: &FallbackRequest<'_>) -> Option<FontInsert> {
         match self.find_font(request) {
             Ok(font) => font,
