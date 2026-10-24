@@ -51,19 +51,31 @@ impl Library {
         Ok(())
     }
 
-    pub(super) fn set_hotkey(
+    pub(super) fn set_hotkeys(
         &mut self,
-        index: usize,
+        paths: &HashSet<PathBuf>,
         key: Option<Hotkey>,
         save: impl FnOnce(&Self) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
-        let sound = self
+        let indices: Vec<_> = self
             .sounds
-            .get_mut(index)
-            .user_context(Text::SoundNotFound)?;
-        let previous = std::mem::replace(&mut sound.hotkey, key);
+            .iter()
+            .enumerate()
+            .filter(|(_, sound)| paths.contains(&sound.path))
+            .map(|(index, _)| index)
+            .collect();
+        ensure!(
+            !indices.is_empty() && indices.len() == paths.len(),
+            Text::SoundNotFound
+        );
+        let previous: Vec<_> = indices
+            .iter()
+            .map(|&index| std::mem::replace(&mut self.sounds[index].hotkey, key))
+            .collect();
         if let Err(error) = save(self) {
-            self.sounds[index].hotkey = previous;
+            for (index, key) in indices.into_iter().zip(previous) {
+                self.sounds[index].hotkey = key;
+            }
             return Err(error);
         }
         Ok(())
@@ -111,14 +123,25 @@ impl Library {
         Ok(())
     }
 
-    pub(super) fn remove(&mut self, index: usize) -> anyhow::Result<Sound> {
-        let sound = self.sounds.get(index).user_context(Text::SoundNotFound)?;
-        if let Err(error) = fs::remove_file(&sound.path)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(error.into());
+    pub(super) fn remove(&mut self, paths: &HashSet<PathBuf>) -> (Vec<Sound>, Vec<Message>) {
+        let mut removed = Vec::new();
+        let mut errors = Vec::new();
+        for index in (0..self.sounds.len()).rev() {
+            let sound = &self.sounds[index];
+            if !paths.contains(&sound.path) {
+                continue;
+            }
+            if let Err(error) = fs::remove_file(&sound.path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                errors.push(Message::DeleteSoundFailed {
+                    error: Details::new(anyhow::Error::new(error).context(sound.file_name.clone())),
+                });
+                continue;
+            }
+            removed.push(self.sounds.remove(index));
         }
-        Ok(self.sounds.remove(index))
+        (removed, errors)
     }
 }
 
@@ -247,4 +270,135 @@ pub(super) fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSoun
         }
     }
     Ok(imported)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bulk_hotkeys_only_change_selected_sounds_and_roll_back_failed_saves() {
+        let first = Hotkey {
+            virtual_key_code: 0x75,
+            modifiers: 0,
+        };
+        let second = Hotkey {
+            virtual_key_code: 0x76,
+            modifiers: 2,
+        };
+        let mut library = Library {
+            sounds: (0..3)
+                .map(|index| Sound {
+                    path: PathBuf::from(format!("{index}.wav")),
+                    hotkey: if index == 2 { None } else { Some(first) },
+                    ..Sound::default()
+                })
+                .collect(),
+        };
+        let selected = HashSet::from([
+            library.sounds[0].path.clone(),
+            library.sounds[2].path.clone(),
+        ]);
+        assert!(
+            library
+                .set_hotkeys(&selected, Some(second), |_| anyhow::bail!("save failed"))
+                .is_err()
+        );
+        assert_eq!(
+            library
+                .sounds
+                .iter()
+                .map(|sound| sound.hotkey)
+                .collect::<Vec<_>>(),
+            [Some(first), Some(first), None]
+        );
+        library
+            .set_hotkeys(&selected, Some(second), |saved| {
+                assert_eq!(
+                    saved
+                        .sounds
+                        .iter()
+                        .map(|sound| sound.hotkey)
+                        .collect::<Vec<_>>(),
+                    [Some(second), Some(first), Some(second)]
+                );
+                Ok(())
+            })
+            .unwrap();
+        assert!(
+            library
+                .set_hotkeys(&selected, None, |_| anyhow::bail!("save failed"))
+                .is_err()
+        );
+        assert_eq!(
+            library
+                .sounds
+                .iter()
+                .map(|sound| sound.hotkey)
+                .collect::<Vec<_>>(),
+            [Some(second), Some(first), Some(second)]
+        );
+        library.set_hotkeys(&selected, None, |_| Ok(())).unwrap();
+        assert_eq!(
+            library
+                .sounds
+                .iter()
+                .map(|sound| sound.hotkey)
+                .collect::<Vec<_>>(),
+            [None, Some(first), None]
+        );
+        let invalid = HashSet::from([library.sounds[0].path.clone(), PathBuf::from("missing.wav")]);
+        assert!(
+            library
+                .set_hotkeys(&invalid, Some(second), |_| panic!(
+                    "must not save missing sounds"
+                ))
+                .is_err()
+        );
+        assert!(library.sounds[0].hotkey.is_none());
+    }
+
+    #[test]
+    fn bulk_delete_keeps_unselected_and_failed_files() {
+        let directory = std::env::temp_dir().join(format!(
+            "voice-box-delete-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        fs::create_dir(&directory).unwrap();
+        let mut library = Library {
+            sounds: (0..5)
+                .map(|index| Sound {
+                    file_name: format!("{index}.wav"),
+                    path: directory.join(format!("{index}.wav")),
+                    ..Sound::default()
+                })
+                .collect(),
+        };
+        for sound in &library.sounds[..3] {
+            fs::write(&sound.path, b"audio").unwrap();
+        }
+        // A directory deterministically fails file deletion, without relying on permissions.
+        fs::create_dir(&library.sounds[4].path).unwrap();
+        let selected = [0, 2, 3, 4].map(|index| library.sounds[index].path.clone());
+        let (removed, errors) = library.remove(&HashSet::from(selected.clone()));
+        assert_eq!(removed.len(), 3);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(
+            library
+                .sounds
+                .iter()
+                .map(|sound| sound.file_name.as_str())
+                .collect::<Vec<_>>(),
+            ["1.wav", "4.wav"]
+        );
+        assert!(library.sounds[0].path.is_file());
+        assert!(library.sounds[1].path.is_dir());
+        assert!(selected[..3].iter().all(|path| !path.exists()));
+        assert!(errors[0].to_string().contains("4.wav"));
+        fs::remove_dir_all(directory).unwrap();
+    }
 }

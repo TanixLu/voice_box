@@ -143,6 +143,12 @@ impl VoiceBoxApp {
 
     fn show(&mut self, ui: &mut egui::Ui) {
         self.zoom_factor = ui.ctx().zoom_factor();
+        if self.tab != Tab::Soundboard {
+            self.soundboard.cancel_batch();
+            if self.hotkeys.batch_capturing() {
+                self.hotkeys.cancel_capture();
+            }
+        }
         self.hotkeys.poll_capture(
             ui.ctx(),
             &mut self.soundboard.model,

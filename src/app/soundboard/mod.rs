@@ -93,12 +93,6 @@ impl Soundboard {
         }
         .save()
     }
-    fn save_library(&mut self) {
-        if let Err(error) = self.save() {
-            tracing::error!("Failed to save soundboard: {error:#}");
-            self.set_error(Message::error(error));
-        }
-    }
     pub fn library(&self) -> &Library {
         &self.library
     }
@@ -140,14 +134,22 @@ impl Soundboard {
         }
         match target {
             BindingTarget::Sound(index) => {
+                let path = self
+                    .library
+                    .sounds
+                    .get(index)
+                    .user_context(Text::SoundNotFound)?
+                    .path
+                    .clone();
                 let options = &self.options;
-                self.library.set_hotkey(index, key, |library| {
-                    Config {
-                        options: options.clone(),
-                        library: library.clone(),
-                    }
-                    .save()
-                })
+                self.library
+                    .set_hotkeys(&HashSet::from([path]), key, |library| {
+                        Config {
+                            options: options.clone(),
+                            library: library.clone(),
+                        }
+                        .save()
+                    })
             }
             BindingTarget::Hold | BindingTarget::Stop | BindingTarget::Random => {
                 let options = draft.user_context(Text::OpenSoundSettingsFirst)?;
@@ -160,6 +162,30 @@ impl Soundboard {
                 Ok(())
             }
         }
+    }
+    pub fn bind_sound_hotkeys(
+        &mut self,
+        paths: &HashSet<PathBuf>,
+        key: Option<Hotkey>,
+    ) -> anyhow::Result<()> {
+        if let Some(key) = key {
+            let index = self
+                .library
+                .sounds
+                .iter()
+                .position(|sound| paths.contains(&sound.path))
+                .user_context(Text::SoundNotFound)?;
+            self.options
+                .validate_binding(&self.library, BindingTarget::Sound(index), key)?;
+        }
+        let options = &self.options;
+        self.library.set_hotkeys(paths, key, |library| {
+            Config {
+                options: options.clone(),
+                library: library.clone(),
+            }
+            .save()
+        })
     }
     pub fn busy(&self) -> bool {
         self.playback_job.is_some() || self.import_job.is_some()
@@ -275,34 +301,47 @@ impl Soundboard {
             .invalidate(&self.library.sounds[index].path);
         result
     }
-    pub fn remove(&mut self, index: usize) {
-        if index >= self.library.sounds.len() {
-            return;
-        }
-        if self.active_sound_index == Some(index) {
+    pub fn remove(&mut self, paths: &HashSet<PathBuf>) {
+        let active_path = self
+            .active_sound_index
+            .and_then(|index| self.library.sounds.get(index))
+            .map(|sound| sound.path.clone());
+        if active_path
+            .as_ref()
+            .is_some_and(|path| paths.contains(path))
+        {
             self.stop();
             if let Some(job) = self.playback_job.take() {
                 let _ = job.thread.join();
             }
             self.active_sound_index = None;
         }
-        let sound = match self.library.remove(index) {
-            Ok(sound) => sound,
-            Err(error) => {
-                self.set_error(Message::DeleteSoundFailed {
-                    error: Details::new(error),
-                });
-                return;
+        let (removed, mut errors) = self.library.remove(paths);
+        if !removed.is_empty() {
+            if let Some(path) = active_path
+                && self.active_sound_index.is_some()
+            {
+                self.active_sound_index = self
+                    .library
+                    .sounds
+                    .iter()
+                    .position(|sound| sound.path == path);
             }
-        };
-        if let Some(active) = &mut self.active_sound_index
-            && *active > index
-        {
-            *active -= 1;
+            self.queued_playback = None;
+            for sound in removed {
+                self.duration_reader.invalidate(&sound.path);
+            }
+            if let Err(error) = self.save() {
+                tracing::error!("Failed to save soundboard after deletion: {error:#}");
+                errors.push(Message::error(error));
+            }
         }
-        self.queued_playback = None;
-        self.duration_reader.invalidate(&sound.path);
-        self.save_library();
+        if errors.is_empty() {
+            self.failed = false;
+            self.message.clear();
+        } else {
+            self.set_error(Message::Many(errors));
+        }
     }
     pub fn play(&mut self, index: usize, wake: impl Fn() + Send + 'static) {
         let Some(sound) = self.library.sounds.get(index) else {
@@ -480,5 +519,52 @@ fn moved_index(index: usize, from: usize, to: usize) -> usize {
         index + 1
     } else {
         index
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batch_hotkeys_reject_invalid_and_conflicting_keys_before_saving() {
+        let original = Hotkey {
+            virtual_key_code: 0x75,
+            modifiers: 0,
+        };
+        let stop = Hotkey {
+            virtual_key_code: 0x76,
+            modifiers: 0,
+        };
+        let hold = Hotkey {
+            virtual_key_code: 0x77,
+            modifiers: 0,
+        };
+        let mut soundboard = Soundboard::default();
+        soundboard.options.stop_hotkey = Some(stop);
+        soundboard.options.auto_hold_hotkey = Some(hold);
+        soundboard.library.sounds = (0..2)
+            .map(|index| library::Sound {
+                path: PathBuf::from(format!("{index}.wav")),
+                hotkey: Some(original),
+                ..Default::default()
+            })
+            .collect();
+        let paths = soundboard
+            .library
+            .sounds
+            .iter()
+            .map(|sound| sound.path.clone())
+            .collect();
+        for key in [Hotkey::default(), stop, hold] {
+            assert!(soundboard.bind_sound_hotkeys(&paths, Some(key)).is_err());
+            assert!(
+                soundboard
+                    .library
+                    .sounds
+                    .iter()
+                    .all(|sound| sound.hotkey == Some(original))
+            );
+        }
     }
 }

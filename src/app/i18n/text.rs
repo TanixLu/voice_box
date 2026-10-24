@@ -137,7 +137,14 @@ catalog! {
     PlaybackThreadExited => ("The playback thread exited unexpectedly", "播放线程意外退出");
     CloseDiscardChanges => ("Close and discard unsaved changes", "关闭，放弃未保存的修改");
     ClearHotkey => ("Clear hotkey", "清除快捷键");
+    Hotkeys => ("Hotkeys", "快捷键");
+    BatchHotkeyHint => ("Apply to all selected sounds; a shared shortcut plays a random sound from its group", "应用到所有选中音效；同一快捷键会从绑定的音效中随机播放");
     DeleteSound => ("Delete sound", "删除音效");
+    BatchManage => ("Manage", "批量管理");
+    Done => ("Done", "完成");
+    SelectSearchResults => ("Select all results", "全选当前结果");
+    ClearSelection => ("Clear selection", "取消选择");
+    SelectSoundHint => ("Click to select; Shift-click to select a range", "点击选择，Shift + 点击选择连续区间");
     DeleteSoundHint => ("Delete sound; click again to confirm", "删除音效，点击后再次确认");
     ConfirmDeleteSound => ("Confirm sound deletion", "确认删除音效");
     ConfirmDeleteSoundHint => ("Click again to delete the sound and its library copy, keeping the original file. Click elsewhere or press Esc to cancel", "再次点击确认删除音效及音效库副本，保留原文件；点击其他位置或按 Esc 取消");
