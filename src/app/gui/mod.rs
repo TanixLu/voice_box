@@ -21,7 +21,7 @@ use hotkey_binding::{HotkeyManager, PlaybackAction};
 use jobs::{JobResult, Jobs};
 use microphone::MicrophonePanel;
 use soundboard_panel::SoundboardPanel;
-use style::{apply_style, install_system_font};
+use style::apply_style;
 use voice::VoicePanel;
 use widgets::section;
 
@@ -114,7 +114,6 @@ impl VoiceBoxApp {
         if preferences.zoom_factor.is_finite() && preferences.zoom_factor > 0.0 {
             ctx.set_zoom_factor(preferences.zoom_factor);
         }
-        install_system_font(ctx);
         apply_style(ctx);
         let mut app = Self {
             window_settings: cc

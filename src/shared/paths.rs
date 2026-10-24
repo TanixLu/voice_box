@@ -1,18 +1,11 @@
 //! Windows directories and machine-wide VoiceBox data paths.
 use std::{ffi::OsString, io, os::windows::ffi::OsStringExt, path::PathBuf};
 use windows::Win32::{
-    System::{
-        Com::CoTaskMemFree,
-        SystemInformation::{GetSystemDirectoryW, GetSystemWindowsDirectoryW},
-    },
+    System::{Com::CoTaskMemFree, SystemInformation::GetSystemDirectoryW},
     UI::Shell::{FOLDERID_ProgramData, KF_FLAG_DEFAULT, SHGetKnownFolderPath},
 };
 
 pub const APO_SETTINGS_FILE: &str = "apo_settings.json";
-
-pub fn windows_dir() -> io::Result<PathBuf> {
-    directory_from_api(|buffer| unsafe { GetSystemWindowsDirectoryW(Some(buffer)) })
-}
 
 pub fn system_dir() -> io::Result<PathBuf> {
     directory_from_api(|buffer| unsafe { GetSystemDirectoryW(Some(buffer)) })
