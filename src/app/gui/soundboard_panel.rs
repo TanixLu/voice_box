@@ -769,7 +769,13 @@ impl SoundboardPanel {
                     warning(ui, &jobs.status.text());
                 }
             });
-        if close || (response.should_close() && !capturing && idle) {
+        // Ignore backdrop clicks so they do not discard unsaved settings.
+        if close
+            || (!response.backdrop_response.clicked()
+                && response.should_close()
+                && !capturing
+                && idle)
+        {
             self.draft_options = None;
             hotkeys.cancel_capture();
         } else if save {
