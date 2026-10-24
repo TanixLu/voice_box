@@ -162,8 +162,7 @@ impl MicrophonePanel {
                 if jobs.busy() {
                     ui.spinner();
                 }
-                ui.add(egui::Label::new(status.clone()).truncate())
-                    .on_hover_text(status);
+                ui.add(egui::Label::new(status).truncate());
             });
         }
     }

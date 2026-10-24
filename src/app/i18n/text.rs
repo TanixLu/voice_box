@@ -208,7 +208,7 @@ catalog! {
     FollowSystemDefault => ("Follow system default", "跟随系统默认");
     OutputDeviceUnavailable => ("Selected device unavailable", "所选设备不可用");
     ReadingOutputDevices => ("Reading audio devices…", "正在读取音频设备…");
-    SoundboardMicrophonePluginRequired => ("Install or update the VoiceBox plugin for this microphone on the Voice tab", "请在降噪页为此麦克风安装或更新 VoiceBox 插件");
+    SoundboardMicrophonePluginRequired => ("Install or update the VoiceBox plugin for this microphone", "请为此麦克风安装或更新 VoiceBox 插件");
     SpeakerOutput => ("Speaker output", "扬声器输出");
     IncludeMicrophoneAudio => ("Keep microphone audio during playback", "音效播放时保持收音");
     ShowOverlay => ("Show playback overlay", "显示播放浮层");

@@ -568,8 +568,7 @@ impl SoundboardPanel {
                             egui::RichText::new(error.text()).color(ui.visuals().error_fg_color),
                         )
                         .truncate(),
-                    )
-                    .on_hover_text(error.text());
+                    );
                 } else if let Some(index) = self.model.active_sound_index {
                     let sound = self.model.library().sounds.get(index);
                     let name = sound.map(|sound| sound.file_name.as_str()).unwrap_or("");
@@ -690,12 +689,12 @@ impl SoundboardPanel {
                             ui.checkbox(&mut options.repeat, Text::RepeatPlayback.text());
                             if hotkey_editor(
                                 ui,
-                                Text::HoldDuringPlayback.text(),
-                                &mut options.auto_hold_hotkey,
-                                BindingTarget::Hold,
+                                Text::RandomHotkey.text(),
+                                &mut options.random_playback_hotkey,
+                                BindingTarget::Random,
                                 capture_target,
                             ) {
-                                capture = Some(BindingTarget::Hold);
+                                capture = Some(BindingTarget::Random);
                             }
                             if hotkey_editor(
                                 ui,
@@ -708,12 +707,12 @@ impl SoundboardPanel {
                             }
                             if hotkey_editor(
                                 ui,
-                                Text::RandomHotkey.text(),
-                                &mut options.random_playback_hotkey,
-                                BindingTarget::Random,
+                                Text::HoldDuringPlayback.text(),
+                                &mut options.auto_hold_hotkey,
+                                BindingTarget::Hold,
                                 capture_target,
                             ) {
-                                capture = Some(BindingTarget::Random);
+                                capture = Some(BindingTarget::Hold);
                             }
                             if !hotkeys.error().is_empty() {
                                 warning(ui, &hotkeys.error().text());
