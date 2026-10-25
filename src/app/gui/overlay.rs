@@ -39,7 +39,7 @@ impl Overlay {
     ) -> anyhow::Result<bool> {
         let sound = model
             .active_sound_index
-            .filter(|_| enabled)
+            .filter(|_| enabled && !model.importing())
             .and_then(|index| model.library().sounds.get(index));
         let mut layout_result = Ok(());
         let playback = sound.and_then(|sound| match viewport_builder(ctx) {

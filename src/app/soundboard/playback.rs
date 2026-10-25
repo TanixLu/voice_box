@@ -12,36 +12,53 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(super) enum StopReason {
-    Requested,
-    Replaced,
-}
-
 pub(super) enum Command {
-    Stop(StopReason),
+    Stop,
+    Replace(SoundId, u64, Options),
     Configure(Options),
 }
 pub(super) enum Event {
-    Started(Option<f64>),
-    Progress(f64),
-    OutputError(Message),
+    Started(u64, Option<f64>),
+    Progress(u64, f64),
+    OutputError(u64, Message),
     Finished(anyhow::Result<()>),
 }
 
 pub(super) struct PlaybackOutcome {
+    pub sound_id: SoundId,
     pub reason: &'static str,
     /// Audio frames whose scheduled playback time has elapsed.
     pub played_secs: f64,
 }
 
+fn drain_commands(
+    commands: &mpsc::Receiver<Command>,
+    configure: &mut Option<Options>,
+) -> Result<Option<(SoundId, u64)>, &'static str> {
+    let mut replacement = None;
+    loop {
+        match commands.try_recv() {
+            Ok(Command::Stop) => return Err("stopped"),
+            Err(mpsc::TryRecvError::Disconnected) => return Err("controller_disconnected"),
+            Ok(Command::Replace(id, revision, next)) => {
+                replacement = Some((id, revision));
+                *configure = Some(next);
+            }
+            Ok(Command::Configure(next)) => *configure = Some(next),
+            Err(mpsc::TryRecvError::Empty) => return Ok(replacement),
+        }
+    }
+}
+
 pub(super) fn run(
-    id: SoundId,
+    mut id: SoundId,
     mut options: Options,
+    mut revision: u64,
     commands: &mpsc::Receiver<Command>,
     events: &mpsc::Sender<Event>,
 ) -> anyhow::Result<PlaybackOutcome> {
     let mut decoder = SoundDecoder::new(Box::new(crate::app::database::AudioSource::open(id)?))?;
-    let duration = decoder.duration;
+    let mut duration = decoder.duration;
     let (guid, microphone_error) = match devices::soundboard_microphone_guid(
         options
             .microphone_output_device
@@ -62,7 +79,7 @@ pub(super) fn run(
     )?;
     let clock = Clock::new()?;
     let mapping = Mapping::open(&transport, true).user_context(Text::CreatePlaybackBuffer)?;
-    let generation = (clock.frame() & 0xffff).max(1);
+    let mut generation = (clock.frame() & 0xffff).max(1);
     let mut base = clock.frame() + 4800;
     let mut pending = VecDeque::with_capacity(DECODE_AHEAD_FRAMES as usize);
     let mut played = 0_u64;
@@ -81,11 +98,11 @@ pub(super) fn run(
         repeat = options.repeat,
         "Soundboard playback started"
     );
-    let _ = events.send(Event::Started(duration));
+    let _ = events.send(Event::Started(revision, duration));
     // Queue the initial options through the same output validation as live changes.
     let mut configure = Some(options.clone());
     let reason = 'playback: loop {
-        let now = clock.frame();
+        let mut now = clock.frame();
         while base < now && !pending.is_empty() {
             pending.pop_front();
             base += 1;
@@ -94,21 +111,44 @@ pub(super) fn run(
         if base < now {
             base = now;
         }
-        loop {
-            match commands.try_recv() {
-                Ok(Command::Stop(reason)) => {
-                    break 'playback match reason {
-                        StopReason::Requested => "stopped",
-                        StopReason::Replaced => "replaced",
-                    };
-                }
-                Err(mpsc::TryRecvError::Disconnected) => break 'playback "controller_disconnected",
-                Ok(Command::Configure(next)) => {
-                    configure = Some(next);
-                    monitor_failed = false;
-                }
-                Err(mpsc::TryRecvError::Empty) => break,
+        // Coalesce rapid requests before decoding or touching WASAPI. A stop
+        // cancels pending replacements; the controller retains later requests.
+        let replacement = match drain_commands(commands, &mut configure) {
+            Ok(replacement) => replacement,
+            Err(reason) => break 'playback reason,
+        };
+        if configure.is_some() {
+            monitor_failed = false;
+        }
+        if let Some((next_id, next_revision)) = replacement {
+            tracing::info!(
+                sound_id = id,
+                played_secs = played as f64 / f64::from(SAMPLE_RATE),
+                reason = "replaced",
+                "Soundboard sound finished"
+            );
+            mapping.stop();
+            decoder =
+                SoundDecoder::new(Box::new(crate::app::database::AudioSource::open(next_id)?))?;
+            id = next_id;
+            revision = next_revision;
+            duration = decoder.duration;
+            generation = (generation + 1) & 0xffff;
+            if generation == 0 {
+                generation = 1;
             }
+            now = clock.frame();
+            base = now + 4800;
+            pending.clear();
+            played = 0;
+            decoded = 0;
+            eof = false;
+            progress = Instant::now();
+            // Keep the render client running on its owning COM thread. Its short
+            // queue drains while the new sound's timeline is prepared.
+            tracing::info!(sound_id = id, duration_secs = ?duration,
+                speaker_stream_reused = monitor.is_some(), "Soundboard playback switched");
+            let _ = events.send(Event::Started(revision, duration));
         }
         if let Some(next) = configure.take() {
             if next.microphone_output_volume > 0.0
@@ -118,7 +158,7 @@ pub(super) fn run(
                     return Err(anyhow::anyhow!(error.clone()));
                 }
                 tracing::warn!("{error}");
-                let _ = events.send(Event::OutputError(error.clone()));
+                let _ = events.send(Event::OutputError(revision, error.clone()));
             }
             options = next.for_output(guid.is_some());
         }
@@ -176,7 +216,9 @@ pub(super) fn run(
                             .map(|device| device.id.as_str()),
                     )?);
                 }
-                monitor.as_mut().unwrap().fill(now, |frame| {
+                // Opening a device or decoding a packet can take time. Read the
+                // current clock so the render queue does not use a stale timeline.
+                monitor.as_mut().unwrap().fill(clock.frame(), |frame| {
                     let stereo = mapping.read(frame, generation);
                     [
                         stereo[0] * options.speaker_output_volume,
@@ -191,9 +233,12 @@ pub(super) fn run(
                 monitor = None;
                 monitor_failed = true;
                 tracing::warn!("Speaker playback failed; microphone output continues: {error:#}");
-                let _ = events.send(Event::OutputError(Message::SpeakerMonitorFailed {
-                    error: Details::new(error),
-                }));
+                let _ = events.send(Event::OutputError(
+                    revision,
+                    Message::SpeakerMonitorFailed {
+                        error: Details::new(error),
+                    },
+                ));
             }
         } else {
             monitor = None;
@@ -208,17 +253,18 @@ pub(super) fn run(
             {
                 elapsed %= duration;
             }
-            let _ = events.send(Event::Progress(elapsed));
+            let _ = events.send(Event::Progress(revision, elapsed));
             progress = Instant::now();
         }
         std::thread::sleep(Duration::from_millis(5));
     };
     let played_secs = played as f64 / f64::from(SAMPLE_RATE);
-    let _ = events.send(Event::Progress(played_secs));
+    let _ = events.send(Event::Progress(revision, played_secs));
     if reason == "completed" {
         std::thread::sleep(Duration::from_millis(30));
     }
     Ok(PlaybackOutcome {
+        sound_id: id,
         reason,
         played_secs,
     })

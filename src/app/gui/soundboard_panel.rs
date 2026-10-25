@@ -124,6 +124,12 @@ impl SoundboardPanel {
             .as_ref()
             .is_some_and(|tool| tool.saving())
     }
+    pub(super) fn interaction_blocked(&self, jobs: &Jobs) -> bool {
+        jobs.busy()
+            || self.model.importing()
+            || self.model.batch_renaming()
+            || self.recording_saving()
+    }
     pub(super) fn poll_recording(&mut self, ctx: &egui::Context) {
         if let Some(tool) = &mut self.recording_import
             && tool.poll(ctx, &mut self.model)
@@ -191,9 +197,11 @@ impl SoundboardPanel {
         session_busy: bool,
         hotkeys: &mut HotkeyManager,
     ) {
-        let available =
-            !jobs.busy() && !session_busy && self.draft_options.is_none() && !self.recording_open();
-        ui.add_enabled_ui(available && !self.model.batch_renaming(), |ui| {
+        let available = !self.interaction_blocked(jobs)
+            && !session_busy
+            && self.draft_options.is_none()
+            && !self.recording_open();
+        ui.add_enabled_ui(available, |ui| {
             if hotkeys.batch_capturing()
                 && ui.is_enabled()
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
@@ -228,9 +236,7 @@ impl SoundboardPanel {
                     }
                 } else if ui
                     .add_enabled(
-                        !self.model.library().sounds.is_empty()
-                            && !self.model.importing()
-                            && !self.renaming(),
+                        !self.model.library().sounds.is_empty() && !self.renaming(),
                         egui::Button::new(Text::BatchManage.text()),
                     )
                     .clicked()
@@ -253,13 +259,7 @@ impl SoundboardPanel {
                             });
                         }
                         // This row is laid out right-to-left: recording sits to the right of import.
-                        if ui
-                            .add_enabled(
-                                !self.model.importing(),
-                                egui::Button::new(Text::RecordImport.text()),
-                            )
-                            .clicked()
-                        {
+                        if ui.button(Text::RecordImport.text()).clicked() {
                             self.model.stop();
                             self.cancel_rename();
                             self.cancel_delete();
@@ -267,13 +267,7 @@ impl SoundboardPanel {
                             self.recording_import =
                                 Some(super::recording_import::RecordingImport::default());
                         }
-                        if ui
-                            .add_enabled(
-                                !self.model.importing(),
-                                egui::Button::new(Text::Import.text()),
-                            )
-                            .clicked()
-                        {
+                        if ui.button(Text::Import.text()).clicked() {
                             self.model.import(
                                 super::picker::choose_files,
                                 super::wake_ui(ui.ctx().clone()),
@@ -285,6 +279,10 @@ impl SoundboardPanel {
                     },
                 );
             });
+            // The toolbar can start an operation during this same frame.
+            if self.interaction_blocked(jobs) || self.recording_open() {
+                ui.disable();
+            }
             if ui
                 .add_enabled(
                     hotkeys.target().is_none(),
@@ -376,8 +374,7 @@ impl SoundboardPanel {
                 && self.selection.is_none()
                 && filter.is_empty()
                 && !renaming
-                && !capturing
-                && !self.model.importing();
+                && !capturing;
             if !can_reorder {
                 egui::DragAndDrop::clear_payload(ui.ctx());
             }
@@ -801,9 +798,7 @@ impl SoundboardPanel {
                             });
                         }
                         ui.add_enabled_ui(
-                            !selection.ids.is_empty()
-                                && !hotkeys.batch_capturing()
-                                && !self.model.importing(),
+                            !selection.ids.is_empty() && !hotkeys.batch_capturing(),
                             |ui| {
                                 rename_selected = ui.button(Text::BatchRename.text()).clicked();
                                 ui.menu_button(Text::MoveSounds.text(), |ui| {
@@ -908,6 +903,7 @@ impl SoundboardPanel {
                 }
             });
         });
+        let available = available && !self.interaction_blocked(jobs);
         self.batch_delete_ui(ui.ctx(), available);
         if let Some(tool) = &mut self.batch_rename
             && let Some(selection) = &mut self.selection

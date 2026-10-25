@@ -142,6 +142,27 @@ impl VoiceBoxApp {
         app
     }
 
+    fn interaction_blocked(&self) -> bool {
+        self.soundboard.interaction_blocked(&self.jobs)
+            || self.uninstalling
+            || self.uninstall_requested
+    }
+
+    fn update_close_button(&mut self, ctx: &egui::Context) {
+        let enabled = !self.interaction_blocked();
+        if !enabled && ctx.input(|input| input.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
+        if self.close_enabled != enabled {
+            ctx.send_viewport_cmd(egui::ViewportCommand::EnableButtons {
+                close: enabled,
+                minimized: true,
+                maximize: !self.uninstalling,
+            });
+            self.close_enabled = enabled;
+        }
+    }
+
     fn show(&mut self, ui: &mut egui::Ui) {
         self.zoom_factor = ui.ctx().zoom_factor();
         if self.tab != Tab::Soundboard {
@@ -153,40 +174,32 @@ impl VoiceBoxApp {
                 self.hotkeys.cancel_capture();
             }
         }
-        self.hotkeys.poll_capture(
-            ui.ctx(),
-            &mut self.soundboard.model,
-            self.soundboard.draft_options.as_mut(),
-        );
-        if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
-            self.soundboard.cancel_rename();
-        }
-        if self.tab != Tab::Soundboard
-            || ui.input(|input| {
-                !input.focused
-                    || input.smooth_scroll_delta != egui::Vec2::ZERO
-                    || input.pointer.is_decidedly_dragging()
-                    || input.key_pressed(egui::Key::Escape)
-            })
-        {
-            self.soundboard.cancel_delete();
+        if !self.interaction_blocked() {
+            self.hotkeys.poll_capture(
+                ui.ctx(),
+                &mut self.soundboard.model,
+                self.soundboard.draft_options.as_mut(),
+            );
+            if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                self.soundboard.cancel_rename();
+            }
+            if self.tab != Tab::Soundboard
+                || ui.input(|input| {
+                    !input.focused
+                        || input.smooth_scroll_delta != egui::Vec2::ZERO
+                        || input.pointer.is_decidedly_dragging()
+                        || input.key_pressed(egui::Key::Escape)
+                })
+            {
+                self.soundboard.cancel_delete();
+            }
         }
         if self.uninstall_requested {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
         if self.uninstalling {
-            if ui.ctx().input(|input| input.viewport().close_requested()) {
-                ui.ctx()
-                    .send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            }
-            ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::EnableButtons {
-                    close: false,
-                    minimized: true,
-                    maximize: false,
-                });
-            self.close_enabled = false;
+            self.update_close_button(ui.ctx());
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(64.0);
@@ -199,20 +212,12 @@ impl VoiceBoxApp {
             });
             return;
         }
-        if self.jobs.busy()
-            || self.soundboard.recording_saving()
-            || self.soundboard.model.batch_renaming()
-        {
-            // An elevated GUI can stop the audio service itself; let registration
-            // finish and restart the service before allowing the process to exit.
-            if ui.ctx().input(|input| input.viewport().close_requested()) {
-                ui.ctx()
-                    .send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            }
-        }
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(20))
             .show(ui, |ui| {
+                if self.interaction_blocked() {
+                    ui.disable();
+                }
                 ui.horizontal(|ui| {
                     if self.hotkeys.target().is_some() {
                         ui.disable();
@@ -228,9 +233,9 @@ impl VoiceBoxApp {
                                 ui.separator();
                                 if ui
                                     .add_enabled(
-                                        !self.jobs.busy()
+                                        !self.interaction_blocked()
                                             && !self.voice.session.busy()
-                                            && !self.soundboard.model.busy(),
+                                            && !self.soundboard.model.playing(),
                                         egui::Button::new(Text::FullUninstall.text()),
                                     )
                                     .clicked()
@@ -308,24 +313,14 @@ impl VoiceBoxApp {
         self.soundboard
             .settings_ui(ui.ctx(), &mut self.jobs, &mut self.hotkeys);
         self.soundboard.recording_ui(ui.ctx());
-        self.soundboard.finish_rename(self.tab == Tab::Soundboard);
+        if !self.interaction_blocked() && !self.soundboard.recording_open() {
+            self.soundboard.finish_rename(self.tab == Tab::Soundboard);
+        }
         self.soundboard.import_error_ui(ui.ctx());
         self.full_uninstall_ui(ui.ctx());
 
-        // Apply after drawing so a job started by a button click disables the
-        // native close button in the same frame. Every completion path restores it.
-        let close_enabled = !self.jobs.busy()
-            && !self.soundboard.recording_saving()
-            && !self.soundboard.model.batch_renaming();
-        if self.close_enabled != close_enabled {
-            ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::EnableButtons {
-                    close: close_enabled,
-                    minimized: true,
-                    maximize: true,
-                });
-            self.close_enabled = close_enabled;
-        }
+        // Include operations started by a button click during this frame.
+        self.update_close_button(ui.ctx());
     }
 }
 
@@ -351,14 +346,10 @@ impl eframe::App for VoiceBoxApp {
         if !focused {
             self.hotkeys.cancel_capture();
         }
-        let shortcuts_enabled = !self.jobs.busy()
-            && !self.soundboard.model.batch_renaming()
+        let shortcuts_enabled = !self.interaction_blocked()
             && !self.voice.session.busy()
-            && !self.soundboard.model.importing()
             && self.soundboard.model.import_error.is_none()
             && !self.soundboard.recording_open()
-            && !self.uninstalling
-            && !self.uninstall_requested
             && !self.confirm_full_uninstall
             && !(focused && (self.soundboard.renaming() || ctx.text_edit_focused()));
         for action in self.hotkeys.poll(shortcuts_enabled, &self.soundboard.model) {

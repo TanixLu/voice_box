@@ -38,6 +38,9 @@ impl Jobs {
         status: Text,
         operation: impl FnOnce() -> JobResult + Send + 'static,
     ) -> bool {
+        if self.busy() {
+            return false;
+        }
         let (sender, receiver) = mpsc::channel();
         let ctx = ctx.clone();
         self.receiver = Some(receiver);

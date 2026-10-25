@@ -1,19 +1,26 @@
 use super::{Apartment, Stream, enumerator};
-use crate::shared::utils::wide_null;
+use crate::{app::i18n::Text, shared::utils::wide_null};
+use anyhow::ensure;
+use std::time::{Duration, Instant};
 use wasapi::{SampleType, WaveFormat};
 use windows::Win32::{
-    Media::Audio::{IAudioClient, IAudioRenderClient, eConsole, eRender},
-    System::Com::CLSCTX_ALL,
+    Media::Audio::{IAudioClient, IAudioClock, IAudioRenderClient, eConsole, eRender},
+    System::Com::{CLSCTX_ALL, CoTaskMemFree},
 };
 use windows::core::PCWSTR;
 
 /// The soundboard reuses the same WASAPI/COM lifetime and format negotiation as
 /// preview playback, with a shorter queue so route and volume changes feel quick.
 pub(in crate::app) struct Monitor {
-    stream: Stream,
+    // Service interfaces must be released before the client and its event handle;
+    // COM must remain initialized until all of them have been released.
     render: IAudioRenderClient,
+    clock: IAudioClock,
+    stream: Stream,
     started: bool,
     cursor: u64,
+    last_position: u64,
+    last_progress: Instant,
     _apartment: Apartment,
 }
 impl Monitor {
@@ -31,15 +38,38 @@ impl Monitor {
         let format = WaveFormat::new(32, 32, &SampleType::Float, 48_000, 2, Some(3));
         let stream = Stream::with_buffer(client, &format, true, 200_000)?;
         let render = unsafe { stream.client.GetService()? };
+        let clock = unsafe { stream.client.GetService()? };
+        let id = unsafe { device.GetId()? };
+        let endpoint_id = unsafe { id.to_string() };
+        unsafe { CoTaskMemFree(Some(id.0.cast())) };
+        tracing::info!(endpoint_id = ?endpoint_id, buffer_frames = unsafe { stream.client.GetBufferSize()? },
+            "Speaker playback stream opened (shared mode)");
         Ok(Self {
-            stream,
             render,
+            clock,
+            stream,
             started: false,
             cursor: 0,
+            last_position: 0,
+            last_progress: Instant::now(),
             _apartment: apartment,
         })
     }
     pub fn fill(&mut self, now: u64, sample: impl Fn(u64) -> [f32; 2]) -> anyhow::Result<()> {
+        if self.started {
+            // Buffer padding can stay constant during normal playback. The
+            // device clock detects stalls even when WASAPI keeps returning Ok.
+            let mut position = 0;
+            unsafe { self.clock.GetPosition(&mut position, None)? };
+            if position != self.last_position {
+                self.last_position = position;
+                self.last_progress = Instant::now();
+            }
+            ensure!(
+                self.last_progress.elapsed() < Duration::from_secs(3),
+                Text::PlaybackDeviceUnresponsive
+            );
+        }
         let padding = unsafe { self.stream.client.GetCurrentPadding()? };
         let capacity = unsafe { self.stream.client.GetBufferSize()? };
         let expected = now + u64::from(padding);
@@ -66,6 +96,7 @@ impl Monitor {
                 self.stream.client.Start()?;
             }
             self.started = true;
+            self.last_progress = Instant::now();
         }
         Ok(())
     }

@@ -110,8 +110,8 @@ impl Stream {
 }
 impl Drop for Stream {
     fn drop(&mut self) {
-        unsafe {
-            let _ = self.client.Stop();
+        if let Err(error) = unsafe { self.client.Stop() } {
+            tracing::warn!("Failed to stop audio stream: {error}");
         }
     }
 }

@@ -31,9 +31,9 @@ impl VoiceBoxApp {
             ui.horizontal_wrapped(|ui| {
                 if ui
                     .add_enabled(
-                        !self.jobs.busy()
+                        !self.interaction_blocked()
                             && !self.voice.session.busy()
-                            && !self.soundboard.model.busy(),
+                            && !self.soundboard.model.playing(),
                         egui::Button::new(Text::Uninstall.text()),
                     )
                     .clicked()
