@@ -116,6 +116,7 @@ impl VoiceBoxApp {
         if preferences.zoom_factor.is_finite() && preferences.zoom_factor > 0.0 {
             ctx.set_zoom_factor(preferences.zoom_factor);
         }
+        ctx.set_theme(app_settings.theme);
         apply_style(ctx);
         fonts::install(ctx);
         let mut app = Self {
@@ -230,6 +231,8 @@ impl VoiceBoxApp {
                             .align(egui::RectAlign::BOTTOM)
                             .show(|ui| {
                                 self.language_ui(ui);
+                                ui.separator();
+                                self.theme_ui(ui);
                                 ui.separator();
                                 if ui
                                     .add_enabled(
@@ -424,6 +427,32 @@ impl eframe::App for VoiceBoxApp {
 }
 
 impl VoiceBoxApp {
+    fn theme_ui(&mut self, ui: &mut egui::Ui) {
+        use egui::ThemePreference;
+        let previous = ui.ctx().options(|options| options.theme_preference);
+        let mut theme = previous;
+        ui.label(Text::ThemeLabel.text());
+        for (preference, label) in [
+            (ThemePreference::System, Text::FollowSystem),
+            (ThemePreference::Light, Text::LightTheme),
+            (ThemePreference::Dark, Text::DarkTheme),
+        ] {
+            ui.selectable_value(&mut theme, preference, label.text());
+        }
+        if previous != theme {
+            match app_settings::save_theme(theme) {
+                Ok(()) => {
+                    ui.ctx().set_theme(theme);
+                    ui.ctx().request_repaint();
+                }
+                Err(error) => {
+                    self.jobs.status = Message::error(error);
+                    self.jobs.failed = true;
+                }
+            }
+        }
+    }
+
     fn language_ui(&mut self, ui: &mut egui::Ui) {
         use crate::app::i18n::{self, LanguagePreference};
         let previous = self.language_preference;

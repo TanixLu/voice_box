@@ -272,6 +272,10 @@ catalog! {
     LanguageLabel => ("Language", "语言");
     FollowSystem => ("System default", "跟随系统");
     SaveLanguageFailed => ("Failed to save the language preference", "保存语言偏好失败");
+    ThemeLabel => ("Theme", "主题");
+    LightTheme => ("Light", "浅色");
+    DarkTheme => ("Dark", "深色");
+    SaveThemeFailed => ("Failed to save the theme preference", "保存主题偏好失败");
     AnotherInstance => ("Another instance of VoiceBox is already running.", "VoiceBox 已在运行。");
     InvalidDeviceGuid => ("Invalid device GUID", "设备 GUID 无效");
     UninstallIncompleteTitle => ("VoiceBox uninstall incomplete", "VoiceBox 卸载未完成");

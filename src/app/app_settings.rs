@@ -10,6 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 #[derive(Default)]
 pub(super) struct Settings {
     pub language: LanguagePreference,
+    pub theme: egui::ThemePreference,
     pub soundboard: SoundboardConfig,
 }
 
@@ -43,6 +44,7 @@ impl Settings {
         let transaction = connection.transaction()?;
         Ok(Self {
             language: read(&transaction, "language")?,
+            theme: read(&transaction, "theme")?,
             soundboard: SoundboardConfig {
                 options: read(&transaction, "soundboard")?,
                 library: Library::load(&transaction)?,
@@ -59,6 +61,10 @@ pub(super) fn load_language() -> LanguagePreference {
 
 pub(super) fn save_language(language: LanguagePreference) -> anyhow::Result<()> {
     write(&database::open()?, "language", &language).user_context(Text::SaveLanguageFailed)
+}
+
+pub(super) fn save_theme(theme: egui::ThemePreference) -> anyhow::Result<()> {
+    write(&database::open()?, "theme", &theme).user_context(Text::SaveThemeFailed)
 }
 
 pub(super) fn save_soundboard(soundboard: &SoundboardConfig) -> anyhow::Result<()> {
