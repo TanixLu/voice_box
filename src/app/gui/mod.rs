@@ -230,6 +230,8 @@ impl VoiceBoxApp {
                         egui::Popup::menu(&more)
                             .align(egui::RectAlign::BOTTOM)
                             .show(|ui| {
+                                ui.set_min_width(100.0);
+                                ui.spacing_mut().button_padding.x = 25.0;
                                 self.language_ui(ui);
                                 ui.separator();
                                 self.theme_ui(ui);
