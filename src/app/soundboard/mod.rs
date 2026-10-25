@@ -327,6 +327,7 @@ impl Soundboard {
         } else {
             None
         };
+        let reclaim_space = !self.playing();
         self.queued_playback = None;
         self.failed = false;
         self.message.clear();
@@ -345,7 +346,9 @@ impl Soundboard {
                     let _ = thread.join();
                 }
                 let result = crate::app::database::open()
-                    .and_then(|mut connection| library.remove(&mut connection, &selected))
+                    .and_then(|mut connection| {
+                        library.remove(&mut connection, &selected, reclaim_space)
+                    })
                     .map(|()| library);
                 match &result {
                     Ok(_) => tracing::info!(

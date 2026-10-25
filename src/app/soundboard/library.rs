@@ -134,6 +134,7 @@ impl Library {
         &mut self,
         connection: &mut Connection,
         ids: &HashSet<SoundId>,
+        reclaim_space: bool,
     ) -> anyhow::Result<()> {
         let transaction = connection.transaction()?;
         {
@@ -144,6 +145,14 @@ impl Library {
         }
         transaction.commit()?;
         self.sounds.retain(|sound| !ids.contains(&sound.id));
+        if reclaim_space {
+            // Maintenance errors must not turn a committed deletion into a failure.
+            if let Err(error) = database::reclaim_space(connection) {
+                tracing::warn!("Database space reclamation incomplete: {error:#}");
+            }
+        } else {
+            tracing::info!("Database space reclamation skipped: playback is still active");
+        }
         Ok(())
     }
 
