@@ -339,6 +339,7 @@ impl eframe::App for VoiceBoxApp {
         self.poll_job();
         self.voice.session.poll();
         self.soundboard.model.poll(wake_ui(ctx.clone()));
+        self.soundboard.finish_delete();
         self.soundboard.poll_recording(ctx);
         let focused = ctx.input(|input| {
             input.viewport().focused == Some(true) && input.viewport().minimized != Some(true)

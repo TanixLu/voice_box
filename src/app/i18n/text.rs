@@ -129,6 +129,8 @@ catalog! {
     StopBeforeRename => ("Stop playback before renaming", "请先停止播放再重命名");
     OutputsMuted => ("Microphone and speaker volumes are both 0. Playback was not started", "麦克风和扬声器音量均为 0，未开始播放");
     ImportThreadExited => ("The sound import thread exited unexpectedly", "音效导入线程意外退出");
+    DeleteThreadExited => ("The sound deletion thread exited unexpectedly", "音效删除线程意外退出");
+    DeletingSounds => ("Deleting sounds…", "正在删除音效…");
     PlaybackThreadExited => ("The playback thread exited unexpectedly", "播放线程意外退出");
     CloseDiscardChanges => ("Close and discard unsaved changes", "关闭，放弃未保存的修改");
     ClearHotkey => ("Clear hotkey", "清除快捷键");

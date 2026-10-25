@@ -23,6 +23,11 @@ struct PlaybackJob {
     thread: JoinHandle<()>,
 }
 
+struct RemovalJob {
+    ids: HashSet<SoundId>,
+    receiver: mpsc::Receiver<anyhow::Result<Library>>,
+}
+
 #[derive(Default)]
 pub(super) struct Soundboard {
     library: Library,
@@ -37,6 +42,8 @@ pub(super) struct Soundboard {
     playback_revision: u64,
     queued_playback: Option<usize>,
     import_job: Option<mpsc::Receiver<anyhow::Result<ImportedSounds>>>,
+    removal_job: Option<RemovalJob>,
+    removed_sounds: Option<HashSet<SoundId>>,
     rename_job: Option<mpsc::Receiver<(Library, anyhow::Result<()>)>>,
     rename_result: Option<anyhow::Result<()>>,
     shuffle: shuffle::Shuffle,
@@ -129,7 +136,7 @@ impl Soundboard {
     ) -> anyhow::Result<()> {
         ensure!(!self.playing(), Text::StopBeforeRename);
         ensure!(
-            !self.importing() && !self.batch_renaming(),
+            !self.importing() && !self.deleting() && !self.batch_renaming(),
             Text::RenameBusy
         );
         let mut library = self.library.clone();
@@ -221,13 +228,19 @@ impl Soundboard {
         })
     }
     pub fn busy(&self) -> bool {
-        self.playback_job.is_some() || self.import_job.is_some() || self.batch_renaming()
+        self.playback_job.is_some() || self.importing() || self.deleting() || self.batch_renaming()
     }
     pub fn playing(&self) -> bool {
         self.playback_job.is_some()
     }
     pub fn importing(&self) -> bool {
         self.import_job.is_some()
+    }
+    pub fn deleting(&self) -> bool {
+        self.removal_job.is_some()
+    }
+    pub fn take_removed_sounds(&mut self) -> Option<HashSet<SoundId>> {
+        self.removed_sounds.take()
     }
     pub fn add_recording(&mut self, sound: library::Sound) {
         tracing::info!(sound_id = sound.id, "Recorded sound committed to library");
@@ -240,7 +253,7 @@ impl Soundboard {
         select_files: impl FnOnce() -> anyhow::Result<Vec<PathBuf>> + Send + 'static,
         wake: impl Fn() + Send + 'static,
     ) {
-        if self.import_job.is_some() {
+        if self.importing() || self.deleting() || self.batch_renaming() {
             return;
         }
         // Stop before opening the picker: importing disables playback controls.
@@ -299,37 +312,64 @@ impl Soundboard {
             .save()
         })
     }
-    pub fn remove(&mut self, ids: &HashSet<SoundId>) {
+    pub fn remove(&mut self, ids: &HashSet<SoundId>, wake: impl Fn() + Send + 'static) {
+        if ids.is_empty() || self.importing() || self.deleting() || self.batch_renaming() {
+            return;
+        }
         let active_id = self
             .active_sound_index
             .and_then(|index| self.library.sounds.get(index))
             .map(|sound| sound.id);
-        if active_id.is_some_and(|id| ids.contains(&id)) {
+        let stopped_playback = if active_id.is_some_and(|id| ids.contains(&id)) {
             self.stop();
-            if let Some(job) = self.playback_job.take() {
-                let _ = job.thread.join();
-            }
             self.active_sound_index = None;
-        }
-        match crate::app::database::open()
-            .and_then(|mut connection| self.library.remove(&mut connection, ids))
-        {
-            Ok(()) => {
-                if self.active_sound_index.is_some() {
-                    self.active_sound_index = active_id
-                        .and_then(|id| self.library.sounds.iter().position(|sound| sound.id == id));
+            self.playback_job.take().map(|job| job.thread)
+        } else {
+            None
+        };
+        self.queued_playback = None;
+        self.failed = false;
+        self.message.clear();
+        let ids = ids.clone();
+        let selected = ids.clone();
+        let mut library = self.library.clone();
+        let (sender, receiver) = mpsc::channel();
+        match std::thread::Builder::new()
+            .name("VoiceBoxSoundRemoval".into())
+            .spawn(move || {
+                let started = std::time::Instant::now();
+                tracing::info!(count = selected.len(), "Sound deletion started");
+                // Waiting for playback, cascading BLOB deletion, transaction
+                // commit and connection cleanup must all stay off the UI thread.
+                if let Some(thread) = stopped_playback {
+                    let _ = thread.join();
                 }
-                self.queued_playback = None;
-                self.failed = false;
-                self.message.clear();
-            }
+                let result = crate::app::database::open()
+                    .and_then(|mut connection| library.remove(&mut connection, &selected))
+                    .map(|()| library);
+                match &result {
+                    Ok(_) => tracing::info!(
+                        count = selected.len(),
+                        elapsed_ms = started.elapsed().as_millis(),
+                        "Sound deletion completed"
+                    ),
+                    Err(error) => tracing::error!(
+                        count = selected.len(),
+                        elapsed_ms = started.elapsed().as_millis(),
+                        "Sound deletion failed: {error:#}"
+                    ),
+                }
+                let _ = sender.send(result);
+                wake();
+            }) {
+            Ok(_) => self.removal_job = Some(RemovalJob { ids, receiver }),
             Err(error) => self.set_error(Message::DeleteSoundFailed {
                 error: Details::new(error),
             }),
         }
     }
     pub fn play(&mut self, index: usize, wake: impl Fn() + Send + 'static) {
-        if self.importing() || self.batch_renaming() {
+        if self.importing() || self.deleting() || self.batch_renaming() {
             return;
         }
         let Some(sound) = self.library.sounds.get(index) else {
@@ -417,6 +457,33 @@ impl Soundboard {
         }
     }
     pub fn poll(&mut self, wake: impl Fn() + Clone + Send + 'static) {
+        let removal = match self.removal_job.as_ref().map(|job| job.receiver.try_recv()) {
+            Some(Ok(result)) => Some(result),
+            Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                Some(Err(anyhow::anyhow!(Text::DeleteThreadExited)))
+            }
+            _ => None,
+        };
+        if let Some(result) = removal {
+            let job = self.removal_job.take().expect("pending sound deletion");
+            match result {
+                Ok(library) => {
+                    let active_id = self
+                        .active_sound_index
+                        .and_then(|index| self.library.sounds.get(index))
+                        .map(|sound| sound.id);
+                    self.library = library;
+                    self.active_sound_index = active_id
+                        .and_then(|id| self.library.sounds.iter().position(|sound| sound.id == id));
+                    self.removed_sounds = Some(job.ids);
+                    self.failed = false;
+                    self.message.clear();
+                }
+                Err(error) => self.set_error(Message::DeleteSoundFailed {
+                    error: Details::new(error),
+                }),
+            }
+        }
         if let Some(job) = &self.rename_job {
             match job.try_recv() {
                 Ok((library, result)) => {

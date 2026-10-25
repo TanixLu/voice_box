@@ -136,8 +136,11 @@ impl Library {
         ids: &HashSet<SoundId>,
     ) -> anyhow::Result<()> {
         let transaction = connection.transaction()?;
-        for id in ids {
-            transaction.execute("DELETE FROM sounds WHERE id = ?1", [id])?;
+        {
+            let mut delete = transaction.prepare("DELETE FROM sounds WHERE id = ?1")?;
+            for id in ids {
+                delete.execute([id])?;
+            }
         }
         transaction.commit()?;
         self.sounds.retain(|sound| !ids.contains(&sound.id));

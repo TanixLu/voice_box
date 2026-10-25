@@ -110,7 +110,7 @@ impl SoundboardPanel {
         self.pending_delete_index = None;
     }
     pub(super) fn cancel_batch(&mut self) {
-        if self.model.batch_renaming() {
+        if self.model.batch_renaming() || self.model.deleting() {
             return;
         }
         self.selection = None;
@@ -127,6 +127,7 @@ impl SoundboardPanel {
     pub(super) fn interaction_blocked(&self, jobs: &Jobs) -> bool {
         jobs.busy()
             || self.model.importing()
+            || self.model.deleting()
             || self.model.batch_renaming()
             || self.recording_saving()
     }
@@ -229,6 +230,10 @@ impl SoundboardPanel {
                     }
                     .text(),
                 );
+                if self.model.deleting() {
+                    ui.spinner();
+                    ui.label(Text::DeletingSounds.text());
+                }
                 if self.selection.is_some() {
                     if ui.button(Text::Done.text()).clicked() {
                         hotkeys.cancel_capture();
@@ -701,7 +706,8 @@ impl SoundboardPanel {
             if let Some(index) = remove {
                 self.pending_delete_index = None;
                 let id = self.model.library().sounds[index].id;
-                self.model.remove(&HashSet::from([id]));
+                self.model
+                    .remove(&HashSet::from([id]), super::wake_ui(ui.ctx().clone()));
             }
             if let Some(target) = capture {
                 if capture_target == Some(target) {
@@ -972,15 +978,8 @@ impl SoundboardPanel {
                 });
             });
         if delete {
-            self.model.remove(&selection.ids);
-            selection.ids.retain(|id| {
-                self.model
-                    .library()
-                    .sounds
-                    .iter()
-                    .any(|sound| &sound.id == id)
-            });
-            selection.anchor = None;
+            self.model
+                .remove(&selection.ids, super::wake_ui(ctx.clone()));
         }
         if delete || response.should_close() {
             selection.confirming_delete = false;
@@ -1209,6 +1208,16 @@ impl SoundboardPanel {
                     self.model.set_error(Message::error(error));
                 }
             }
+        }
+    }
+
+    pub(super) fn finish_delete(&mut self) {
+        if let Some(removed) = self.model.take_removed_sounds() {
+            if let Some(selection) = &mut self.selection {
+                selection.ids.retain(|id| !removed.contains(id));
+                selection.anchor = None;
+            }
+            self.pending_delete_index = None;
         }
     }
 }
