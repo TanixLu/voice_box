@@ -230,10 +230,6 @@ impl SoundboardPanel {
                     }
                     .text(),
                 );
-                if self.model.deleting() {
-                    ui.spinner();
-                    ui.label(Text::DeletingSounds.text());
-                }
                 if self.selection.is_some() {
                     if ui.button(Text::Done.text()).clicked() {
                         hotkeys.cancel_capture();
@@ -252,6 +248,9 @@ impl SoundboardPanel {
                 ui.with_layout(
                     egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
                     |ui| {
+                        if self.model.deleting() {
+                            ui.spinner();
+                        }
                         if self.selection.is_some() {
                             return;
                         }
