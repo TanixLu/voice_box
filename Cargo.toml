@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/app", "crates/apo", "crates/shared"]
-default-members = ["crates/app"]
+members = ["voice_box", "voice_box_apo", "voice_box_shared"]
+default-members = ["voice_box"]
 resolver = "3"
 
 [workspace.package]
@@ -16,7 +16,7 @@ lz4_flex = { version = "0.14.0", default-features = false, features = [
     "safe-decode",
     "checked-decode",
 ] }
-voice_box_shared = { path = "crates/shared" }
+voice_box_shared = { path = "voice_box_shared" }
 windows = "0.62.2"
 windows-core = "0.62.2"
 

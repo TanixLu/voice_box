@@ -62,7 +62,7 @@ function Update-Licenses {
 
     $inputsText = [System.IO.File]::ReadAllText($licenseInputs, $utf8)
     foreach ($relativePath in @('Cargo.lock', 'Cargo.toml',
-            'crates/app/Cargo.toml', 'crates/apo/Cargo.toml', 'crates/shared/Cargo.toml',
+            'voice_box/Cargo.toml', 'voice_box_apo/Cargo.toml', 'voice_box_shared/Cargo.toml',
             'about.toml', 'about.hbs',
             'about-crates.hbs', 'build.ps1', 'LICENSE-MIT', 'LICENSE-APACHE',
             '.cargo/config', '.cargo/config.toml')) {
