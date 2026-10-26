@@ -5,6 +5,8 @@ $run = $false
 $skipLicenses = $false
 foreach ($argument in $args) {
     switch ($argument) {
+        # Use --release only in the GitHub release action; it is too slow for everyday development.
+        # Omit --release during local development to use the default debug build.
         '--release' { $release = $true }
         '--run' { $run = $true }
         '--skip-licenses' { $skipLicenses = $true }
