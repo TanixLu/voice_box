@@ -8,10 +8,10 @@ Third-party terms remain in effect independently of VoiceBox's dual license.
 
 {{#each licenses}}
 {{! Skip a license group used only by VoiceBox itself. }}
-{{#unless (and (eq used_by.[0].crate.name "voice_box") (not used_by.[1]))}}
+{{#unless (and (or (eq used_by.[0].crate.name "voice_box") (or (eq used_by.[0].crate.name "voice_box_apo") (eq used_by.[0].crate.name "voice_box_shared"))) (not used_by.[1]))}}
 ===== {{{name}}} ({{id}}) =====
 {{#each used_by}}
-{{#unless (eq crate.name "voice_box")}}
+{{#unless (or (eq crate.name "voice_box") (or (eq crate.name "voice_box_apo") (eq crate.name "voice_box_shared")))}}
 - {{crate.name}} {{crate.version}}: {{{crate.repository}}}
 {{/unless}}
 {{/each}}

@@ -6,7 +6,7 @@ use rubato::{
     WindowFunction,
 };
 
-pub(crate) struct Resampler {
+pub struct Resampler {
     engine: Option<Async<f32>>,
     input: Vec<f32>,
     output: Vec<f32>,
@@ -17,7 +17,7 @@ pub(crate) struct Resampler {
 }
 
 impl Resampler {
-    pub(crate) fn new(input_rate: f64, output_rate: f64) -> Self {
+    pub fn new(input_rate: f64, output_rate: f64) -> Self {
         if input_rate == output_rate {
             return Self {
                 engine: None,
@@ -62,10 +62,10 @@ impl Resampler {
         }
     }
 
-    pub(crate) fn delay_seconds(&self) -> f64 {
+    pub fn delay_seconds(&self) -> f64 {
         self.delay_seconds
     }
-    pub(crate) fn input_chunk_size(&self) -> usize {
+    pub fn input_chunk_size(&self) -> usize {
         if self.engine.is_some() {
             self.input.len()
         } else {
@@ -73,7 +73,7 @@ impl Resampler {
         }
     }
 
-    pub(crate) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         if let Some(engine) = &mut self.engine {
             engine.reset();
         }
@@ -84,7 +84,7 @@ impl Resampler {
         self.available = 0;
     }
 
-    pub(crate) fn push(&mut self, sample: f32) {
+    pub fn push(&mut self, sample: f32) {
         self.input[self.pending] = sample;
         self.pending += 1;
         if self.pending != self.input.len() {
@@ -113,7 +113,7 @@ impl Resampler {
         };
     }
 
-    pub(crate) fn next(&mut self) -> Option<f32> {
+    pub fn next_sample(&mut self) -> Option<f32> {
         if self.read == self.available {
             return None;
         }

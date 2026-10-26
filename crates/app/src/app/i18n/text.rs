@@ -113,7 +113,7 @@ catalog! {
     Uninstall => ("Uninstall", "卸载");
     PreparingUninstall => ("Preparing to uninstall…", "正在准备卸载…");
     Cancel => ("Cancel", "取消");
-    Licenses => ("Third-party notices", "版权声明");
+    Licenses => ("Licenses and notices", "版权声明");
     ProjectSource => ("Project source:", "项目源码：");
     CopyAll => ("Copy all", "复制全部");
     Close => ("Close", "关闭");

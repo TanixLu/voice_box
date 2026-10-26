@@ -1,7 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
-mod shared;
+use voice_box_shared as shared;
 
 fn main() {
     app::run();

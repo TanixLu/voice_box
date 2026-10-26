@@ -31,7 +31,7 @@ function Render-Licenses($Template, $OutputPath) {
     # Capture native stderr without PowerShell 5.1 treating it as a terminating error.
     $process = Start-Process -FilePath $cargoPath -NoNewWindow -Wait -PassThru `
         -WorkingDirectory $PSScriptRoot -RedirectStandardError $aboutLog `
-        -ArgumentList @('about', 'generate', '--locked', '--fail', '--target',
+        -ArgumentList @('about', 'generate', '--workspace', '--locked', '--fail', '--target',
             'x86_64-pc-windows-msvc', $Template, '-o', "`"$OutputPath`"")
     $diagnostics = [System.IO.File]::ReadAllText($aboutLog, $utf8)
     # cargo-about can succeed after a failed clarification; reject its diagnostics too.
@@ -59,7 +59,9 @@ function Update-Licenses {
     }
 
     $inputsText = [System.IO.File]::ReadAllText($licenseInputs, $utf8)
-    foreach ($relativePath in @('Cargo.lock', 'Cargo.toml', 'about.toml', 'about.hbs',
+    foreach ($relativePath in @('Cargo.lock', 'Cargo.toml',
+            'crates/app/Cargo.toml', 'crates/apo/Cargo.toml', 'crates/shared/Cargo.toml',
+            'about.toml', 'about.hbs',
             'about-crates.hbs', 'build.ps1', 'LICENSE-MIT', 'LICENSE-APACHE',
             '.cargo/config', '.cargo/config.toml')) {
         $path = Join-Path $PSScriptRoot $relativePath
@@ -142,11 +144,11 @@ try {
     }
 
     Write-Host "[1/2] Building APO DLL ($buildProfile)..."
-    & $cargoPath build --lib --features lib @cargoArguments
+    & $cargoPath build -p voice_box_apo @cargoArguments
     if ($LASTEXITCODE -ne 0) { throw 'DLL build failed.' }
 
     Write-Host "[2/2] Compressing DLL and building EXE ($buildProfile)..."
-    & $cargoPath build --bin voice_box @cargoArguments
+    & $cargoPath build -p voice_box @cargoArguments
     if ($LASTEXITCODE -ne 0) { throw 'EXE build failed.' }
 
     Write-Host "`nDone:"

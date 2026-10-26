@@ -1,0 +1,65 @@
+[package]
+name = "voice_box"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "voice_box"
+
+[dependencies]
+anyhow.workspace = true
+atomic-write-file = "0.3.1"
+eframe = { version = "0.37", default-features = false, features = [
+    "accesskit",
+    "clipboard",
+    "glow",
+    "links",
+    "persistence",
+    "system_fonts",
+] }
+egui = { version = "0.37", default-features = false }
+egui-winit = { version = "0.37", default-features = false, features = ["serde"] }
+lz4_flex.workspace = true
+restart-manager = "0.1.0"
+rusqlite = { version = "0.41.0", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+single-instance = "0.3.3"
+symphonia = { version = "0.6.1", default-features = false, features = [
+    "mp3",
+    "id3v2",
+    "wav",
+    "pcm",
+    "flac",
+    "ogg",
+    "vorbis",
+] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
+voice_box_shared.workspace = true
+wasapi = "0.26.0"
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_Media_Audio",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-core.workspace = true
+winreg = { version = "0.56.0", features = ["transactions"] }
+
+[build-dependencies]
+find-msvc-tools = "0.1"
+image = { version = "0.25", default-features = false, features = ["ico"] }
+lz4_flex.workspace = true
+resvg = { version = "0.49.0", default-features = false }

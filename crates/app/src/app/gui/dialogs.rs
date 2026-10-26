@@ -10,11 +10,14 @@ const LICENSES: &str = concat!(
     "Original VoiceBox code is licensed under MIT OR Apache-2.0, at your option.\n",
     "Third-party components and model weights retain their respective licenses.\n\n",
     "===== VoiceBox: MIT License =====\n\n",
-    include_str!("../../../LICENSE-MIT"),
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../LICENSE-MIT")),
     "\n===== VoiceBox: Apache License 2.0 =====\n\n",
-    include_str!("../../../LICENSE-APACHE"),
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../LICENSE-APACHE")),
     "\n===== Third-party licenses and notices =====\n\n",
-    include_str!("../../../THIRD_PARTY_LICENSES"),
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../THIRD_PARTY_LICENSES"
+    )),
 );
 
 impl VoiceBoxApp {

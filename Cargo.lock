@@ -3584,18 +3584,38 @@ dependencies = [
  "lz4_flex",
  "restart-manager",
  "resvg",
- "rubato",
  "rusqlite",
  "serde",
  "single-instance",
  "symphonia",
  "tracing",
  "tracing-subscriber",
- "ul_unas_rs",
+ "voice_box_shared",
  "wasapi",
  "windows",
  "windows-core",
  "winreg",
+]
+
+[[package]]
+name = "voice_box_apo"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "ul_unas_rs",
+ "voice_box_shared",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
+name = "voice_box_shared"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "rubato",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]

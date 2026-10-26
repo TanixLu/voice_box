@@ -40,7 +40,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $packageId = cargo pkgid --locked
+          $packageId = cargo pkgid --locked -p voice_box
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($packageId -notmatch '#(?:[^@]+@)?(?<version>[^#@]+)$') {
             throw "Could not read the version from Cargo package ID: $packageId"

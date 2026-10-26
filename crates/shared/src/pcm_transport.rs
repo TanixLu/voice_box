@@ -1,6 +1,6 @@
 //! Single-writer / multiple-reader PCM broadcast. Only background
 //! workers access the file mapping; the APO copies into its own locked memory.
-use crate::shared::error::SharedError;
+use crate::error::SharedError;
 use anyhow::ensure;
 use std::{
     fs::{File, OpenOptions},

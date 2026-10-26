@@ -1,6 +1,6 @@
 //! Machine-wide apo.cfg shared by the GUI and APO watcher.
 use super::paths;
-use crate::shared::error::SharedError;
+use crate::error::SharedError;
 use std::{
     io::{self, Read},
     path::Path,
@@ -17,7 +17,6 @@ pub struct ApoConfig {
 }
 
 impl ApoConfig {
-    #[allow(dead_code)] // Conversion stays in the DLL, including offline preview.
     pub fn linear_gain(&self) -> f32 {
         if self.gain_millidb == MIN_GAIN_MILLIDB {
             0.0
@@ -90,7 +89,6 @@ impl ApoCfgFile {
     }
 
     // Written by the GUI; the same schema module is read-only in the APO DLL.
-    #[allow(dead_code)]
     pub fn encode(&self) -> io::Result<Vec<u8>> {
         self.config.validate()?;
         let bytes = format!(

@@ -1,2 +1,2 @@
-{{#each crates}}{{#unless (eq package.name "voice_box")}}{{{package.name}}} {{{package.version}}}|{{{package.manifest_path}}}
+{{#each crates}}{{#unless (or (eq package.name "voice_box") (or (eq package.name "voice_box_apo") (eq package.name "voice_box_shared")))}}{{{package.name}}} {{{package.version}}}|{{{package.manifest_path}}}
 {{/unless}}{{/each}}

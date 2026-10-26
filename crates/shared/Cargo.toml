@@ -1,0 +1,20 @@
+[package]
+name = "voice_box_shared"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+rubato = { version = "5.0", default-features = false }
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Media_Audio_Apo",
+    "Win32_System_Com",
+    "Win32_System_Memory",
+    "Win32_System_Performance",
+    "Win32_System_SystemInformation",
+    "Win32_UI_Shell",
+] }
+windows-core.workspace = true

@@ -81,9 +81,9 @@ impl SoundDecoder {
         for (r, sample) in self.resamplers.iter_mut().zip(frame) {
             r.push(sample);
         }
-        while let Some(left) = self.resamplers[0].next() {
+        while let Some(left) = self.resamplers[0].next_sample() {
             let right = self.resamplers[1]
-                .next()
+                .next_sample()
                 .expect("identical stereo converters");
             if self.delay_frames_remaining > 0 {
                 self.delay_frames_remaining -= 1;

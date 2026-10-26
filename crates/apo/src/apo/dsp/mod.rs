@@ -80,7 +80,7 @@ impl Channel {
 
     fn process_sample(&mut self, input: f32) -> f32 {
         self.input_resampler.push(input);
-        while let Some(sample) = self.input_resampler.next() {
+        while let Some(sample) = self.input_resampler.next_sample() {
             self.input[self.pending] = self.high_pass.process_sample(sample);
             self.pending += 1;
             if self.pending == FRAME_SIZE {
@@ -89,7 +89,7 @@ impl Channel {
                 for &sample in &self.output {
                     self.output_resampler
                         .push(if sample.is_finite() { sample } else { 0.0 });
-                    while let Some(sample) = self.output_resampler.next() {
+                    while let Some(sample) = self.output_resampler.next_sample() {
                         debug_assert!(self.queued < self.queue.len());
                         self.queue[self.write] = sample;
                         self.write = (self.write + 1) % self.queue.len();
