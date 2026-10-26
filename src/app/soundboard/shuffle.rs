@@ -22,7 +22,7 @@ impl Shuffle {
             .collect();
         let played = self.played.entry(hotkey).or_default();
         // IDs survive renaming and list reordering; reconcile membership before every draw.
-        played.retain(|path| candidates.contains(path));
+        played.retain(|sound_id| candidates.contains(sound_id));
         if played.len() == candidates.len() {
             played.clear();
         }

@@ -1,7 +1,7 @@
 //! APO configuration file notifications and effect events stay off the real-time thread.
 use super::{etw, worker};
 use crate::shared::{
-    apo_cfg::{ApoCfg, ApoConfig},
+    apo_cfg::{ApoCfgFile, ApoConfig},
     paths,
     utils::wide_null,
 };
@@ -121,7 +121,7 @@ pub struct ApoCfgWatcher {
 }
 impl ApoCfgWatcher {
     pub fn start(config: Arc<RtConfig>) -> windows::core::Result<Self> {
-        config.store(ApoCfg::try_load().unwrap_or_default().config);
+        config.store(ApoCfgFile::try_load().unwrap_or_default().config);
         let stop = Arc::new(Event(unsafe { CreateEventW(None, true, false, None)? }));
         let worker_stop = Arc::clone(&stop);
         worker::spawn(w!("VoiceBoxApoCfg"), move || watch(&worker_stop, &config))?;
@@ -181,7 +181,7 @@ fn report_fault(faulted: &mut bool, error: &anyhow::Error) {
 }
 
 fn reload(config: &RtConfig, faulted: &mut bool) {
-    match ApoCfg::try_load() {
+    match ApoCfgFile::try_load() {
         Ok(cfg) => {
             config.store(cfg.config);
             if *faulted {

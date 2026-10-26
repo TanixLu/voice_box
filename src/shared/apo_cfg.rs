@@ -38,12 +38,12 @@ impl ApoConfig {
 }
 
 #[derive(Default)]
-pub struct ApoCfg {
+pub struct ApoCfgFile {
     pub config: ApoConfig,
     unknown: String,
 }
 
-impl ApoCfg {
+impl ApoCfgFile {
     pub fn read(path: &Path) -> io::Result<Self> {
         // Bound allocation even if an editable configuration file is corrupted.
         let mut bytes = Vec::new();
