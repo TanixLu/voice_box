@@ -108,6 +108,8 @@ macro_rules! plain_argument {
 plain_argument!(String, f64, usize, u32);
 
 messages! {
+    ExportSoundFailed { name: String } => ("Failed to export {name}", "导出 {name} 失败");
+    WritePathFailed { path: String } => ("Failed to write {path}", "写入 {path} 失败");
     StopAudioServiceFailed { result: String } => ("Audio service shutdown failed: {result}", "停止音频服务失败：{result}");
     InvalidRegistryPath { path: String } => ("Invalid registry path: {path}", "注册表路径无效：{path}");
     Recorded { duration_secs: f64 } => ("Recorded {duration_secs:.1} s.", "已录音 {duration_secs:.1} 秒。");

@@ -327,7 +327,7 @@ impl VoiceBoxApp {
         if !self.interaction_blocked() && !self.soundboard.recording_open() {
             self.soundboard.finish_rename(self.tab == Tab::Soundboard);
         }
-        self.soundboard.import_error_ui(ui.ctx());
+        self.soundboard.file_error_ui(ui.ctx());
         self.full_uninstall_ui(ui.ctx());
 
         // Include operations started by a button click during this frame.
@@ -360,7 +360,7 @@ impl eframe::App for VoiceBoxApp {
         }
         let shortcuts_enabled = !self.interaction_blocked()
             && !self.voice.session.busy()
-            && self.soundboard.model.import_error.is_none()
+            && self.soundboard.model.file_error.is_none()
             && !self.soundboard.recording_open()
             && !self.confirm_full_uninstall
             && !(focused && (self.soundboard.renaming() || ctx.text_edit_focused()));

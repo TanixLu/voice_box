@@ -155,7 +155,7 @@ impl SoundDecoder {
     }
 }
 
-fn open_format(source: Box<dyn MediaSource>) -> anyhow::Result<Box<dyn FormatReader>> {
+pub(super) fn open_format(source: Box<dyn MediaSource>) -> anyhow::Result<Box<dyn FormatReader>> {
     symphonia::default::get_probe()
         .probe(
             &Hint::new(),

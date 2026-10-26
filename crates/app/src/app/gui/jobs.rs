@@ -11,6 +11,7 @@ use crate::{
 use std::sync::mpsc;
 
 pub(super) enum JobResult {
+    Exported(anyhow::Result<()>),
     Uninstall(anyhow::Result<()>),
     Microphones(anyhow::Result<(Vec<Microphone>, usize)>),
     OutputDevices(anyhow::Result<(Vec<Microphone>, Vec<Speaker>)>),
@@ -31,6 +32,9 @@ pub(super) struct Jobs {
 impl Jobs {
     pub(super) fn busy(&self) -> bool {
         self.receiver.is_some()
+    }
+    pub(super) fn exporting(&self) -> bool {
+        self.busy() && matches!(self.status, Message::Text(Text::ExportSounds))
     }
     pub(super) fn begin(
         &mut self,
@@ -56,6 +60,7 @@ impl Jobs {
                 let result = operation();
                 match &result {
                     JobResult::Uninstall(Err(error))
+                    | JobResult::Exported(Err(error))
                     | JobResult::Microphones(Err(error))
                     | JobResult::OutputDevices(Err(error))
                     | JobResult::Plugin(PluginOperationResult {
@@ -108,6 +113,15 @@ impl VoiceBoxApp {
                     operation = %self.jobs.status,
                     "Background operation exited without a result"
                 );
+                if self.jobs.exporting() {
+                    self.soundboard.model.file_error = Some((
+                        Text::SoundExportFailedTitle,
+                        Text::OperationIncomplete.into(),
+                    ));
+                    self.jobs.receiver = None;
+                    self.jobs.status.clear();
+                    return;
+                }
                 self.jobs.receiver = None;
                 self.uninstalling = false;
                 self.jobs.status = Text::OperationIncomplete.into();
@@ -117,6 +131,13 @@ impl VoiceBoxApp {
         };
         self.jobs.receiver = None;
         match result {
+            JobResult::Exported(result) => {
+                self.jobs.status.clear();
+                if let Err(error) = result {
+                    self.soundboard.model.file_error =
+                        Some((Text::SoundExportFailedTitle, Message::error(error)));
+                }
+            }
             JobResult::Uninstall(Ok(())) => self.uninstall_requested = true,
             JobResult::Uninstall(Err(error)) => {
                 self.uninstalling = false;

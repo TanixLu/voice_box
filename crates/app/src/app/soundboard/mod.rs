@@ -6,6 +6,7 @@ use anyhow::ensure;
 use std::{collections::HashSet, path::PathBuf, sync::mpsc, thread::JoinHandle};
 
 mod decoder;
+pub(super) mod export;
 pub(super) mod library;
 mod playback;
 pub(super) mod recording;
@@ -36,7 +37,7 @@ pub(super) struct Soundboard {
     pub duration_secs: Option<f64>,
     pub message: Message,
     pub failed: bool,
-    pub import_error: Option<Message>,
+    pub file_error: Option<(Text, Message)>,
     playback_job: Option<PlaybackJob>,
     playback_revision: u64,
     queued_playback: Option<usize>,
@@ -223,9 +224,12 @@ impl Soundboard {
             Ok(_) => self.import_job = Some(rx),
             Err(e) => {
                 tracing::error!("Failed to spawn sound import: {e}");
-                self.import_error = Some(Message::OpenPickerFailed {
-                    error: Details::new(e),
-                });
+                self.file_error = Some((
+                    Text::SoundImportFailedTitle,
+                    Message::OpenPickerFailed {
+                        error: Details::new(e),
+                    },
+                ));
             }
         }
     }
@@ -241,7 +245,10 @@ impl Soundboard {
                 errors = ?imported.errors,
                 "Some sound files could not be imported"
             );
-            self.import_error = Some(Message::Many(imported.errors.clone()));
+            self.file_error = Some((
+                Text::SoundImportFailedTitle,
+                Message::Many(imported.errors.clone()),
+            ));
         } else {
             self.failed = false;
             self.message.clear();
@@ -463,16 +470,22 @@ impl Soundboard {
                         Ok(imported) => self.finish_import(imported),
                         Err(e) => {
                             tracing::error!("Sound file selection or import failed: {e:#}");
-                            self.import_error = Some(Message::ImportSoundsFailed {
-                                error: Details::new(e),
-                            });
+                            self.file_error = Some((
+                                Text::SoundImportFailedTitle,
+                                Message::ImportSoundsFailed {
+                                    error: Details::new(e),
+                                },
+                            ));
                         }
                     }
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     tracing::error!("Sound import exited without a result");
                     self.import_job = None;
-                    self.import_error = Some(Text::ImportThreadExited.into());
+                    self.file_error = Some((
+                        Text::SoundImportFailedTitle,
+                        Text::ImportThreadExited.into(),
+                    ));
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }

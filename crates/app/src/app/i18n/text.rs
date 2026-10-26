@@ -97,6 +97,7 @@ catalog! {
     AudioPacketTooLarge => ("The audio packet is too large", "音频数据包过大");
     OpenAudioFile => ("Cannot open the audio file", "无法打开音频文件");
     UnsupportedAudioFormat => ("Unsupported audio format. Use MP3, WAV, FLAC, or OGG/Vorbis", "不支持此音频格式，请使用 MP3、WAV、FLAC 或 OGG/Vorbis");
+    ExportFilenameAttemptsExceeded => ("Too many filename conflicts. Rename the sound or choose another export folder", "文件名冲突尝试次数已达上限，请重命名音效或选择其他导出文件夹");
     HotkeyServiceUnavailable => ("The global hotkey service is unavailable", "全局快捷键服务不可用");
     PressKey => ("Press a key…", "请按键…");
     BindHotkey => ("Bind hotkey", "绑定快捷键");
@@ -135,6 +136,9 @@ catalog! {
     DeleteSound => ("Delete sound", "删除音效");
     BatchManage => ("Manage", "批量管理");
     MoveSounds => ("Move", "移动");
+    ExportSounds => ("Export", "导出");
+    ExportSoundsTitle => ("Choose an export folder", "选择音频导出文件夹");
+    SelectExportFolder => ("Export to this folder", "导出到此文件夹");
     MoveToTop => ("Move to top", "移至顶部");
     MoveToBottom => ("Move to bottom", "移至底部");
     BatchRename => ("Rename", "重命名");
@@ -223,6 +227,7 @@ catalog! {
     ImportSoundsHint => ("Click Import to add sounds. You can select multiple files at once", "点击「导入」添加音效，可一次选择多个文件");
     NoMatchingSounds => ("No matching sounds", "没有匹配的音效");
     SoundImportFailedTitle => ("Sound import failed", "音效导入失败");
+    SoundExportFailedTitle => ("Sound export failed", "音效导出失败");
     SoundSettings => ("Sound settings", "音效设置");
     MicrophoneOutput => ("Microphone output", "麦克风输出");
     FollowSystemDefault => ("Follow system default", "跟随系统默认");
