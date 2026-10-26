@@ -8,6 +8,9 @@ use rusqlite::Connection;
 use std::{io, path::Path, time::Duration};
 use voice_box_shared::paths;
 
+const MIN_RECLAIM_BYTES: i64 = 64 * 1024 * 1024;
+const MIN_RECLAIM_RATIO: f64 = 0.25;
+
 pub(super) fn open() -> anyhow::Result<Connection> {
     let directory = paths::data_dir()?;
     std::fs::create_dir_all(&directory).user_context(Text::CreateDataDirectory)?;
@@ -52,6 +55,24 @@ pub(super) fn reclaim_space(connection: &Connection) -> anyhow::Result<()> {
         tracing::info!("Database space reclamation skipped: no free pages");
         return Ok(());
     }
+    let page_count: i64 = connection.pragma_query_value(None, "page_count", |row| row.get(0))?;
+    let page_size: i64 = connection.pragma_query_value(None, "page_size", |row| row.get(0))?;
+    let free_bytes = free_pages
+        .checked_mul(page_size)
+        .context("Database size overflow")?;
+    let free_ratio = free_pages as f64 / page_count as f64;
+    if (free_bytes < MIN_RECLAIM_BYTES || free_ratio < MIN_RECLAIM_RATIO)
+        && connection.query_row("SELECT EXISTS(SELECT 1 FROM sounds)", [], |row| {
+            row.get::<_, bool>(0)
+        })?
+    {
+        tracing::info!(
+            free_bytes,
+            free_ratio,
+            "Database space reclamation skipped: below thresholds"
+        );
+        return Ok(());
+    }
     let path = Path::new(connection.path().context("Database has no file path")?);
     let before = storage_size(path)?;
     // Only this short-lived deletion connection gives up its Windows mapping.
@@ -93,7 +114,6 @@ pub(super) fn reclaim_space(connection: &Connection) -> anyhow::Result<()> {
         "Database checkpoint was blocked by another connection"
     );
     let page_count: i64 = connection.pragma_query_value(None, "page_count", |row| row.get(0))?;
-    let page_size: i64 = connection.pragma_query_value(None, "page_size", |row| row.get(0))?;
     let expected_bytes = u64::try_from(
         page_count
             .checked_mul(page_size)
