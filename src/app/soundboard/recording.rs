@@ -135,7 +135,7 @@ impl Recorder {
                 .as_ref()
                 .is_some_and(|job| job.stop.load(Ordering::Relaxed))
     }
-    pub fn elapsed(&self) -> Option<f64> {
+    pub fn elapsed_secs(&self) -> Option<f64> {
         if self.pending_record {
             return None;
         }
@@ -151,7 +151,8 @@ impl Recorder {
         }
         Some(
             (job.range.start
-                + (self.elapsed()? * f64::from(self.clip.as_ref()?.audio.sample_rate)) as usize)
+                + (self.elapsed_secs()? * f64::from(self.clip.as_ref()?.audio.sample_rate))
+                    as usize)
                 .min(job.range.end),
         )
     }
@@ -287,7 +288,7 @@ impl Recorder {
                     match result {
                         Ok(Outcome::Recorded(clip)) => {
                             tracing::info!(
-                                duration_secs = clip.audio.duration(),
+                                duration_secs = clip.audio.duration_secs(),
                                 sample_rate = clip.audio.sample_rate,
                                 channels = clip.audio.channels,
                                 "Speaker recording completed"
@@ -399,8 +400,8 @@ fn save_clip(
     );
     // The float WAV header is 58 bytes; encode directly into the buffered BLOB writer.
     let length = 58 + (selection.end - selection.start) as u64 * 8;
-    let duration = (selection.end - selection.start) as f64 / f64::from(audio.sample_rate);
-    insert_sound(connection, name, duration, length, |output| {
+    let duration_secs = (selection.end - selection.start) as f64 / f64::from(audio.sample_rate);
+    insert_sound(connection, name, duration_secs, length, |output| {
         write_wave(output, audio, selection)
     })
     .user_context(Text::SaveRecording)

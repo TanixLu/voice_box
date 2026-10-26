@@ -26,7 +26,7 @@ pub(in crate::app) struct Sound {
     pub id: SoundId,
     pub name: String,
     pub hotkey: Option<Hotkey>,
-    pub duration: f64,
+    pub duration_secs: f64,
 }
 
 #[derive(Clone, Default)]
@@ -191,7 +191,7 @@ impl Library {
 
     pub(in crate::app) fn load(connection: &Connection) -> anyhow::Result<Self> {
         let mut query = connection
-            .prepare("SELECT id, name, duration, hotkey FROM sounds ORDER BY position, id")?;
+            .prepare("SELECT id, name, duration_secs, hotkey FROM sounds ORDER BY position, id")?;
         let rows = query.query_map([], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
@@ -202,10 +202,10 @@ impl Library {
         })?;
         let mut sounds = Vec::new();
         for row in rows {
-            let (id, name, duration, hotkey) = row?;
+            let (id, name, duration_secs, hotkey) = row?;
             ensure!(is_valid_name(&name), Text::InvalidSoundName);
             ensure!(
-                duration.is_finite() && duration > 0.0,
+                duration_secs.is_finite() && duration_secs > 0.0,
                 Text::InvalidAudioDuration
             );
             let hotkey = match hotkey {
@@ -218,7 +218,7 @@ impl Library {
             sounds.push(Sound {
                 id,
                 name,
-                duration,
+                duration_secs,
                 hotkey,
             });
         }
@@ -285,12 +285,12 @@ impl Write for AudioWriter<'_> {
 pub(in crate::app) fn insert_sound(
     connection: &mut Connection,
     name: &str,
-    duration: f64,
+    duration_secs: f64,
     length: u64,
     write: impl FnOnce(&mut dyn Write) -> anyhow::Result<()>,
 ) -> anyhow::Result<Sound> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let sound = write_sound(&transaction, name, duration, length, write)?;
+    let sound = write_sound(&transaction, name, duration_secs, length, write)?;
     transaction.commit()?;
     Ok(sound)
 }
@@ -298,7 +298,7 @@ pub(in crate::app) fn insert_sound(
 fn write_sound(
     connection: &Connection,
     name: &str,
-    duration: f64,
+    duration_secs: f64,
     length: u64,
     write: impl FnOnce(&mut dyn Write) -> anyhow::Result<()>,
 ) -> anyhow::Result<Sound> {
@@ -306,12 +306,12 @@ fn write_sound(
     ensure!(is_valid_name(name), Text::InvalidSoundName);
     ensure!(length > 0, Text::NoPlayableAudio);
     ensure!(
-        duration.is_finite() && duration > 0.0,
+        duration_secs.is_finite() && duration_secs > 0.0,
         Text::InvalidAudioDuration
     );
     connection.prepare_cached(
-        "INSERT INTO sounds(name, duration, byte_length, position) SELECT ?1, ?2, ?3, COALESCE(MAX(position) + 1, 0) FROM sounds",
-    )?.execute(params![name, duration, i64::try_from(length)?])?;
+        "INSERT INTO sounds(name, duration_secs, byte_length, position) SELECT ?1, ?2, ?3, COALESCE(MAX(position) + 1, 0) FROM sounds",
+    )?.execute(params![name, duration_secs, i64::try_from(length)?])?;
     let id = connection.last_insert_rowid();
     {
         let mut output = AudioWriter {
@@ -329,7 +329,7 @@ fn write_sound(
     Ok(Sound {
         id,
         name: name.to_owned(),
-        duration,
+        duration_secs,
         hotkey: None,
     })
 }
@@ -356,7 +356,7 @@ struct ValidatedFile {
     file: File,
     source: PathBuf,
     name: String,
-    duration: f64,
+    duration_secs: f64,
     length: u64,
 }
 
@@ -446,7 +446,7 @@ fn validate_file(source: &Path) -> anyhow::Result<ValidatedFile> {
         file,
         source: source.to_owned(),
         name,
-        duration: frames as f64 / f64::from(SAMPLE_RATE),
+        duration_secs: frames as f64 / f64::from(SAMPLE_RATE),
         length: metadata.len(),
     })
 }
@@ -461,7 +461,7 @@ fn insert_files(
         let sound = write_sound(
             &transaction,
             &file.name,
-            file.duration,
+            file.duration_secs,
             file.length,
             |output| {
                 io::copy(&mut file.file, output)?;

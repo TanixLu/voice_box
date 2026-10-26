@@ -209,10 +209,16 @@ impl VoicePanel {
         });
         if stopping {
             hint(ui, Text::Stopping.text());
-        } else if let Some(elapsed) = self.session.recording_elapsed() {
-            ui.label(Message::RecordingProgress { elapsed }.text());
-        } else if let Some((elapsed, duration)) = self.session.playback_progress() {
-            ui.label(Message::PlaybackProgress { elapsed, duration }.text());
+        } else if let Some(elapsed_secs) = self.session.recording_elapsed_secs() {
+            ui.label(Message::RecordingProgress { elapsed_secs }.text());
+        } else if let Some((elapsed_secs, duration_secs)) = self.session.playback_progress_secs() {
+            ui.label(
+                Message::PlaybackProgress {
+                    elapsed_secs,
+                    duration_secs,
+                }
+                .text(),
+            );
         } else if self.session.failed {
             ui.add(
                 egui::Label::new(

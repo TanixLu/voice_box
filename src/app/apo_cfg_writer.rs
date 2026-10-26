@@ -2,7 +2,7 @@
 use crate::app::i18n::Text;
 use crate::app::i18n::UserContext;
 use crate::shared::{
-    apo_cfg::{ApoCfg, ApoConfig},
+    apo_cfg::{ApoCfgFile, ApoConfig},
     paths,
 };
 
@@ -13,14 +13,14 @@ use std::{
 };
 
 pub fn is_readable() -> bool {
-    ApoCfg::try_load().is_ok()
+    ApoCfgFile::try_load().is_ok()
 }
 
 pub fn initialize() -> anyhow::Result<()> {
     let directory = paths::data_dir()?;
     std::fs::create_dir_all(&directory).user_context(Text::CreateDataDirectory)?;
     let path = directory.join(paths::APO_CFG_FILE);
-    match ApoCfg::read(&path) {
+    match ApoCfgFile::read(&path) {
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             save_to(&path, &ApoConfig::default())?;
@@ -42,9 +42,9 @@ pub fn save(config: ApoConfig) -> anyhow::Result<()> {
 }
 
 fn save_to(path: &Path, config: &ApoConfig) -> anyhow::Result<()> {
-    let mut cfg = match ApoCfg::read(path) {
+    let mut cfg = match ApoCfgFile::read(path) {
         Ok(cfg) => cfg,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => ApoCfg::default(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => ApoCfgFile::default(),
         Err(error) => return Err(error).user_context(Text::ReadApoCfgPreserved),
     };
     cfg.config = config.clone();

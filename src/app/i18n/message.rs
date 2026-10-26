@@ -110,9 +110,9 @@ plain_argument!(String, f64, usize, u32);
 messages! {
     StopAudioServiceFailed { result: String } => ("Audio service shutdown failed: {result}", "停止音频服务失败：{result}");
     InvalidRegistryPath { path: String } => ("Invalid registry path: {path}", "注册表路径无效：{path}");
-    Recorded { seconds: f64 } => ("Recorded {seconds:.1} s.", "已录音 {seconds:.1} 秒。");
-    RecordingProgress { elapsed: f64 } => ("Recording: {elapsed:.1} s", "正在录音：{elapsed:.1} 秒");
-    PlaybackProgress { elapsed: f64, duration: f64 } => ("Playing {elapsed:.1} / {duration:.1} s", "正在播放 {elapsed:.1} / {duration:.1} 秒");
+    Recorded { duration_secs: f64 } => ("Recorded {duration_secs:.1} s.", "已录音 {duration_secs:.1} 秒。");
+    RecordingProgress { elapsed_secs: f64 } => ("Recording: {elapsed_secs:.1} s", "正在录音：{elapsed_secs:.1} 秒");
+    PlaybackProgress { elapsed_secs: f64, duration_secs: f64 } => ("Playing {elapsed_secs:.1} / {duration_secs:.1} s", "正在播放 {elapsed_secs:.1} / {duration_secs:.1} 秒");
     SoundCount { count: usize } => ("Sounds: {count}", "音效库 · {count} 个");
     SelectedSounds { count: usize } => ("{count} selected", "已选 {count} 项");
     RenameSummary { count: usize, changed: usize, errors: usize } => ("{count} sounds · {changed} changes · {errors} errors", "共 {count} 项 · 修改 {changed} 项 · 错误 {errors} 项");

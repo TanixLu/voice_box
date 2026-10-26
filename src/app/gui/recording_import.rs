@@ -112,10 +112,10 @@ impl RecordingImport {
                 ui.spinner();
                 if self.recorder.stopping() {
                     ui.label(Text::FinishingRecording.text());
-                } else if let Some(elapsed) = self.recorder.elapsed() {
+                } else if let Some(elapsed_secs) = self.recorder.elapsed_secs() {
                     ui.label(
                         Message::CaptureProgress {
-                            time: time(elapsed),
+                            time: time(elapsed_secs),
                         }
                         .text(),
                     );
@@ -142,7 +142,7 @@ impl RecordingImport {
             clip.audio.samples.len() / clip.audio.channels as usize
         });
         let rate = clip.map_or(48_000, |clip| clip.audio.sample_rate);
-        let duration = total as f64 / f64::from(rate);
+        let duration_secs = total as f64 / f64::from(rate);
         let editable = !saving && !recording && total > 0;
         let mut selection = self.selection.unwrap_or(Selection { start: 0, end: 0 });
         let mut changed = None;
@@ -158,12 +158,12 @@ impl RecordingImport {
                 self.recorder.preview_frame(),
             );
             ui.horizontal_wrapped(|ui| {
-                let mut start = selection.start as f64 / f64::from(rate);
-                let mut end = selection.end as f64 / f64::from(rate);
+                let mut start_secs = selection.start as f64 / f64::from(rate);
+                let mut end_secs = selection.end as f64 / f64::from(rate);
                 ui.label(Text::Start.text());
                 if ui
                     .add(
-                        egui::DragValue::new(&mut start)
+                        egui::DragValue::new(&mut start_secs)
                             .range(0.0..=selection.end.saturating_sub(1) as f64 / f64::from(rate))
                             .speed(0.01)
                             .fixed_decimals(3)
@@ -173,7 +173,7 @@ impl RecordingImport {
                 {
                     selection.set(
                         Edge::Left,
-                        (start * f64::from(rate)).round() as usize,
+                        (start_secs * f64::from(rate)).round() as usize,
                         total,
                     );
                     changed = Some(Edge::Left);
@@ -181,13 +181,13 @@ impl RecordingImport {
                 ui.label(Text::End.text());
                 if ui
                     .add(
-                        egui::DragValue::new(&mut end)
+                        egui::DragValue::new(&mut end_secs)
                             .range(
                                 if total == 0 {
                                     0.0
                                 } else {
                                     (selection.start + 1) as f64 / f64::from(rate)
-                                }..=duration,
+                                }..=duration_secs,
                             )
                             .speed(0.01)
                             .fixed_decimals(3)
@@ -195,7 +195,11 @@ impl RecordingImport {
                     )
                     .changed()
                 {
-                    selection.set(Edge::Right, (end * f64::from(rate)).round() as usize, total);
+                    selection.set(
+                        Edge::Right,
+                        (end_secs * f64::from(rate)).round() as usize,
+                        total,
+                    );
                     changed = Some(Edge::Right);
                 }
                 let label = if previewing {

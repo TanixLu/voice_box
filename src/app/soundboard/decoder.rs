@@ -26,7 +26,7 @@ pub(super) struct SoundDecoder {
     input_frames: usize,
     output_frames: usize,
     eof: bool,
-    pub duration: Option<f64>,
+    pub duration_secs: Option<f64>,
 }
 
 impl SoundDecoder {
@@ -53,7 +53,7 @@ impl SoundDecoder {
         let decoder = symphonia::default::get_codecs()
             .make_audio_decoder(params, &AudioDecoderOptions::default().gapless(true))
             .user_context(Text::CreateAudioDecoder)?;
-        let duration = track.num_frames.map(|n| n as f64 / f64::from(rate));
+        let duration_secs = track.num_frames.map(|n| n as f64 / f64::from(rate));
         let id = track.id;
         let resamplers = [
             Resampler::new(f64::from(rate), f64::from(SAMPLE_RATE)),
@@ -74,7 +74,7 @@ impl SoundDecoder {
             input_frames: 0,
             output_frames: 0,
             eof: false,
-            duration,
+            duration_secs,
         })
     }
     fn push(&mut self, frame: [f32; 2]) {

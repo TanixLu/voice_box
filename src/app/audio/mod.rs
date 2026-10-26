@@ -67,9 +67,9 @@ impl Stream {
         client: IAudioClient,
         format: &WaveFormat,
         convert: bool,
-        duration: i64,
+        duration_hns: i64, // WASAPI durations are measured in 100 ns units.
     ) -> anyhow::Result<Self> {
-        Self::initialize(client, format, convert, duration, 0)
+        Self::initialize(client, format, convert, duration_hns, 0)
     }
     fn loopback(client: IAudioClient, format: &WaveFormat) -> anyhow::Result<Self> {
         Self::initialize(
@@ -84,7 +84,7 @@ impl Stream {
         client: IAudioClient,
         format: &WaveFormat,
         convert: bool,
-        duration: i64,
+        duration_hns: i64,
         extra_flags: u32,
     ) -> anyhow::Result<Self> {
         let mut flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK | extra_flags;
@@ -95,7 +95,7 @@ impl Stream {
             client.Initialize(
                 AUDCLNT_SHAREMODE_SHARED,
                 flags,
-                duration,
+                duration_hns,
                 0,
                 &format.wave_fmt.Format,
                 None,

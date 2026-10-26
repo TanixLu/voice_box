@@ -32,7 +32,7 @@ pub(in crate::app) struct Recording {
 }
 
 impl Recording {
-    pub(in crate::app) fn duration(&self) -> f64 {
+    pub(in crate::app) fn duration_secs(&self) -> f64 {
         self.samples.len() as f64 / f64::from(self.channels) / f64::from(self.sample_rate)
     }
 }

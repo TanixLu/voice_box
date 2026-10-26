@@ -34,7 +34,7 @@ pub(super) fn open_at(path: &Path) -> anyhow::Result<Connection> {
          CREATE TABLE IF NOT EXISTS sounds (
              id INTEGER PRIMARY KEY AUTOINCREMENT,
              name TEXT NOT NULL CHECK(length(trim(name)) > 0),
-             duration REAL NOT NULL CHECK(duration > 0),
+             duration_secs REAL NOT NULL CHECK(duration_secs > 0),
              byte_length INTEGER NOT NULL CHECK(byte_length > 0),
              position INTEGER NOT NULL,
              hotkey TEXT

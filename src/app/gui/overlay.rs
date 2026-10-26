@@ -47,8 +47,8 @@ impl Overlay {
                 self.builder = Some(builder);
                 Some((
                     sound.name.clone(),
-                    model.elapsed,
-                    model.duration.or(Some(sound.duration)),
+                    model.elapsed_secs,
+                    model.duration_secs.or(Some(sound.duration_secs)),
                     model.settings.playback_repeat,
                 ))
             }
@@ -63,8 +63,8 @@ impl Overlay {
             // Keep declaring the viewport after first use, even when hidden or layout fails.
             // Omitting it would destroy the native window and its GL surface.
             ctx.show_viewport_deferred(id, builder.clone().with_visible(visible), move |ui, _| {
-                if let Some((name, elapsed, duration, repeat)) = &playback {
-                    draw(ui, name, *elapsed, *duration, *repeat);
+                if let Some((name, elapsed_secs, duration_secs, repeat)) = &playback {
+                    draw(ui, name, *elapsed_secs, *duration_secs, *repeat);
                 }
             });
             if visible {
@@ -114,26 +114,32 @@ fn viewport_builder(ctx: &egui::Context) -> anyhow::Result<egui::ViewportBuilder
         .with_always_on_top())
 }
 
-fn draw(ui: &mut egui::Ui, name: &str, elapsed: f64, duration: Option<f64>, repeat: bool) {
+fn draw(
+    ui: &mut egui::Ui,
+    name: &str,
+    elapsed_secs: f64,
+    duration_secs: Option<f64>,
+    repeat: bool,
+) {
     if let Err(error) = remove_native_frame() {
         tracing::warn!("Failed to remove overlay window frame: {error:#}");
     }
     let rect = ui.max_rect();
     let painter = ui.painter();
     painter.rect_filled(rect, 12, Color32::from_rgba_unmultiplied(24, 26, 32, 230));
-    let duration = duration.filter(|d| d.is_finite() && *d > 0.0);
-    let elapsed = match duration {
-        Some(duration) if repeat => elapsed.max(0.0) % duration,
-        Some(duration) => elapsed.max(0.0).min(duration),
-        None => elapsed.max(0.0),
+    let duration_secs = duration_secs.filter(|d| d.is_finite() && *d > 0.0);
+    let elapsed_secs = match duration_secs {
+        Some(duration_secs) if repeat => elapsed_secs.max(0.0) % duration_secs,
+        Some(duration_secs) => elapsed_secs.max(0.0).min(duration_secs),
+        None => elapsed_secs.max(0.0),
     };
-    let time = match duration {
-        Some(duration) => format!(
+    let time = match duration_secs {
+        Some(duration_secs) => format!(
             "{} / {}",
-            format_duration(elapsed),
-            format_duration(duration)
+            format_duration(elapsed_secs),
+            format_duration(duration_secs)
         ),
-        None => format_duration(elapsed),
+        None => format_duration(elapsed_secs),
     };
     painter.text(
         rect.min + vec2(12.0, 32.0),
@@ -142,7 +148,7 @@ fn draw(ui: &mut egui::Ui, name: &str, elapsed: f64, duration: Option<f64>, repe
         FontId::proportional(12.0),
         Color32::from_gray(190),
     );
-    if let Some(duration) = duration {
+    if let Some(duration_secs) = duration_secs {
         let bar = Rect::from_min_size(
             pos2(rect.left() + 12.0, rect.bottom() - 10.0),
             vec2((rect.width() - 24.0).max(0.0), 3.0),
@@ -150,7 +156,10 @@ fn draw(ui: &mut egui::Ui, name: &str, elapsed: f64, duration: Option<f64>, repe
         painter.rect_filled(bar, 2, Color32::from_white_alpha(35));
         let filled = Rect::from_min_size(
             bar.min,
-            vec2(bar.width() * (elapsed / duration) as f32, bar.height()),
+            vec2(
+                bar.width() * (elapsed_secs / duration_secs) as f32,
+                bar.height(),
+            ),
         );
         painter.rect_filled(filled, 2, Color32::from_rgb(114, 180, 255));
     }

@@ -32,8 +32,8 @@ pub(super) struct Soundboard {
     library: Library,
     pub settings: Settings,
     pub active_sound_index: Option<usize>,
-    pub elapsed: f64,
-    pub duration: Option<f64>,
+    pub elapsed_secs: f64,
+    pub duration_secs: Option<f64>,
     pub message: Message,
     pub failed: bool,
     pub import_error: Option<Message>,
@@ -338,8 +338,8 @@ impl Soundboard {
         self.playback_revision = self.playback_revision.wrapping_add(1);
         let revision = self.playback_revision;
         self.failed = false;
-        self.elapsed = 0.0;
-        self.duration = Some(sound.duration);
+        self.elapsed_secs = 0.0;
+        self.duration_secs = Some(sound.duration_secs);
         self.message.clear();
         self.active_sound_index = Some(index);
         if let Some(job) = &self.playback_job {
@@ -479,16 +479,22 @@ impl Soundboard {
         }
         while let Some(job) = &self.playback_job {
             match job.receiver.try_recv() {
-                Ok(Event::Started(revision, duration)) => {
+                Ok(Event::Started {
+                    revision,
+                    duration_secs,
+                }) => {
                     if revision == self.playback_revision {
                         self.queued_playback = None;
-                        self.duration = duration.or(self.duration);
+                        self.duration_secs = duration_secs.or(self.duration_secs);
                         self.message.clear();
                     }
                 }
-                Ok(Event::Progress(revision, elapsed)) => {
+                Ok(Event::Progress {
+                    revision,
+                    elapsed_secs,
+                }) => {
                     if revision == self.playback_revision {
-                        self.elapsed = elapsed;
+                        self.elapsed_secs = elapsed_secs;
                     }
                 }
                 Ok(Event::OutputError(revision, error)) => {

@@ -19,8 +19,14 @@ pub(super) enum Command {
     Configure(Settings),
 }
 pub(super) enum Event {
-    Started(u64, Option<f64>),
-    Progress(u64, f64),
+    Started {
+        revision: u64,
+        duration_secs: Option<f64>,
+    },
+    Progress {
+        revision: u64,
+        elapsed_secs: f64,
+    },
     OutputError(u64, Message),
     Finished(anyhow::Result<()>),
 }
@@ -28,7 +34,7 @@ pub(super) enum Event {
 pub(super) struct PlaybackOutcome {
     pub sound_id: SoundId,
     pub reason: &'static str,
-    /// Audio frames whose scheduled playback time has elapsed.
+    /// Playback time in seconds for audio frames whose scheduled time has elapsed.
     pub played_secs: f64,
 }
 
@@ -59,7 +65,7 @@ pub(super) fn run(
     events: &mpsc::Sender<Event>,
 ) -> anyhow::Result<PlaybackOutcome> {
     let mut decoder = SoundDecoder::new(Box::new(crate::app::database::AudioSource::open(id)?))?;
-    let mut duration = decoder.duration;
+    let mut duration_secs = decoder.duration_secs;
     let (guid, microphone_error) = match devices::soundboard_microphone_guid(
         settings
             .playback_microphone_output_device
@@ -93,13 +99,16 @@ pub(super) fn run(
     let mut progress = Instant::now();
     tracing::info!(
         sound_id = id,
-        duration_secs = ?duration,
+        duration_secs = ?duration_secs,
         speaker_volume = settings.playback_speaker_output_volume,
         microphone_volume = settings.playback_microphone_output_volume,
         repeat = settings.playback_repeat,
         "Soundboard playback started"
     );
-    let _ = events.send(Event::Started(revision, duration));
+    let _ = events.send(Event::Started {
+        revision,
+        duration_secs,
+    });
     // Queue the initial settings through the same output validation as live changes.
     let mut configure = Some(settings.clone());
     let reason = 'playback: loop {
@@ -133,7 +142,7 @@ pub(super) fn run(
                 SoundDecoder::new(Box::new(crate::app::database::AudioSource::open(next_id)?))?;
             id = next_id;
             revision = next_revision;
-            duration = decoder.duration;
+            duration_secs = decoder.duration_secs;
             generation = (generation + 1) & 0xffff;
             if generation == 0 {
                 generation = 1;
@@ -147,9 +156,12 @@ pub(super) fn run(
             progress = Instant::now();
             // Keep the render client running on its owning COM thread. Its short
             // queue drains while the new sound's timeline is prepared.
-            tracing::info!(sound_id = id, duration_secs = ?duration,
+            tracing::info!(sound_id = id, duration_secs = ?duration_secs,
                 speaker_stream_reused = monitor.is_some(), "Soundboard playback switched");
-            let _ = events.send(Event::Started(revision, duration));
+            let _ = events.send(Event::Started {
+                revision,
+                duration_secs,
+            });
         }
         if let Some(next) = configure.take() {
             if next.playback_microphone_output_volume > 0.0
@@ -250,19 +262,25 @@ pub(super) fn run(
             break "completed";
         }
         if progress.elapsed() >= Duration::from_millis(100) {
-            let mut elapsed = played as f64 / f64::from(SAMPLE_RATE);
+            let mut elapsed_secs = played as f64 / f64::from(SAMPLE_RATE);
             if settings.playback_repeat
-                && let Some(duration) = duration.filter(|&d| d > 0.0)
+                && let Some(duration_secs) = duration_secs.filter(|&d| d > 0.0)
             {
-                elapsed %= duration;
+                elapsed_secs %= duration_secs;
             }
-            let _ = events.send(Event::Progress(revision, elapsed));
+            let _ = events.send(Event::Progress {
+                revision,
+                elapsed_secs,
+            });
             progress = Instant::now();
         }
         std::thread::sleep(Duration::from_millis(5));
     };
     let played_secs = played as f64 / f64::from(SAMPLE_RATE);
-    let _ = events.send(Event::Progress(revision, played_secs));
+    let _ = events.send(Event::Progress {
+        revision,
+        elapsed_secs: played_secs,
+    });
     if reason == "completed" {
         std::thread::sleep(Duration::from_millis(30));
     }

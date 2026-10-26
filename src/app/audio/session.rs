@@ -68,21 +68,24 @@ impl AudioSession {
             .as_ref()
             .is_some_and(|job| job.stop.load(Ordering::Relaxed))
     }
-    pub fn recording_elapsed(&self) -> Option<f64> {
+    pub fn recording_elapsed_secs(&self) -> Option<f64> {
         self.job
             .as_ref()
             .filter(|job| job.activity == Activity::Recording)
             .and_then(|job| job.started)
             .map(|started| started.elapsed().as_secs_f64())
     }
-    pub fn playback_progress(&self) -> Option<(f64, f64)> {
+    pub fn playback_progress_secs(&self) -> Option<(f64, f64)> {
         let job = self.job.as_ref()?;
         if job.activity == Activity::Recording {
             return None;
         }
         let started = job.started?;
-        let duration = self.recording.as_ref()?.duration();
-        Some((started.elapsed().as_secs_f64().min(duration), duration))
+        let duration_secs = self.recording.as_ref()?.duration_secs();
+        Some((
+            started.elapsed().as_secs_f64().min(duration_secs),
+            duration_secs,
+        ))
     }
     pub fn stop(&self) {
         if let Some(job) = &self.job {
@@ -226,13 +229,13 @@ impl AudioSession {
                     match result {
                         Ok(Outcome::Recorded(recording)) => {
                             tracing::info!(
-                                duration_secs = recording.duration(),
+                                duration_secs = recording.duration_secs(),
                                 sample_rate = recording.sample_rate,
                                 channels = recording.channels,
                                 "Microphone recording completed"
                             );
                             self.message = Message::Recorded {
-                                seconds: recording.duration(),
+                                duration_secs: recording.duration_secs(),
                             };
                             self.recording = Some(recording);
                             self.processed = None;
@@ -243,7 +246,7 @@ impl AudioSession {
                             }
                             if let Some(recording) = &self.recording {
                                 self.message = Message::Recorded {
-                                    seconds: recording.duration(),
+                                    duration_secs: recording.duration_secs(),
                                 };
                             }
                         }

@@ -3,7 +3,7 @@ use crate::app::i18n::{Details, Message};
 use crate::{
     app::{apo_cfg_writer, settings, soundboard::library::Library},
     shared::{
-        apo_cfg::{ApoCfg, ApoConfig},
+        apo_cfg::{ApoCfgFile, ApoConfig},
         paths,
     },
 };
@@ -35,7 +35,7 @@ fn wake_ui(ctx: egui::Context) -> impl Fn() + Clone + Send + 'static {
 }
 
 pub fn run(settings: settings::Settings) -> anyhow::Result<()> {
-    let apo_config = ApoCfg::try_load()?.config;
+    let apo_config = ApoCfgFile::try_load()?.config;
     let library = Library::try_load()?;
     let icon =
         eframe::icon_data::from_png_bytes(include_bytes!(concat!(env!("OUT_DIR"), "/icon.png")))?;

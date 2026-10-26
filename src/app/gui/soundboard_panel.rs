@@ -504,8 +504,10 @@ impl SoundboardPanel {
                                             }
                                             ui.add_sized(
                                                 [48.0, 30.0],
-                                                egui::Label::new(format_duration(sound.duration))
-                                                    .truncate(),
+                                                egui::Label::new(format_duration(
+                                                    sound.duration_secs,
+                                                ))
+                                                .truncate(),
                                             )
                                             .on_hover_text(Text::AudioLength.text());
                                             if let Some(key) = sound.hotkey {
@@ -894,17 +896,17 @@ impl SoundboardPanel {
                 } else if let Some(index) = self.model.active_sound_index {
                     let sound = self.model.library().sounds.get(index);
                     let name = sound.map(|sound| sound.name.as_str()).unwrap_or("");
-                    let duration = self
+                    let duration_text = self
                         .model
-                        .duration
-                        .or(sound.map(|sound| sound.duration))
-                        .filter(|duration| duration.is_finite() && *duration > 0.0)
+                        .duration_secs
+                        .or(sound.map(|sound| sound.duration_secs))
+                        .filter(|duration_secs| duration_secs.is_finite() && *duration_secs > 0.0)
                         .map(format_duration)
                         .unwrap_or_else(|| "…".into());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(format!(
-                            "{} / {duration}",
-                            format_duration(self.model.elapsed)
+                            "{} / {duration_text}",
+                            format_duration(self.model.elapsed_secs)
                         ));
                         ui.add(
                             egui::Label::new(name)
