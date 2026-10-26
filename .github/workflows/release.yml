@@ -40,15 +40,14 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $metadataJson = cargo metadata --no-deps --format-version 1 --locked
+          $packageId = cargo pkgid --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $metadata = $metadataJson | ConvertFrom-Json
-          $manifestPath = (Resolve-Path -LiteralPath 'Cargo.toml').Path
-          $package = $metadata.packages | Where-Object { $_.manifest_path -eq $manifestPath }
-          if (-not $package) { throw 'Could not find the root package in Cargo metadata.' }
-          $expectedTag = "v$($package.version)"
+          if ($packageId -notmatch '#(?:[^@]+@)?(?<version>[^#@]+)$') {
+            throw "Could not read the version from Cargo package ID: $packageId"
+          }
+          $expectedTag = "v$($Matches.version)"
           if ($env:RELEASE_TAG -cne $expectedTag) {
-            throw "Tag '$env:RELEASE_TAG' does not match Cargo.toml version '$($package.version)'; expected '$expectedTag'."
+            throw "Tag '$env:RELEASE_TAG' does not match Cargo.toml version '$($Matches.version)'; expected '$expectedTag'."
           }
           Write-Host "Verified release tag: $expectedTag"
 

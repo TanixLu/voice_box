@@ -55,8 +55,8 @@ struct InterfaceHeader<V> {
 struct ApoCom {
     // Drop leases before any of the allocations whose pages they cover.
     resident_pages: Option<super::memory::LockedPages>,
-    params: Arc<super::settings_watcher::RtParams>,
-    settings_watcher: Option<super::settings_watcher::SettingsWatcher>,
+    config: Arc<super::apo_cfg_watcher::RtConfig>,
+    apo_cfg_watcher: Option<super::apo_cfg_watcher::ApoCfgWatcher>,
     soundboard_path: Option<std::path::PathBuf>,
     injection: UnsafeCell<Option<super::soundboard::Injection>>,
     injection_stop: Option<Arc<AtomicBool>>,
@@ -321,8 +321,8 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
     unsafe {
         raw.write(ApoCom {
             resident_pages: None,
-            params: Arc::new(super::settings_watcher::RtParams::default()),
-            settings_watcher: None,
+            config: Arc::new(super::apo_cfg_watcher::RtConfig::default()),
+            apo_cfg_watcher: None,
             soundboard_path: None,
             injection: UnsafeCell::new(None),
             injection_stop: None,

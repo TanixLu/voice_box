@@ -6,7 +6,10 @@ use crate::app::{
 };
 use crate::shared::pcm_transport::SAMPLE_RATE;
 use anyhow::ensure;
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{
+    Connection, TransactionBehavior, params,
+    types::{FromSql, FromSqlError, FromSqlResult, ValueRef},
+};
 use std::{
     collections::HashSet,
     fs::File,
@@ -32,6 +35,34 @@ pub(in crate::app) struct Library {
 }
 
 impl Library {
+    pub(in crate::app) fn try_load() -> anyhow::Result<Self> {
+        Self::load(&database::open()?)
+    }
+
+    pub(super) fn save(&self) -> anyhow::Result<()> {
+        self.save_to(&mut database::open()?)
+            .user_context(Text::SaveSoundLibrary)
+    }
+
+    fn save_to(&self, connection: &mut Connection) -> anyhow::Result<()> {
+        let transaction = connection.transaction()?;
+        {
+            let mut update = transaction
+                .prepare("UPDATE sounds SET name = ?1, position = ?2, hotkey = ?3 WHERE id = ?4")?;
+            for (position, sound) in self.sounds.iter().enumerate() {
+                ensure!(is_valid_name(&sound.name), Text::InvalidSoundName);
+                ensure!(
+                    update
+                        .execute(params![sound.name, position as i64, sound.hotkey, sound.id,])?
+                        == 1,
+                    Text::SoundNotFound
+                );
+            }
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub(super) fn move_sounds(
         &mut self,
         ids: &HashSet<SoundId>,
@@ -166,7 +197,7 @@ impl Library {
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, f64>(2)?,
-                row.get::<_, Option<String>>(3)?,
+                read_hotkey(row.get_ref(3)?),
             ))
         })?;
         let mut sounds = Vec::new();
@@ -177,17 +208,29 @@ impl Library {
                 duration.is_finite() && duration > 0.0,
                 Text::InvalidAudioDuration
             );
+            let hotkey = match hotkey {
+                Ok(hotkey) => hotkey,
+                Err(error) => {
+                    tracing::warn!(sound_id = id, %error, "Invalid sound hotkey; clearing binding");
+                    None
+                }
+            };
             sounds.push(Sound {
                 id,
                 name,
                 duration,
-                hotkey: hotkey
-                    .map(|value| serde_json::from_str::<Hotkey>(&value))
-                    .transpose()?
-                    .filter(|key| key.is_valid()),
+                hotkey,
             });
         }
         Ok(Self { sounds })
+    }
+}
+
+fn read_hotkey(value: ValueRef<'_>) -> FromSqlResult<Option<Hotkey>> {
+    let hotkey = Option::<Hotkey>::column_result(value)?;
+    match hotkey {
+        Some(key) if !key.is_valid() => Err(FromSqlError::Other("invalid sound hotkey".into())),
+        _ => Ok(hotkey),
     }
 }
 

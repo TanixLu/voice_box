@@ -19,9 +19,8 @@ use winreg::{
 };
 
 use super::{
-    apo_dll_bytes,
+    apo_cfg_writer, apo_dll_bytes,
     registry::{read_registry_value, write_registry_value},
-    settings_writer,
 };
 
 const DISABLE_PROTECTED_AUDIO_DG_REG_PATH: &str =
@@ -134,7 +133,7 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     {
         return PluginStatus::NotInstalled;
     }
-    if !settings_writer::has_valid_settings() {
+    if !apo_cfg_writer::is_readable() {
         return PluginStatus::NeedsUpdate;
     }
     // Check whether the DLL needs to be updated.

@@ -1,6 +1,10 @@
-//! Settings file notifications and effect events stay off the real-time thread.
+//! APO configuration file notifications and effect events stay off the real-time thread.
 use super::{etw, worker};
-use crate::shared::{paths, settings::Settings, utils::wide_null};
+use crate::shared::{
+    apo_cfg::{ApoCfg, ApoConfig},
+    paths,
+    utils::wide_null,
+};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
@@ -22,12 +26,12 @@ use windows::core::{PCWSTR, w};
 
 const ENABLED_BIT: u64 = 1 << 32;
 
-pub struct RtParams {
+pub struct RtConfig {
     bits: AtomicU64,
-    // Only settings updates and COM discovery touch this mutex. RT loads bits alone.
+    // Only APO configuration updates and COM discovery touch this mutex. RT loads bits alone.
     effects: Mutex<[Option<Event>; 2]>,
 }
-impl Default for RtParams {
+impl Default for RtConfig {
     fn default() -> Self {
         Self {
             bits: AtomicU64::new(ENABLED_BIT | u64::from(1.0_f32.to_bits())),
@@ -35,10 +39,10 @@ impl Default for RtParams {
         }
     }
 }
-impl RtParams {
-    pub(crate) fn store(&self, settings: Settings) {
-        let gain = settings.linear_gain();
-        let bits = if settings.denoising_enabled {
+impl RtConfig {
+    pub(crate) fn store(&self, apo_config: ApoConfig) {
+        let gain = apo_config.linear_gain();
+        let bits = if apo_config.denoising_enabled {
             ENABLED_BIT
         } else {
             0
@@ -50,7 +54,7 @@ impl RtParams {
             .unwrap_or_else(|error| error.into_inner());
         let previous = self.bits.swap(bits, Ordering::AcqRel);
         let was_enabled = previous & ENABLED_BIT != 0;
-        if was_enabled != settings.denoising_enabled {
+        if was_enabled != apo_config.denoising_enabled {
             for event in effects.iter().flatten() {
                 unsafe {
                     let _ = SetEvent(event.handle());
@@ -112,26 +116,24 @@ impl Drop for Event {
     }
 }
 
-pub struct SettingsWatcher {
+pub struct ApoCfgWatcher {
     stop: Arc<Event>,
 }
-impl SettingsWatcher {
-    pub fn start(params: Arc<RtParams>) -> windows::core::Result<Self> {
-        if let Ok(settings) = Settings::try_load() {
-            params.store(settings);
-        }
+impl ApoCfgWatcher {
+    pub fn start(config: Arc<RtConfig>) -> windows::core::Result<Self> {
+        config.store(ApoCfg::try_load().unwrap_or_default().config);
         let stop = Arc::new(Event(unsafe { CreateEventW(None, true, false, None)? }));
         let worker_stop = Arc::clone(&stop);
-        worker::spawn(w!("VoiceBoxSettings"), move || watch(&worker_stop, &params))?;
+        worker::spawn(w!("VoiceBoxApoCfg"), move || watch(&worker_stop, &config))?;
         Ok(Self { stop })
     }
 }
-impl Drop for SettingsWatcher {
+impl Drop for ApoCfgWatcher {
     fn drop(&mut self) {
         unsafe {
             let _ = SetEvent(self.stop.handle());
         }
-        // The detached thread retains params and its DLL reference until exit.
+        // The detached thread retains config and its DLL reference until exit.
         // Never join while an audio-engine control callback may hold a lock.
     }
 }
@@ -171,19 +173,23 @@ fn report_fault(faulted: &mut bool, error: &anyhow::Error) {
     if !*faulted {
         etw::apo_log!(
             etw::WARNING,
-            etw::SETTINGS,
-            "Settings file watcher will retry; retaining last valid settings: {error:#}"
+            etw::APO_CFG,
+            "APO configuration file watcher will retry; retaining last valid APO configuration: {error:#}"
         );
         *faulted = true;
     }
 }
 
-fn reload(params: &RtParams, faulted: &mut bool) {
-    match Settings::try_load() {
-        Ok(settings) => {
-            params.store(settings);
+fn reload(config: &RtConfig, faulted: &mut bool) {
+    match ApoCfg::try_load() {
+        Ok(cfg) => {
+            config.store(cfg.config);
             if *faulted {
-                etw::apo_log!(etw::INFO, etw::SETTINGS, "Settings file watcher recovered");
+                etw::apo_log!(
+                    etw::INFO,
+                    etw::APO_CFG,
+                    "APO configuration file watcher recovered"
+                );
                 *faulted = false;
             }
         }
@@ -191,7 +197,7 @@ fn reload(params: &RtParams, faulted: &mut bool) {
     }
 }
 
-fn watch(stop: &Event, params: &RtParams) {
+fn watch(stop: &Event, config: &RtConfig) {
     let mut watch: Option<DirectoryWatch> = None;
     let mut retry_ms = 250;
     let mut faulted = false;
@@ -204,7 +210,7 @@ fn watch(stop: &Event, params: &RtParams) {
                 Ok(opened) => {
                     // Subscribe before reading so a concurrent replacement is not lost.
                     watch = Some(opened);
-                    reload(params, &mut faulted);
+                    reload(config, &mut faulted);
                     retry_ms = 250;
                 }
                 Err(error) => {
@@ -233,17 +239,17 @@ fn watch(stop: &Event, params: &RtParams) {
                 watch = None;
                 continue;
             }
-            reload(params, &mut faulted);
+            reload(config, &mut faulted);
         } else if result == WAIT_TIMEOUT {
             if faulted {
-                reload(params, &mut faulted);
+                reload(config, &mut faulted);
             } else {
                 watch = None;
             }
         } else {
             report_fault(
                 &mut faulted,
-                &anyhow::anyhow!("Settings directory wait failed: {result:?}"),
+                &anyhow::anyhow!("APO configuration directory wait failed: {result:?}"),
             );
             watch = None;
             if unsafe { WaitForSingleObject(stop.handle(), retry_ms) } == WAIT_OBJECT_0 {

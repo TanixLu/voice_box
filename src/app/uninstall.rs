@@ -99,9 +99,9 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
         ])
         .arg(include_str!("uninstall_cleanup.ps1"))
         // Paths are data, never interpolated into PowerShell source code.
-        .env(
-            "VOICEBOX_UNINSTALL_TEXTS",
-            cleanup_texts(crate::app::i18n::current_language())?,
+        .envs(
+            cleanup_texts(crate::app::i18n::current_language())
+                .map(|(name, value)| (format!("VOICEBOX_UNINSTALL_TEXT_{name}"), value)),
         )
         .env("VOICEBOX_UNINSTALL_EXE", std::env::current_exe()?)
         .env("VOICEBOX_UNINSTALL_DATA", directory)
@@ -188,8 +188,8 @@ fn recycle(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cleanup_texts(language: crate::app::i18n::Language) -> anyhow::Result<String> {
-    let entries = [
+fn cleanup_texts(language: crate::app::i18n::Language) -> [(&'static str, &'static str); 14] {
+    [
         (
             "UninstallIncompleteTitle",
             Text::UninstallIncompleteTitle.in_language(language),
@@ -240,10 +240,5 @@ fn cleanup_texts(language: crate::app::i18n::Language) -> anyhow::Result<String>
             Text::UninstallWindowFailed.in_language(language),
         ),
         ("CleanupFailed", Text::CleanupFailed.in_language(language)),
-    ];
-    Ok(serde_json::to_string(
-        &entries
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>(),
-    )?)
+    ]
 }

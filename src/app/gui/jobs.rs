@@ -4,9 +4,9 @@ use crate::app::i18n::{Details, Message};
 use crate::{
     app::{
         devices::{Microphone, PluginOperationResult, Speaker},
-        soundboard::config::OutputDevice,
+        settings::OutputDevice,
     },
-    shared::settings::Settings,
+    shared::apo_cfg::ApoConfig,
 };
 use std::sync::mpsc;
 
@@ -16,7 +16,7 @@ pub(super) enum JobResult {
     OutputDevices(anyhow::Result<(Vec<Microphone>, Vec<Speaker>)>),
     Plugin(PluginOperationResult),
     Saved {
-        settings: Settings,
+        config: ApoConfig,
         result: anyhow::Result<()>,
     },
 }
@@ -173,10 +173,10 @@ impl VoiceBoxApp {
                 }
             }
             JobResult::Saved {
-                settings,
+                config,
                 result: Ok(()),
             } => {
-                self.voice.mark_saved(settings);
+                self.voice.mark_saved(config);
                 self.jobs.status.clear();
             }
             JobResult::Microphones(Err(error))

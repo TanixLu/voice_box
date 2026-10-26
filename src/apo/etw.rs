@@ -14,7 +14,7 @@ pub const INFO: u8 = 4;
 pub const VERBOSE: u8 = 5;
 pub const LIFECYCLE: u64 = 1 << 0;
 pub const FORMAT: u64 = 1 << 1;
-pub const SETTINGS: u64 = 1 << 2;
+pub const APO_CFG: u64 = 1 << 2;
 
 const PROVIDER: GUID = GUID::from_u128(0xd75e13f3_18c2_45f2_9397_9a6641423354);
 static REGISTRATION: AtomicI64 = AtomicI64::new(0);

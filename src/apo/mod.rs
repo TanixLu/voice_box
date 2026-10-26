@@ -1,10 +1,10 @@
-//! Audio engine plugin: COM activation, DSP, settings watching and ETW.
+//! Audio engine plugin: COM activation, DSP, APO configuration watching and ETW.
+mod apo_cfg_watcher;
 mod com;
 mod dsp;
 mod etw;
 mod memory;
 mod preview;
-mod settings_watcher;
 mod soundboard;
 mod worker;
 

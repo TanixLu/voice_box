@@ -5,7 +5,7 @@ use windows::Win32::{
     UI::Shell::{FOLDERID_ProgramData, KF_FLAG_DEFAULT, SHGetKnownFolderPath},
 };
 
-pub const APO_SETTINGS_FILE: &str = "apo_settings.json";
+pub const APO_CFG_FILE: &str = "apo.cfg";
 
 pub fn system_dir() -> io::Result<PathBuf> {
     directory_from_api(|buffer| unsafe { GetSystemDirectoryW(Some(buffer)) })

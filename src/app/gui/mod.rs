@@ -1,8 +1,11 @@
 use crate::app::i18n::Text;
 use crate::app::i18n::{Details, Message};
 use crate::{
-    app::{app_settings, settings_writer},
-    shared::{paths, settings::Settings},
+    app::{apo_cfg_writer, settings, soundboard::library::Library},
+    shared::{
+        apo_cfg::{ApoCfg, ApoConfig},
+        paths,
+    },
 };
 
 mod batch_rename;
@@ -31,9 +34,9 @@ fn wake_ui(ctx: egui::Context) -> impl Fn() + Clone + Send + 'static {
     move || ctx.request_repaint()
 }
 
-pub fn run() -> anyhow::Result<()> {
-    let settings = Settings::try_load()?;
-    let app_settings = app_settings::Settings::try_load()?;
+pub fn run(settings: settings::Settings) -> anyhow::Result<()> {
+    let apo_config = ApoCfg::try_load()?.config;
+    let library = Library::try_load()?;
     let icon =
         eframe::icon_data::from_png_bytes(include_bytes!(concat!(env!("OUT_DIR"), "/icon.png")))?;
     let options = eframe::NativeOptions {
@@ -50,7 +53,11 @@ pub fn run() -> anyhow::Result<()> {
     eframe::run_native(
         "VoiceBox",
         options,
-        Box::new(move |cc| Ok(Box::new(VoiceBoxApp::new(cc, settings, app_settings)))),
+        Box::new(move |cc| {
+            Ok(Box::new(VoiceBoxApp::new(
+                cc, apo_config, settings, library,
+            )))
+        }),
     )
     .map_err(|error| {
         anyhow::anyhow!(Message::OpenWindowFailed {
@@ -86,7 +93,6 @@ enum Tab {
 struct VoiceBoxApp {
     window_settings: Option<egui_winit::WindowSettings>,
     tab: Tab,
-    language_preference: crate::app::i18n::LanguagePreference,
     zoom_factor: f32,
     microphones: MicrophonePanel,
     voice: VoicePanel,
@@ -105,8 +111,9 @@ struct VoiceBoxApp {
 impl VoiceBoxApp {
     fn new(
         cc: &eframe::CreationContext<'_>,
-        settings: Settings,
-        app_settings: app_settings::Settings,
+        apo_config: ApoConfig,
+        settings: settings::Settings,
+        library: Library,
     ) -> Self {
         let ctx = &cc.egui_ctx;
         let preferences: UiPreferences = cc
@@ -116,7 +123,7 @@ impl VoiceBoxApp {
         if preferences.zoom_factor.is_finite() && preferences.zoom_factor > 0.0 {
             ctx.set_zoom_factor(preferences.zoom_factor);
         }
-        ctx.set_theme(app_settings.theme);
+        ctx.set_theme(settings.theme);
         apply_style(ctx);
         fonts::install(ctx);
         let mut app = Self {
@@ -124,11 +131,10 @@ impl VoiceBoxApp {
                 .storage
                 .and_then(|storage| eframe::get_value(storage, "window")),
             tab: Tab::Voice,
-            language_preference: app_settings.language,
             zoom_factor: ctx.zoom_factor(),
             microphones: MicrophonePanel::new(preferences.selected_microphone_guid),
-            voice: VoicePanel::new(settings),
-            soundboard: SoundboardPanel::new(app_settings.soundboard),
+            voice: VoicePanel::new(apo_config),
+            soundboard: SoundboardPanel::new(settings, library),
             hotkeys: HotkeyManager::new(ctx),
             jobs: Jobs::default(),
             close_enabled: true,
@@ -170,7 +176,7 @@ impl VoiceBoxApp {
             self.soundboard.cancel_batch();
             if matches!(
                 self.hotkeys.target(),
-                Some(crate::app::soundboard::config::BindingTarget::Sound(_))
+                Some(crate::app::settings::BindingTarget::Sound(_))
             ) {
                 self.hotkeys.cancel_capture();
             }
@@ -179,7 +185,7 @@ impl VoiceBoxApp {
             self.hotkeys.poll_capture(
                 ui.ctx(),
                 &mut self.soundboard.model,
-                self.soundboard.draft_options.as_mut(),
+                self.soundboard.draft_settings.as_mut(),
             );
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 self.soundboard.cancel_rename();
@@ -284,17 +290,17 @@ impl VoiceBoxApp {
                                             );
                                         });
                                         section(ui, |ui| {
-                                            if let Some(settings) =
-                                                self.voice.settings_ui(ui, self.jobs.busy())
+                                            if let Some(config) =
+                                                self.voice.config_ui(ui, self.jobs.busy())
                                             {
                                                 self.jobs.begin(
                                                     ui.ctx(),
-                                                    Text::SavingSettings,
+                                                    Text::SavingApoCfg,
                                                     move || JobResult::Saved {
-                                                        result: settings_writer::save(
-                                                            settings.clone(),
+                                                        result: apo_cfg_writer::save(
+                                                            config.clone(),
                                                         ),
-                                                        settings,
+                                                        config,
                                                     },
                                                 );
                                             }
@@ -371,7 +377,7 @@ impl eframe::App for VoiceBoxApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         // Bootstrap the child while minimized; visible children keep UI passes running.
-        if self.soundboard.model.options().show_overlay
+        if self.soundboard.model.settings.playback_show_overlay
             && self.soundboard.model.playing()
             && !self.overlay_visible
             && ctx.input(|input| input.viewport().visible() == Some(false))
@@ -407,7 +413,7 @@ impl eframe::App for VoiceBoxApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
         self.overlay_visible = false;
-        let overlay_enabled = self.soundboard.model.options().show_overlay
+        let overlay_enabled = self.soundboard.model.settings.playback_show_overlay
             && !self.uninstalling
             && !self.uninstall_requested;
         match self
@@ -431,7 +437,7 @@ impl eframe::App for VoiceBoxApp {
 impl VoiceBoxApp {
     fn theme_ui(&mut self, ui: &mut egui::Ui) {
         use egui::ThemePreference;
-        let previous = ui.ctx().options(|options| options.theme_preference);
+        let previous = self.soundboard.model.settings.theme;
         let mut theme = previous;
         ui.label(Text::ThemeLabel.text());
         for (preference, label) in [
@@ -442,8 +448,11 @@ impl VoiceBoxApp {
             ui.selectable_value(&mut theme, preference, label.text());
         }
         if previous != theme {
-            match app_settings::save_theme(theme) {
+            let mut settings = self.soundboard.model.settings.clone();
+            settings.theme = theme;
+            match settings.save() {
                 Ok(()) => {
+                    self.soundboard.model.settings = settings;
                     ui.ctx().set_theme(theme);
                     ui.ctx().request_repaint();
                 }
@@ -457,27 +466,26 @@ impl VoiceBoxApp {
 
     fn language_ui(&mut self, ui: &mut egui::Ui) {
         use crate::app::i18n::{self, LanguagePreference};
-        let previous = self.language_preference;
+        let previous = self.soundboard.model.settings.language;
+        let mut language = previous;
         ui.label(Text::LanguageLabel.text());
         for preference in [
             LanguagePreference::System,
             LanguagePreference::English,
             LanguagePreference::SimplifiedChinese,
         ] {
-            ui.selectable_value(
-                &mut self.language_preference,
-                preference,
-                preference.label(),
-            );
+            ui.selectable_value(&mut language, preference, preference.label());
         }
-        if previous != self.language_preference {
-            match app_settings::save_language(self.language_preference) {
+        if previous != language {
+            let mut settings = self.soundboard.model.settings.clone();
+            settings.language = language;
+            match settings.save() {
                 Ok(()) => {
-                    i18n::set_language(self.language_preference.resolve());
+                    self.soundboard.model.settings = settings;
+                    i18n::set_language(language.resolve());
                     ui.ctx().request_repaint();
                 }
                 Err(error) => {
-                    self.language_preference = previous;
                     self.jobs.status = Message::error(error);
                     self.jobs.failed = true;
                 }

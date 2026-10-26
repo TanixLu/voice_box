@@ -95,16 +95,14 @@ pub(super) unsafe extern "system" fn initialize(
         (*object).soundboard_path = soundboard_path;
         if mode != AUDIO_SIGNALPROCESSINGMODE_RAW {
             // Discovery objects also expose live effect lists and change events.
-            // They watch settings but still cannot allocate/process a DSP graph.
-            match crate::apo::settings_watcher::SettingsWatcher::start(Arc::clone(
-                &(*object).params,
-            )) {
-                Ok(worker) => (*object).settings_watcher = Some(worker),
+            // They watch APO configuration but still cannot allocate/process a DSP graph.
+            match crate::apo::apo_cfg_watcher::ApoCfgWatcher::start(Arc::clone(&(*object).config)) {
+                Ok(worker) => (*object).apo_cfg_watcher = Some(worker),
                 Err(error) => {
                     apo_log!(
                         etw::WARNING,
-                        etw::SETTINGS,
-                        "Settings watcher failed: {error}"
+                        etw::APO_CFG,
+                        "APO configuration watcher failed: {error}"
                     );
                 }
             }
@@ -195,7 +193,7 @@ pub(super) unsafe extern "system" fn get_effects_list(
     if supports_effect && memory.is_null() {
         return E_OUTOFMEMORY;
     }
-    let denoise = match unsafe { (*object).params.subscribe_effects(event, false) } {
+    let denoise = match unsafe { (*object).config.subscribe_effects(event, false) } {
         Ok(enabled) => enabled,
         Err(error) => {
             unsafe { CoTaskMemFree(Some(memory.cast())) };
@@ -243,7 +241,7 @@ pub(super) unsafe extern "system" fn get_controllable_effects_list(
     if supports_effect && memory.is_null() {
         return E_OUTOFMEMORY;
     }
-    let denoise = match unsafe { (*object).params.subscribe_effects(event, true) } {
+    let denoise = match unsafe { (*object).config.subscribe_effects(event, true) } {
         Ok(enabled) => enabled,
         Err(error) => {
             unsafe { CoTaskMemFree(Some(memory.cast())) };

@@ -5,10 +5,12 @@ use super::{
 };
 use crate::app::i18n::Text;
 use crate::app::i18n::{Details, Message};
-use crate::app::soundboard::{
-    Soundboard,
-    config::{BindingTarget, Config, Options, OutputDevice},
-    library::{Library, SoundId},
+use crate::app::{
+    settings::{BindingTarget, OutputDevice, Settings},
+    soundboard::{
+        Soundboard,
+        library::{Library, SoundId},
+    },
 };
 use std::collections::HashSet;
 
@@ -74,7 +76,7 @@ impl SoundRenameEditor {
 
 pub(super) struct SoundboardPanel {
     pub(super) model: Soundboard,
-    pub(super) draft_options: Option<Options>,
+    pub(super) draft_settings: Option<Settings>,
     filter: String,
     rename_editor: Option<SoundRenameEditor>,
     pending_delete_index: Option<usize>,
@@ -86,11 +88,11 @@ pub(super) struct SoundboardPanel {
 }
 
 impl SoundboardPanel {
-    pub(super) fn new(config: Config) -> Self {
+    pub(super) fn new(settings: Settings, library: Library) -> Self {
         Self {
-            model: Soundboard::new(config),
+            model: Soundboard::new(settings, library),
             filter: String::new(),
-            draft_options: None,
+            draft_settings: None,
             rename_editor: None,
             pending_delete_index: None,
             selection: None,
@@ -146,15 +148,21 @@ impl SoundboardPanel {
         }
     }
 
-    fn save_soundboard_options(&mut self, jobs: &mut Jobs, hotkeys: &HotkeyManager) {
-        let Some(options) = self.draft_options.clone() else {
+    fn save_soundboard_settings(&mut self, jobs: &mut Jobs, hotkeys: &HotkeyManager) {
+        let Some(settings) = self.draft_settings.as_mut() else {
             return;
         };
-        let result = [options.stop_hotkey, options.random_playback_hotkey]
-            .into_iter()
-            .flatten()
-            .try_for_each(|key| hotkeys.validate(key))
-            .and_then(|()| self.model.save_options(options));
+        settings.language = self.model.settings.language;
+        settings.theme = self.model.settings.theme;
+        let settings = settings.clone();
+        let result = [
+            settings.playback_stop_hotkey,
+            settings.playback_random_hotkey,
+        ]
+        .into_iter()
+        .flatten()
+        .try_for_each(|key| hotkeys.validate(key))
+        .and_then(|()| self.model.save_settings(settings));
         match result {
             Ok(()) => {
                 jobs.status.clear();
@@ -200,7 +208,7 @@ impl SoundboardPanel {
     ) {
         let available = !self.interaction_blocked(jobs)
             && !session_busy
-            && self.draft_options.is_none()
+            && self.draft_settings.is_none()
             && !self.recording_open();
         ui.add_enabled_ui(available, |ui| {
             if hotkeys.batch_capturing()
@@ -255,7 +263,7 @@ impl SoundboardPanel {
                             return;
                         }
                         if ui.button(Text::Settings.text()).clicked() {
-                            self.draft_options = Some(self.model.options().clone());
+                            self.draft_settings = Some(self.model.settings.clone());
                             jobs.begin(ui.ctx(), Text::ReadingOutputDevices, || {
                                 super::jobs::JobResult::OutputDevices(
                                     crate::app::devices::enumerate_soundboard_devices(),
@@ -854,8 +862,8 @@ impl SoundboardPanel {
             ui.horizontal(|ui| {
                 let key = self
                     .model
-                    .options()
-                    .stop_hotkey
+                    .settings
+                    .playback_stop_hotkey
                     .map(|key| Message::StopPlaybackHotkey { key }.text().into_owned())
                     .unwrap_or_else(|| Text::StopPlayback.text().into());
                 if ui
@@ -1020,9 +1028,14 @@ impl SoundboardPanel {
         jobs: &mut Jobs,
         hotkeys: &mut HotkeyManager,
     ) {
-        if self.draft_options.is_none() {
+        if self.draft_settings.is_none() {
             return;
         }
+        let defaults = Settings {
+            language: self.model.settings.language,
+            theme: self.model.settings.theme,
+            ..Settings::default()
+        };
         let available = ctx.content_rect().size();
         let capture_target = hotkeys.target();
         let capturing = capture_target.is_some();
@@ -1049,43 +1062,49 @@ impl SoundboardPanel {
                     .max_height((available.y - 230.0).max(80.0))
                     .show(ui, |ui| {
                         ui.add_enabled_ui(idle, |ui| {
-                            let options = self.draft_options.as_mut().unwrap();
+                            let settings = self.draft_settings.as_mut().unwrap();
                             ui.add_enabled_ui(!capturing, |ui| {
                                 playback_volume(
                                     ui,
                                     Text::MicrophoneOutput.text(),
-                                    &mut options.microphone_output_volume,
+                                    &mut settings.playback_microphone_output_volume,
                                 );
                                 output_device_picker(
                                     ui,
                                     "sound_microphone",
-                                    &mut options.microphone_output_device,
+                                    &mut settings.playback_microphone_output_device,
                                     &self.microphones,
                                 );
                                 ui.add_space(8.0);
                                 playback_volume(
                                     ui,
                                     Text::SpeakerOutput.text(),
-                                    &mut options.speaker_output_volume,
+                                    &mut settings.playback_speaker_output_volume,
                                 );
                                 output_device_picker(
                                     ui,
                                     "sound_speaker",
-                                    &mut options.speaker_output_device,
+                                    &mut settings.playback_speaker_output_device,
                                     &self.speakers,
                                 );
                                 ui.add_space(8.0);
                                 ui.checkbox(
-                                    &mut options.include_microphone_audio,
+                                    &mut settings.playback_include_microphone_audio,
                                     Text::IncludeMicrophoneAudio.text(),
                                 );
-                                ui.checkbox(&mut options.show_overlay, Text::ShowOverlay.text());
-                                ui.checkbox(&mut options.repeat, Text::RepeatPlayback.text());
+                                ui.checkbox(
+                                    &mut settings.playback_show_overlay,
+                                    Text::ShowOverlay.text(),
+                                );
+                                ui.checkbox(
+                                    &mut settings.playback_repeat,
+                                    Text::RepeatPlayback.text(),
+                                );
                             });
                             if hotkey_editor(
                                 ui,
                                 Text::RandomHotkey.text(),
-                                &mut options.random_playback_hotkey,
+                                &mut settings.playback_random_hotkey,
                                 BindingTarget::Random,
                                 capture_target,
                             ) {
@@ -1094,7 +1113,7 @@ impl SoundboardPanel {
                             if hotkey_editor(
                                 ui,
                                 Text::StopHotkey.text(),
-                                &mut options.stop_hotkey,
+                                &mut settings.playback_stop_hotkey,
                                 BindingTarget::Stop,
                                 capture_target,
                             ) {
@@ -1103,7 +1122,7 @@ impl SoundboardPanel {
                             if hotkey_editor(
                                 ui,
                                 Text::HoldDuringPlayback.text(),
-                                &mut options.auto_hold_hotkey,
+                                &mut settings.playback_auto_hold_hotkey,
                                 BindingTarget::Hold,
                                 capture_target,
                             ) {
@@ -1116,14 +1135,14 @@ impl SoundboardPanel {
                     });
                 ui.add_space(12.0);
                 let dirty = self
-                    .draft_options
+                    .draft_settings
                     .as_ref()
-                    .is_some_and(|options| options != self.model.options());
+                    .is_some_and(|settings| *settings != self.model.settings);
                 ui.horizontal_wrapped(|ui| {
                     save = ui
                         .add_enabled(
                             idle && !capturing && dirty,
-                            egui::Button::new(Text::SaveSettings.text()),
+                            egui::Button::new(Text::SaveChanges.text()),
                         )
                         .clicked();
                     if ui
@@ -1133,28 +1152,28 @@ impl SoundboardPanel {
                         )
                         .clicked()
                     {
-                        self.draft_options = Some(self.model.options().clone());
+                        self.draft_settings = Some(self.model.settings.clone());
                         hotkeys.settings_message.clear();
                     }
                     if trailing_button(
                         ui,
                         idle && !capturing
                             && self
-                                .draft_options
+                                .draft_settings
                                 .as_ref()
-                                .is_some_and(|options| *options != Options::default()),
+                                .is_some_and(|settings| *settings != defaults),
                         Text::RestoreDefaults.text(),
                     )
                     .clicked()
                     {
-                        self.draft_options = Some(Options::default());
+                        self.draft_settings = Some(defaults.clone());
                         hotkeys.settings_message.clear();
                     }
                 });
                 if self
-                    .draft_options
+                    .draft_settings
                     .as_ref()
-                    .is_some_and(|options| options != self.model.options())
+                    .is_some_and(|settings| *settings != self.model.settings)
                 {
                     warning(ui, Text::UnsavedSoundSettings.text());
                 } else {
@@ -1171,11 +1190,11 @@ impl SoundboardPanel {
                 && !capturing
                 && idle)
         {
-            self.draft_options = None;
+            self.draft_settings = None;
             hotkeys.cancel_capture();
             hotkeys.settings_message.clear();
         } else if save {
-            self.save_soundboard_options(jobs, hotkeys);
+            self.save_soundboard_settings(jobs, hotkeys);
         } else if let Some(target) = capture {
             if capture_target == Some(target) {
                 hotkeys.cancel_capture();
@@ -1190,7 +1209,7 @@ impl SoundboardPanel {
         let Some(edit) = &mut self.rename_editor else {
             return;
         };
-        if !edit.request_focus && (!soundboard_tab_selected || self.draft_options.is_some()) {
+        if !edit.request_focus && (!soundboard_tab_selected || self.draft_settings.is_some()) {
             edit.save_requested = true;
         }
         // Stopping playback is asynchronous; keep the edit until it finishes.

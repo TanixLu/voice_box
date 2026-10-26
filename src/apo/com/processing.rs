@@ -44,7 +44,7 @@ fn log_lock_failure(
 ) -> HRESULT {
     apo_log!(
         etw::ERROR,
-        etw::SETTINGS,
+        etw::APO_CFG,
         "LockForProcess failed instance={object:p} inputs={input_count} outputs={output_count} reason={reason} result=0x{:08x}",
         result.0 as u32
     );
@@ -210,8 +210,8 @@ pub(super) unsafe extern "system" fn lock_for_process(
     let resident_pages = if unsafe { (*object).resident_pages.is_none() } {
         let mut ranges = crate::apo::memory::image_ranges();
         ranges.push((object as usize, size_of::<ApoCom>()));
-        let params = unsafe { (*object).params.as_ref() };
-        ranges.push((params as *const _ as usize, size_of_val(params)));
+        let config = unsafe { (*object).config.as_ref() };
+        ranges.push((config as *const _ as usize, size_of_val(config)));
         match crate::apo::memory::LockedPages::new(ranges) {
             Ok(pages) => Some(pages),
             Err(error) => {
@@ -289,12 +289,12 @@ pub(super) unsafe extern "system" fn lock_for_process(
     }
     apo_log!(
         etw::INFO,
-        etw::SETTINGS,
+        etw::APO_CFG,
         "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} effect=denoise enabled={} latency_hns={}",
         unsafe { (**inputs).u32MaxFrameCount },
         unsafe { (**outputs).u32MaxFrameCount },
         input_format.dwSamplesPerFrame,
-        unsafe { (*object).params.load().0 },
+        unsafe { (*object).config.load().0 },
         unsafe { (*object).latency_hns.load(Ordering::Acquire) },
     );
     S_OK
@@ -317,7 +317,7 @@ pub(super) unsafe extern "system" fn unlock_for_process(this: *mut c_void) -> HR
     }
     apo_log!(
         etw::INFO,
-        etw::SETTINGS,
+        etw::APO_CFG,
         "UnlockForProcess completed instance={object:p} process_calls={} processed_frames={}",
         unsafe { (*object).process_calls.load(Ordering::Relaxed) },
         unsafe { (*object).processed_frames.load(Ordering::Relaxed) }
@@ -391,9 +391,9 @@ pub(super) unsafe extern "system" fn process(
     let mut output_flags = input.u32BufferFlags;
     if unsafe { (*object).effect_enabled.load(Ordering::Acquire) } {
         let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
-        let params = unsafe { &(*object).params };
-        let (enabled, gain) = params.load();
-        unsafe { (&mut *(*object).dsp.get()).process_with_settings(buffer, gain, enabled) };
+        let config = unsafe { &(*object).config };
+        let (enabled, gain) = config.load();
+        unsafe { (&mut *(*object).dsp.get()).process_with_config(buffer, gain, enabled) };
         if let Some(injection) = unsafe { &mut *(*object).injection.get() } {
             injection.mix(buffer);
         }

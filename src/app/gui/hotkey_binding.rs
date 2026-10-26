@@ -3,11 +3,8 @@ use crate::app::i18n::Text;
 use crate::app::i18n::{Details, Message};
 use crate::app::{
     hotkeys::{self, Hotkey, Hotkeys},
-    soundboard::{
-        Soundboard,
-        config::{BindingTarget, Options},
-        library::SoundId,
-    },
+    settings::{BindingTarget, Settings},
+    soundboard::{Soundboard, library::SoundId},
 };
 use std::collections::HashSet;
 
@@ -86,8 +83,8 @@ impl HotkeyManager {
     pub(super) fn poll(&mut self, enabled: bool, soundboard: &Soundboard) -> Vec<PlaybackAction> {
         let enabled = enabled && self.capture.is_none();
         let bindings: Vec<_> = if enabled {
-            std::iter::once(soundboard.options().stop_hotkey)
-                .chain(std::iter::once(soundboard.options().random_playback_hotkey))
+            std::iter::once(soundboard.settings.playback_stop_hotkey)
+                .chain(std::iter::once(soundboard.settings.playback_random_hotkey))
                 .chain(soundboard.library().sounds.iter().map(|sound| sound.hotkey))
                 .collect()
         } else {
@@ -146,7 +143,7 @@ impl HotkeyManager {
         &mut self,
         ctx: &egui::Context,
         soundboard: &mut Soundboard,
-        draft: Option<&mut Options>,
+        draft: Option<&mut Settings>,
     ) {
         let Some(capture) = &mut self.capture else {
             return;

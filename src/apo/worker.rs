@@ -1,5 +1,5 @@
 //! Detached native workers with an owned DLL reference through their final exit.
-//! No APO control callback waits for a settings worker to exit.
+//! No APO control callback waits for a APO configuration worker to exit.
 use super::etw;
 use std::{
     ffi::c_void,

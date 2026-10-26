@@ -205,10 +205,10 @@ impl AudioProcessor {
             .map_or(0, |state| state.latency_frames())
     }
 
-    pub fn process_with_settings(&mut self, buffer: &mut [u8], gain: f32, enabled: bool) -> bool {
+    pub fn process_with_config(&mut self, buffer: &mut [u8], gain: f32, enabled: bool) -> bool {
         self.state
             .as_mut()
-            .is_none_or(|state| state.process_with_settings(buffer, gain, enabled))
+            .is_none_or(|state| state.process_with_config(buffer, gain, enabled))
     }
 }
 
@@ -280,7 +280,7 @@ impl ProcessorState {
             .map_or(0, |effect| effect.latency_frames)
     }
 
-    pub fn process_with_settings(&mut self, buffer: &mut [u8], gain: f32, enabled: bool) -> bool {
+    pub fn process_with_config(&mut self, buffer: &mut [u8], gain: f32, enabled: bool) -> bool {
         let format = self.format;
         if gain == 0.0 {
             buffer.fill(self.silence_byte());

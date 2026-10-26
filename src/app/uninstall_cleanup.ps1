@@ -2,7 +2,10 @@
 # Open the process handle before signaling readiness; preserve original restore paths.
 $ErrorActionPreference = 'Stop'
 # Read the Rust catalog snapshot before the application removes its data directory.
-$texts = $env:VOICEBOX_UNINSTALL_TEXTS | ConvertFrom-Json
+$texts = @{}
+foreach ($entry in Get-ChildItem Env:VOICEBOX_UNINSTALL_TEXT_*) {
+    $texts[$entry.Name.Substring('VOICEBOX_UNINSTALL_TEXT_'.Length)] = $entry.Value
+}
 $script:finished = $false
 $script:parentExited = $false
 

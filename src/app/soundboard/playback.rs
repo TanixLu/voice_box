@@ -1,6 +1,7 @@
-use super::{config::Options, decoder::SoundDecoder, library::SoundId};
+use super::{decoder::SoundDecoder, library::SoundId};
 use crate::app::i18n::Text;
 use crate::app::i18n::{Details, Message, UserContext};
+use crate::app::settings::Settings;
 use crate::{
     app::{audio::monitor::Monitor, devices, hotkeys::HeldKeys},
     shared::pcm_transport::{Clock, DECODE_AHEAD_FRAMES, Mapping, SAMPLE_RATE, transport_path},
@@ -14,8 +15,8 @@ use std::{
 
 pub(super) enum Command {
     Stop,
-    Replace(SoundId, u64, Options),
-    Configure(Options),
+    Replace(SoundId, u64, Settings),
+    Configure(Settings),
 }
 pub(super) enum Event {
     Started(u64, Option<f64>),
@@ -33,7 +34,7 @@ pub(super) struct PlaybackOutcome {
 
 fn drain_commands(
     commands: &mpsc::Receiver<Command>,
-    configure: &mut Option<Options>,
+    configure: &mut Option<Settings>,
 ) -> Result<Option<(SoundId, u64)>, &'static str> {
     let mut replacement = None;
     loop {
@@ -52,7 +53,7 @@ fn drain_commands(
 
 pub(super) fn run(
     mut id: SoundId,
-    mut options: Options,
+    mut settings: Settings,
     mut revision: u64,
     commands: &mpsc::Receiver<Command>,
     events: &mpsc::Sender<Event>,
@@ -60,8 +61,8 @@ pub(super) fn run(
     let mut decoder = SoundDecoder::new(Box::new(crate::app::database::AudioSource::open(id)?))?;
     let mut duration = decoder.duration;
     let (guid, microphone_error) = match devices::soundboard_microphone_guid(
-        options
-            .microphone_output_device
+        settings
+            .playback_microphone_output_device
             .as_ref()
             .map(|device| device.id.as_str()),
     ) {
@@ -93,14 +94,14 @@ pub(super) fn run(
     tracing::info!(
         sound_id = id,
         duration_secs = ?duration,
-        speaker_volume = options.speaker_output_volume,
-        microphone_volume = options.microphone_output_volume,
-        repeat = options.repeat,
+        speaker_volume = settings.playback_speaker_output_volume,
+        microphone_volume = settings.playback_microphone_output_volume,
+        repeat = settings.playback_repeat,
         "Soundboard playback started"
     );
     let _ = events.send(Event::Started(revision, duration));
-    // Queue the initial options through the same output validation as live changes.
-    let mut configure = Some(options.clone());
+    // Queue the initial settings through the same output validation as live changes.
+    let mut configure = Some(settings.clone());
     let reason = 'playback: loop {
         let mut now = clock.frame();
         while base < now && !pending.is_empty() {
@@ -151,30 +152,32 @@ pub(super) fn run(
             let _ = events.send(Event::Started(revision, duration));
         }
         if let Some(next) = configure.take() {
-            if next.microphone_output_volume > 0.0
+            if next.playback_microphone_output_volume > 0.0
                 && let Some(error) = &microphone_error
             {
-                if next.speaker_output_volume == 0.0 {
+                if next.playback_speaker_output_volume == 0.0 {
                     return Err(anyhow::anyhow!(error.clone()));
                 }
                 tracing::warn!("{error}");
                 let _ = events.send(Event::OutputError(revision, error.clone()));
             }
-            options = next.for_output(guid.is_some());
+            settings = next.for_output(guid.is_some());
         }
-        if options.microphone_output_volume == 0.0 && options.speaker_output_volume == 0.0 {
+        if settings.playback_microphone_output_volume == 0.0
+            && settings.playback_speaker_output_volume == 0.0
+        {
             break "outputs_muted";
         }
-        if options.auto_hold_hotkey != held_binding {
+        if settings.playback_auto_hold_hotkey != held_binding {
             drop(held);
-            held = if let Some(key) = options.auto_hold_hotkey {
+            held = if let Some(key) = settings.playback_auto_hold_hotkey {
                 HeldKeys::press(key)?
             } else {
                 HeldKeys::default()
             };
-            held_binding = options.auto_hold_hotkey;
+            held_binding = settings.playback_auto_hold_hotkey;
         }
-        if eof && options.repeat {
+        if eof && settings.playback_repeat {
             decoder = SoundDecoder::new(Box::new(crate::app::database::AudioSource::open(id)?))?;
             decoded = 0;
             eof = false;
@@ -188,7 +191,7 @@ pub(super) fn run(
                     pending.push_back(stereo);
                     decoded += 1;
                 }
-                None if options.repeat && decoded > 0 => {
+                None if settings.playback_repeat && decoded > 0 => {
                     decoder =
                         SoundDecoder::new(Box::new(crate::app::database::AudioSource::open(id)?))?;
                     decoded = 0;
@@ -202,16 +205,16 @@ pub(super) fn run(
         mapping.publish(
             generation,
             base + pending.len() as u64,
-            options.microphone_output_volume,
-            !options.include_microphone_audio,
+            settings.playback_microphone_output_volume,
+            !settings.playback_include_microphone_audio,
             now,
         );
-        if options.speaker_output_volume > 0.0 && !monitor_failed {
+        if settings.playback_speaker_output_volume > 0.0 && !monitor_failed {
             let result = (|| -> anyhow::Result<()> {
                 if monitor.is_none() {
                     monitor = Some(Monitor::open(
-                        options
-                            .speaker_output_device
+                        settings
+                            .playback_speaker_output_device
                             .as_ref()
                             .map(|device| device.id.as_str()),
                     )?);
@@ -221,13 +224,13 @@ pub(super) fn run(
                 monitor.as_mut().unwrap().fill(clock.frame(), |frame| {
                     let stereo = mapping.read(frame, generation);
                     [
-                        stereo[0] * options.speaker_output_volume,
-                        stereo[1] * options.speaker_output_volume,
+                        stereo[0] * settings.playback_speaker_output_volume,
+                        stereo[1] * settings.playback_speaker_output_volume,
                     ]
                 })
             })();
             if let Err(error) = result {
-                if options.microphone_output_volume == 0.0 {
+                if settings.playback_microphone_output_volume == 0.0 {
                     return Err(error.user_context(Text::SpeakerPlaybackFailed));
                 }
                 monitor = None;
@@ -248,7 +251,7 @@ pub(super) fn run(
         }
         if progress.elapsed() >= Duration::from_millis(100) {
             let mut elapsed = played as f64 / f64::from(SAMPLE_RATE);
-            if options.repeat
+            if settings.playback_repeat
                 && let Some(duration) = duration.filter(|&d| d > 0.0)
             {
                 elapsed %= duration;

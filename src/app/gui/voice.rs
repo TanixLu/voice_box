@@ -6,35 +6,35 @@ use crate::{
         audio::session::{Activity, AudioSession},
         devices::Microphone,
     },
-    shared::settings::{MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB, Settings},
+    shared::apo_cfg::{ApoConfig, MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB},
 };
 
 pub(super) struct VoicePanel {
-    settings: Settings,
-    saved: Settings,
+    config: ApoConfig,
+    saved: ApoConfig,
     pub(super) session: AudioSession,
 }
 
 impl VoicePanel {
-    pub(super) fn new(settings: Settings) -> Self {
+    pub(super) fn new(config: ApoConfig) -> Self {
         Self {
-            saved: settings.clone(),
-            settings,
+            saved: config.clone(),
+            config,
             session: AudioSession::default(),
         }
     }
-    pub(super) fn mark_saved(&mut self, settings: Settings) {
-        self.saved = settings;
+    pub(super) fn mark_saved(&mut self, config: ApoConfig) {
+        self.saved = config;
     }
-    pub(super) fn settings_ui(&mut self, ui: &mut egui::Ui, busy: bool) -> Option<Settings> {
+    pub(super) fn config_ui(&mut self, ui: &mut egui::Ui, busy: bool) -> Option<ApoConfig> {
         let mut save_requested = false;
-        ui.strong(Text::VoiceSettings.text());
+        ui.strong(Text::VoiceConfig.text());
         ui.add_enabled_ui(!busy, |ui| {
             ui.checkbox(
-                &mut self.settings.denoising_enabled,
+                &mut self.config.denoising_enabled,
                 Text::EnableDenoising.text(),
             );
-            let mut gain_db = self.settings.gain_millidb as f64 / 1000.0;
+            let mut gain_db = self.config.gain_millidb as f64 / 1000.0;
             let mut changed = false;
             ui.horizontal(|ui| {
                 ui.label(Text::VolumeAdjustment.text());
@@ -98,13 +98,13 @@ impl VoicePanel {
                     .circle_filled(marker, 2.0, ui.visuals().weak_text_color());
             });
             if changed {
-                self.settings.gain_millidb = (gain_db * 1000.0).round() as i32;
+                self.config.gain_millidb = (gain_db * 1000.0).round() as i32;
             }
         });
         ui.horizontal_wrapped(|ui| {
-            let dirty = self.settings != self.saved;
+            let dirty = self.config != self.saved;
             if ui
-                .add_enabled(!busy && dirty, egui::Button::new(Text::SaveSettings.text()))
+                .add_enabled(!busy && dirty, egui::Button::new(Text::SaveChanges.text()))
                 .clicked()
             {
                 save_requested = true;
@@ -113,24 +113,24 @@ impl VoicePanel {
                 .add_enabled(!busy && dirty, egui::Button::new(Text::UndoChanges.text()))
                 .clicked()
             {
-                self.settings = self.saved.clone();
+                self.config = self.saved.clone();
             }
             if trailing_button(
                 ui,
-                !busy && self.settings != Settings::default(),
+                !busy && self.config != ApoConfig::default(),
                 Text::RestoreDefaults.text(),
             )
             .clicked()
             {
-                self.settings = Settings::default();
+                self.config = ApoConfig::default();
             }
         });
-        if self.settings != self.saved {
-            warning(ui, Text::UnsavedVoiceSettings.text());
+        if self.config != self.saved {
+            warning(ui, Text::UnsavedVoiceConfig.text());
         } else {
-            hint(ui, Text::VoiceSettingsApplied.text());
+            hint(ui, Text::VoiceConfigApplied.text());
         }
-        save_requested.then(|| self.settings.clone())
+        save_requested.then(|| self.config.clone())
     }
 
     pub(super) fn recording_ui(
@@ -202,10 +202,8 @@ impl VoicePanel {
                 if activity == Some(Activity::PlayingProcessed) {
                     self.session.stop();
                 } else {
-                    self.session.play(
-                        Some(self.settings.clone()),
-                        super::wake_ui(ui.ctx().clone()),
-                    );
+                    self.session
+                        .play(Some(self.config.clone()), super::wake_ui(ui.ctx().clone()));
                 }
             }
         });

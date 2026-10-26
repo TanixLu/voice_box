@@ -1,6 +1,6 @@
 //! Management application: GUI, plugin setup, writable settings and file logs.
 use crate::app::i18n::Text;
-mod app_settings;
+mod apo_cfg_writer;
 mod audio;
 mod database;
 mod devices;
@@ -9,7 +9,7 @@ mod hotkeys;
 mod i18n;
 mod logging;
 mod registry;
-mod settings_writer;
+mod settings;
 mod setup;
 mod soundboard;
 mod uninstall;
@@ -37,7 +37,7 @@ use windows::Win32::UI::{
 use windows::core::{PCWSTR, w};
 
 pub fn run() {
-    i18n::set_language(app_settings::load_language().resolve());
+    i18n::set_language(i18n::LanguagePreference::System.resolve());
     if let Err(error) = run_inner() {
         error!("Application error: {error:?}");
         let message = wide_null(i18n::Message::error(error).text().as_ref());
@@ -62,7 +62,9 @@ fn run_inner() -> anyhow::Result<()> {
     );
     let single_instance = single_instance::SingleInstance::new(SINGLE_INSTANCE_MUTEX)?;
     anyhow::ensure!(single_instance.is_single(), Text::AnotherInstance);
-    settings_writer::initialize()?;
+    apo_cfg_writer::initialize()?;
     logging::init()?;
-    gui::run()
+    let settings = settings::Settings::load()?;
+    i18n::set_language(settings.language.resolve());
+    gui::run(settings)
 }

@@ -5,7 +5,7 @@ use windows::Win32::Foundation::{E_INVALIDARG, E_POINTER, S_OK};
 use windows_core::HRESULT;
 
 use super::dsp::{AudioProcessor, MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat};
-use crate::shared::{preview, settings::Settings};
+use crate::shared::{apo_cfg::ApoConfig, preview};
 
 #[unsafe(no_mangle)]
 /// Process and align a complete recording with a fresh DSP state.
@@ -23,7 +23,7 @@ pub unsafe extern "system" fn VoiceBoxPreviewProcess(
     input: *const f32,
     output: *mut f32,
 ) -> HRESULT {
-    let settings = Settings {
+    let config = ApoConfig {
         gain_millidb,
         denoising_enabled: denoising != 0,
     };
@@ -36,7 +36,7 @@ pub unsafe extern "system" fn VoiceBoxPreviewProcess(
         || frames > sample_rate * preview::MAX_RECORD_SECONDS
         || samples > preview::MAX_SAMPLES
         || denoising > 1
-        || settings.validate().is_err()
+        || config.validate().is_err()
     {
         return E_INVALIDARG;
     }
@@ -46,7 +46,7 @@ pub unsafe extern "system" fn VoiceBoxPreviewProcess(
     if !input.is_aligned() || !output.is_aligned() {
         return E_INVALIDARG;
     }
-    let gain = settings.linear_gain();
+    let gain = config.linear_gain();
     if gain == 0.0 {
         unsafe { ptr::write_bytes(output, 0, samples) };
         return S_OK;
@@ -73,7 +73,7 @@ pub unsafe extern "system" fn VoiceBoxPreviewProcess(
             buffer.len() * size_of::<f32>(),
         )
     };
-    processor.process_with_settings(bytes, gain, settings.denoising_enabled);
+    processor.process_with_config(bytes, gain, config.denoising_enabled);
     // `buffer` is DLL-owned; only sample bytes are copied back to the caller.
     unsafe { ptr::copy_nonoverlapping(buffer.as_ptr().add(delay_samples), output, samples) };
     S_OK

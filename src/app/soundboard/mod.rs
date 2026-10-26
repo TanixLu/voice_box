@@ -5,7 +5,6 @@ use crate::app::i18n::{Details, Message, UserContext};
 use anyhow::ensure;
 use std::{collections::HashSet, path::PathBuf, sync::mpsc, thread::JoinHandle};
 
-pub(super) mod config;
 mod decoder;
 pub(super) mod library;
 mod playback;
@@ -13,7 +12,7 @@ pub(super) mod recording;
 pub(super) mod rename;
 mod shuffle;
 
-use config::{BindingTarget, Config, Options};
+use crate::app::settings::{BindingTarget, Settings};
 use library::{ImportedSounds, Library, SoundId, import_files};
 use playback::{Command, Event};
 
@@ -31,7 +30,7 @@ struct RemovalJob {
 #[derive(Default)]
 pub(super) struct Soundboard {
     library: Library,
-    options: Options,
+    pub settings: Settings,
     pub active_sound_index: Option<usize>,
     pub elapsed: f64,
     pub duration: Option<f64>,
@@ -49,52 +48,36 @@ pub(super) struct Soundboard {
     shuffle: shuffle::Shuffle,
 }
 impl Soundboard {
-    pub fn new(config: Config) -> Self {
-        let Config {
-            mut options,
-            library,
-        } = config;
-        options.sanitize();
+    pub fn new(mut settings: Settings, library: Library) -> Self {
+        settings.sanitize();
         let mut result = Self::default();
-        result.options = options;
+        result.settings = settings;
         result.library = library;
         result
     }
-    pub fn save_options(&mut self, options: Options) -> anyhow::Result<()> {
-        options.validate(&self.library)?;
-        Config {
-            options: options.clone(),
-            library: self.library.clone(),
-        }
-        .save()?;
-        if options.microphone_output_device != self.options.microphone_output_device
-            || options.speaker_output_device != self.options.speaker_output_device
+    pub fn save_settings(&mut self, settings: Settings) -> anyhow::Result<()> {
+        settings.validate(&self.library)?;
+        settings.save()?;
+        if settings.playback_microphone_output_device
+            != self.settings.playback_microphone_output_device
+            || settings.playback_speaker_output_device
+                != self.settings.playback_speaker_output_device
         {
             self.stop();
         }
-        self.options = options;
-        self.update_playback_options();
+        self.settings = settings;
+        self.update_playback_settings();
         Ok(())
     }
 
     pub fn library(&self) -> &Library {
         &self.library
     }
-    pub fn options(&self) -> &Options {
-        &self.options
-    }
     pub fn random_sound_index(&mut self, hotkey: Option<Hotkey>) -> Option<usize> {
         self.shuffle.choose(&self.library.sounds, hotkey)
     }
     pub fn move_sound(&mut self, from: usize, to: usize) -> anyhow::Result<()> {
-        let options = &self.options;
-        self.library.move_sound(from, to, |library| {
-            Config {
-                options: options.clone(),
-                library: library.clone(),
-            }
-            .save()
-        })?;
+        self.library.move_sound(from, to, Library::save)?;
         if let Some(index) = &mut self.active_sound_index {
             *index = moved_index(*index, from, to);
         }
@@ -104,14 +87,7 @@ impl Soundboard {
         Ok(())
     }
     pub fn move_sounds(&mut self, ids: &HashSet<SoundId>, to_top: bool) -> anyhow::Result<()> {
-        let options = &self.options;
-        let order = self.library.move_sounds(ids, to_top, |library| {
-            Config {
-                options: options.clone(),
-                library: library.clone(),
-            }
-            .save()
-        })?;
+        let order = self.library.move_sounds(ids, to_top, Library::save)?;
         self.active_sound_index = self
             .active_sound_index
             .and_then(|index| order.iter().position(|&old| old == index));
@@ -140,18 +116,11 @@ impl Soundboard {
             Text::RenameBusy
         );
         let mut library = self.library.clone();
-        let options = self.options.clone();
         let (sender, receiver) = mpsc::channel();
         std::thread::Builder::new()
             .name("VoiceBoxBatchRename".into())
             .spawn(move || {
-                let result = library.rename_batch(plan, |library| {
-                    Config {
-                        options: options.clone(),
-                        library: library.clone(),
-                    }
-                    .save()
-                });
+                let result = library.rename_batch(plan, Library::save);
                 let _ = sender.send((library, result));
                 wake();
             })
@@ -164,14 +133,13 @@ impl Soundboard {
         &mut self,
         target: BindingTarget,
         key: Option<Hotkey>,
-        draft: Option<&mut Options>,
+        draft: Option<&mut Settings>,
     ) -> anyhow::Result<()> {
         if let Some(key) = key {
-            draft.as_deref().unwrap_or(&self.options).validate_binding(
-                &self.library,
-                target,
-                key,
-            )?;
+            draft
+                .as_deref()
+                .unwrap_or(&self.settings)
+                .validate_binding(&self.library, target, key)?;
         }
         match target {
             BindingTarget::Sound(index) => {
@@ -181,22 +149,15 @@ impl Soundboard {
                     .get(index)
                     .user_context(Text::SoundNotFound)?
                     .id;
-                let options = &self.options;
                 self.library
-                    .set_hotkeys(&HashSet::from([id]), key, |library| {
-                        Config {
-                            options: options.clone(),
-                            library: library.clone(),
-                        }
-                        .save()
-                    })
+                    .set_hotkeys(&HashSet::from([id]), key, Library::save)
             }
             BindingTarget::Hold | BindingTarget::Stop | BindingTarget::Random => {
-                let options = draft.user_context(Text::OpenSoundSettingsFirst)?;
+                let settings = draft.user_context(Text::OpenSoundSettingsFirst)?;
                 match target {
-                    BindingTarget::Hold => options.auto_hold_hotkey = key,
-                    BindingTarget::Stop => options.stop_hotkey = key,
-                    BindingTarget::Random => options.random_playback_hotkey = key,
+                    BindingTarget::Hold => settings.playback_auto_hold_hotkey = key,
+                    BindingTarget::Stop => settings.playback_stop_hotkey = key,
+                    BindingTarget::Random => settings.playback_random_hotkey = key,
                     BindingTarget::Sound(_) => unreachable!(),
                 }
                 Ok(())
@@ -215,17 +176,10 @@ impl Soundboard {
                 .iter()
                 .position(|sound| ids.contains(&sound.id))
                 .user_context(Text::SoundNotFound)?;
-            self.options
+            self.settings
                 .validate_binding(&self.library, BindingTarget::Sound(index), key)?;
         }
-        let options = &self.options;
-        self.library.set_hotkeys(ids, key, |library| {
-            Config {
-                options: options.clone(),
-                library: library.clone(),
-            }
-            .save()
-        })
+        self.library.set_hotkeys(ids, key, Library::save)
     }
     pub fn busy(&self) -> bool {
         self.playback_job.is_some() || self.importing() || self.deleting() || self.batch_renaming()
@@ -303,14 +257,7 @@ impl Soundboard {
     }
     pub fn rename(&mut self, index: usize, name: &str) -> anyhow::Result<()> {
         ensure!(!self.playing(), Text::StopBeforeRename);
-        let options = &self.options;
-        self.library.rename(index, name, |library| {
-            Config {
-                options: options.clone(),
-                library: library.clone(),
-            }
-            .save()
-        })
+        self.library.rename(index, name, Library::save)
     }
     pub fn remove(&mut self, ids: &HashSet<SoundId>, wake: impl Fn() + Send + 'static) {
         if ids.is_empty() || self.importing() || self.deleting() || self.batch_renaming() {
@@ -378,7 +325,8 @@ impl Soundboard {
         let Some(sound) = self.library.sounds.get(index) else {
             return;
         };
-        if self.options.speaker_output_volume == 0.0 && self.options.microphone_output_volume == 0.0
+        if self.settings.playback_speaker_output_volume == 0.0
+            && self.settings.playback_microphone_output_volume == 0.0
         {
             self.set_error(Text::OutputsMuted.into());
             return;
@@ -386,7 +334,7 @@ impl Soundboard {
         self.shuffle.last = Some(sound.id);
         wake();
         let id = sound.id;
-        let options = self.options.clone();
+        let settings = self.settings.clone();
         self.playback_revision = self.playback_revision.wrapping_add(1);
         let revision = self.playback_revision;
         self.failed = false;
@@ -398,7 +346,7 @@ impl Soundboard {
             // Retain the request until Started acknowledges it. If completion or
             // Stop races this send, poll restarts it after the old worker exits.
             self.queued_playback = Some(index);
-            let _ = job.sender.send(Command::Replace(id, revision, options));
+            let _ = job.sender.send(Command::Replace(id, revision, settings));
             return;
         }
         let (tx, rx) = mpsc::channel();
@@ -407,7 +355,7 @@ impl Soundboard {
             .name("VoiceBoxSoundboard".into())
             .spawn(move || {
                 let started = std::time::Instant::now();
-                let result = playback::run(id, options, revision, &rx, &events);
+                let result = playback::run(id, settings, revision, &rx, &events);
                 match &result {
                     Err(e) => {
                         tracing::error!(
@@ -454,9 +402,9 @@ impl Soundboard {
             let _ = job.sender.send(Command::Stop);
         }
     }
-    pub fn update_playback_options(&self) {
+    pub fn update_playback_settings(&self) {
         if let Some(job) = &self.playback_job {
-            let _ = job.sender.send(Command::Configure(self.options.clone()));
+            let _ = job.sender.send(Command::Configure(self.settings.clone()));
         }
     }
     pub fn poll(&mut self, wake: impl Fn() + Clone + Send + 'static) {

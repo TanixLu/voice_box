@@ -6,10 +6,10 @@ pub(super) fn render(error: SharedError, language: Language) -> &'static str {
         (SharedError::GainOutOfRange, Language::SimplifiedChinese) => {
             "增益必须介于 -60 和 +60 dB 之间"
         }
-        (SharedError::SettingsTooLarge, Language::English) => {
-            "The VoiceBox settings file is too large"
+        (SharedError::ApoCfgTooLarge, Language::English) => {
+            "The VoiceBox APO configuration file is too large"
         }
-        (SharedError::SettingsTooLarge, Language::SimplifiedChinese) => "VoiceBox 配置文件过大",
+        (SharedError::ApoCfgTooLarge, Language::SimplifiedChinese) => "VoiceBox APO 配置文件过大",
         (SharedError::AudioClockUnavailable, Language::English) => {
             "The system audio clock is unavailable"
         }

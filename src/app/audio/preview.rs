@@ -17,7 +17,7 @@ use windows::{
 
 use super::capture::Recording;
 use crate::app::apo_dll_bytes;
-use crate::shared::{paths, preview, settings::Settings, utils::wide_null};
+use crate::shared::{apo_cfg::ApoConfig, paths, preview, utils::wide_null};
 
 struct PreviewDll(HMODULE);
 
@@ -62,8 +62,8 @@ impl Drop for PreviewDll {
     }
 }
 
-pub(super) fn process(recording: &Recording, settings: &Settings) -> anyhow::Result<Vec<f32>> {
-    settings.validate()?;
+pub(super) fn process(recording: &Recording, config: &ApoConfig) -> anyhow::Result<Vec<f32>> {
+    config.validate()?;
     ensure!(
         recording.channels > 0
             && !recording.samples.is_empty()
@@ -81,8 +81,8 @@ pub(super) fn process(recording: &Recording, settings: &Settings) -> anyhow::Res
             recording.sample_rate,
             u32::from(recording.channels),
             u32::try_from(recording.samples.len() / recording.channels as usize)?,
-            settings.gain_millidb,
-            u32::from(settings.denoising_enabled),
+            config.gain_millidb,
+            u32::from(config.denoising_enabled),
             recording.samples.as_ptr(),
             output.as_mut_ptr(),
         )

@@ -2,7 +2,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SharedError {
     GainOutOfRange,
-    SettingsTooLarge,
+    ApoCfgTooLarge,
     AudioClockUnavailable,
     InvalidMicrophoneId,
     InvalidPlaybackLayout,
@@ -13,7 +13,7 @@ impl std::fmt::Display for SharedError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::GainOutOfRange => "Gain must be between -60 and +60 dB",
-            Self::SettingsTooLarge => "The VoiceBox settings file is too large",
+            Self::ApoCfgTooLarge => "The VoiceBox APO configuration file is too large",
             Self::AudioClockUnavailable => "The system audio clock is unavailable",
             Self::InvalidMicrophoneId => "Invalid microphone identifier",
             Self::InvalidPlaybackLayout => "Invalid playback buffer layout",

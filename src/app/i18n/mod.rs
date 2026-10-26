@@ -4,26 +4,20 @@ mod shared_error;
 mod text;
 
 pub(in crate::app) use message::{Details, Message, UserContext};
-use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU8, Ordering};
 pub(in crate::app) use text::Text;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::app) enum Language {
-    #[serde(rename = "en")]
     English,
-    #[serde(rename = "zh-CN")]
     SimplifiedChinese,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::app) enum LanguagePreference {
     #[default]
-    #[serde(rename = "system")]
     System,
-    #[serde(rename = "en")]
     English,
-    #[serde(rename = "zh-CN")]
     SimplifiedChinese,
 }
 

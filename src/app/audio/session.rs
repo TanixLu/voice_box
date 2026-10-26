@@ -5,7 +5,7 @@ use super::{
 };
 use crate::app::i18n::Text;
 use crate::app::i18n::{Details, Message};
-use crate::shared::settings::Settings;
+use crate::shared::apo_cfg::ApoConfig;
 use std::{
     sync::{
         Arc,
@@ -23,7 +23,7 @@ pub(in crate::app) enum Activity {
 }
 
 struct ProcessedRecording {
-    settings: Settings,
+    config: ApoConfig,
     samples: Arc<Vec<f32>>,
 }
 
@@ -150,17 +150,17 @@ impl AudioSession {
         );
     }
 
-    pub fn play(&mut self, settings: Option<Settings>, wake: impl Fn() + Send + 'static) {
+    pub fn play(&mut self, config: Option<ApoConfig>, wake: impl Fn() + Send + 'static) {
         let Some(recording) = self.recording.clone() else {
             return;
         };
-        let cached = settings.as_ref().and_then(|settings| {
+        let cached = config.as_ref().and_then(|config| {
             self.processed
                 .as_ref()
-                .filter(|processed| &processed.settings == settings)
+                .filter(|processed| &processed.config == config)
                 .map(|processed| Arc::clone(&processed.samples))
         });
-        let activity = if settings.is_some() {
+        let activity = if config.is_some() {
             Activity::PlayingProcessed
         } else {
             Activity::PlayingOriginal
@@ -168,18 +168,18 @@ impl AudioSession {
         self.begin(
             wake,
             activity,
-            if settings.is_some() {
+            if config.is_some() {
                 Text::PreparingProcessedAudio
             } else {
                 Text::OpeningPlaybackDevice
             },
             move |stop, started| {
-                let processed = if let Some(settings) = settings {
+                let processed = if let Some(config) = config {
                     let samples = match cached {
                         Some(samples) => samples,
-                        None => Arc::new(super::preview::process(&recording, &settings)?),
+                        None => Arc::new(super::preview::process(&recording, &config)?),
                     };
-                    Some(ProcessedRecording { settings, samples })
+                    Some(ProcessedRecording { config, samples })
                 } else {
                     None
                 };

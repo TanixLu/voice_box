@@ -29,8 +29,8 @@ pub(super) fn open_at(path: &Path) -> anyhow::Result<Connection> {
          PRAGMA mmap_size = 268435456;
          CREATE TABLE IF NOT EXISTS settings (
              key TEXT PRIMARY KEY,
-             value TEXT NOT NULL
-         );
+             value ANY NOT NULL
+         ) STRICT;
          CREATE TABLE IF NOT EXISTS sounds (
              id INTEGER PRIMARY KEY AUTOINCREMENT,
              name TEXT NOT NULL CHECK(length(trim(name)) > 0),

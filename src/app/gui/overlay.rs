@@ -49,7 +49,7 @@ impl Overlay {
                     sound.name.clone(),
                     model.elapsed,
                     model.duration.or(Some(sound.duration)),
-                    model.options().repeat,
+                    model.settings.playback_repeat,
                 ))
             }
             Err(error) => {
