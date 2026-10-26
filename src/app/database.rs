@@ -38,13 +38,14 @@ pub(super) fn open_at(path: &Path) -> anyhow::Result<Connection> {
              byte_length INTEGER NOT NULL CHECK(byte_length > 0),
              position INTEGER NOT NULL,
              hotkey TEXT
-         );
+         ) STRICT;
+         CREATE INDEX IF NOT EXISTS sounds_position ON sounds(position);
          CREATE TABLE IF NOT EXISTS sound_data (
              sound_id INTEGER NOT NULL REFERENCES sounds(id) ON DELETE CASCADE,
-             chunk_index INTEGER NOT NULL,
-             content BLOB NOT NULL,
+             chunk_index INTEGER NOT NULL CHECK(chunk_index >= 0),
+             content BLOB NOT NULL CHECK(length(content) BETWEEN 1 AND 65536),
              PRIMARY KEY(sound_id, chunk_index)
-         ) WITHOUT ROWID;",
+         ) STRICT, WITHOUT ROWID;",
     )?;
     Ok(connection)
 }
