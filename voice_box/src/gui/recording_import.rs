@@ -4,9 +4,8 @@ use crate::i18n::Text;
 use crate::{
     audio::loopback::MAX_RECORD_SECONDS,
     soundboard::{
-        Soundboard,
-        library::is_valid_name,
         recording::{Activity, Edge, Recorder, Selection},
+        sound::{Sound, is_valid_name},
     },
 };
 
@@ -23,11 +22,10 @@ impl RecordingImport {
     }
 
     // Called in app logic, including when the main viewport is hidden.
-    pub fn poll(&mut self, ctx: &egui::Context, model: &mut Soundboard) -> bool {
+    pub fn poll(&mut self, ctx: &egui::Context) -> Option<Sound> {
         let had_clip = self.recorder.clip.is_some();
         if let Some(sound) = self.recorder.poll(super::wake_ui(ctx.clone())) {
-            model.add_recording(sound);
-            return true;
+            return Some(sound);
         }
         if !had_clip && let Some(clip) = &self.recorder.clip {
             self.selection = Some(Selection::full(&clip.audio));
@@ -38,7 +36,7 @@ impl RecordingImport {
         if self.recorder.busy() {
             ctx.request_repaint_after(std::time::Duration::from_millis(30));
         }
-        false
+        None
     }
 
     // Ignore backdrop clicks so switching applications does not discard a clip.

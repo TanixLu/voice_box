@@ -1,4 +1,4 @@
-use super::library::{Sound, SoundId};
+use super::sound::{Sound, SoundId};
 use crate::hotkeys::Hotkey;
 use std::{
     collections::{HashMap, HashSet},

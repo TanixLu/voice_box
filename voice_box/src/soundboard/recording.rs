@@ -1,5 +1,8 @@
 //! Recording/import tool jobs; preview ranges always refer to complete frames.
-use super::library::{Sound, insert_sound, is_valid_name};
+use super::{
+    sound::{Sound, is_valid_name},
+    storage::insert_sound,
+};
 use crate::audio::{capture::Recording, loopback, playback::playback};
 use crate::i18n::Text;
 use crate::i18n::{Details, Message, UserContext};

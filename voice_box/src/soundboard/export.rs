@@ -1,6 +1,6 @@
-use super::{decoder::open_format, library::Sound};
+use super::{decoder::open_format, sound::Sound};
 use crate::{
-    database::AudioSource,
+    database::audio::AudioSource,
     i18n::{Message, Text, UserContext},
 };
 use std::{

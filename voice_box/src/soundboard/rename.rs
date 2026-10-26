@@ -1,4 +1,7 @@
-use super::library::{Library, SoundId, is_valid_name};
+use super::{
+    library::Library,
+    sound::{SoundId, is_valid_name},
+};
 use crate::i18n::{Language, Text, UserContext, current_language};
 use anyhow::ensure;
 use std::{collections::HashSet, ops::Range};

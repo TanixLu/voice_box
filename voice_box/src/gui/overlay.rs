@@ -1,4 +1,4 @@
-use super::soundboard_panel::format_duration;
+use super::widgets::format_duration;
 use crate::i18n::Text;
 use crate::i18n::UserContext;
 use crate::soundboard::Soundboard;
@@ -38,17 +38,16 @@ impl Overlay {
         enabled: bool,
     ) -> anyhow::Result<bool> {
         let sound = model
-            .active_sound_index
-            .filter(|_| enabled && !model.importing())
-            .and_then(|index| model.library().sounds.get(index));
+            .active_sound()
+            .filter(|_| enabled && !model.importing());
         let mut layout_result = Ok(());
         let playback = sound.and_then(|sound| match viewport_builder(ctx) {
             Ok(builder) => {
                 self.builder = Some(builder);
                 Some((
                     sound.name.clone(),
-                    model.elapsed_secs,
-                    model.duration_secs.or(Some(sound.duration_secs)),
+                    model.playback().elapsed_secs,
+                    model.playback().duration_secs.or(Some(sound.duration_secs)),
                     model.settings.playback_repeat,
                 ))
             }

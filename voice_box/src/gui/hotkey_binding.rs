@@ -1,10 +1,9 @@
-use super::widgets::{ButtonIcon, ICON_BUTTON_SIZE, icon_button};
 use crate::i18n::Text;
 use crate::i18n::{Details, Message};
 use crate::{
     hotkeys::{self, Hotkey, Hotkeys},
-    settings::{BindingTarget, Settings},
-    soundboard::{Soundboard, library::SoundId},
+    settings::BindingTarget,
+    soundboard::sound::SoundId,
 };
 use std::collections::HashSet;
 
@@ -14,6 +13,12 @@ struct KeyCapture {
     armed: bool,
     modifier: Option<Hotkey>,
 }
+pub(super) struct CapturedBinding {
+    pub target: BindingTarget,
+    pub ids: Option<HashSet<SoundId>>,
+    pub key: Hotkey,
+}
+
 pub(super) enum PlaybackAction {
     Stop,
     Random(Option<Hotkey>),
@@ -80,13 +85,14 @@ impl HotkeyManager {
             .ok_or_else(|| anyhow::anyhow!(Text::HotkeyServiceUnavailable))?
             .validate(key)
     }
-    pub(super) fn poll(&mut self, enabled: bool, soundboard: &Soundboard) -> Vec<PlaybackAction> {
+    pub(super) fn poll(
+        &mut self,
+        enabled: bool,
+        bindings: impl IntoIterator<Item = Option<Hotkey>>,
+    ) -> Vec<PlaybackAction> {
         let enabled = enabled && self.capture.is_none();
         let bindings: Vec<_> = if enabled {
-            std::iter::once(soundboard.settings.playback_stop_hotkey)
-                .chain(std::iter::once(soundboard.settings.playback_random_hotkey))
-                .chain(soundboard.library().sounds.iter().map(|sound| sound.hotkey))
-                .collect()
+            bindings.into_iter().collect()
         } else {
             Vec::new()
         };
@@ -139,59 +145,50 @@ impl HotkeyManager {
         }
     }
 
-    pub(super) fn poll_capture(
-        &mut self,
-        ctx: &egui::Context,
-        soundboard: &mut Soundboard,
-        draft: Option<&mut Settings>,
-    ) {
+    pub(super) fn poll_capture(&mut self, ctx: &egui::Context) -> Option<CapturedBinding> {
         let Some(capture) = &mut self.capture else {
-            return;
+            return None;
         };
         ctx.request_repaint_after(std::time::Duration::from_millis(20));
         if !ctx.input(|input| input.focused)
             || ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.cancel_capture();
-            return;
+            return None;
         }
         let pressed = Hotkey::pressed();
         let modifier = Hotkey::pressed_modifier();
         if !capture.armed {
             capture.armed = pressed.is_none() && modifier.is_none();
-            return;
+            return None;
         }
         let pressed = if capture.target == BindingTarget::Hold && pressed.is_none() {
             if modifier.is_some() {
                 capture.modifier = modifier;
-                return;
+                return None;
             }
             capture.modifier.take()
         } else {
             pressed
         };
-        let Some(key) = pressed else {
-            return;
-        };
+        let key = pressed?;
         let target = capture.target;
         let ids = capture.ids.take();
         self.capture = None;
         if key.virtual_key_code == 0x1b {
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            return;
+            return None;
         }
-        let result = if target == BindingTarget::Hold {
-            Ok(())
-        } else {
-            self.validate(key)
+        if target != BindingTarget::Hold
+            && let Err(error) = self.validate(key)
+        {
+            self.capture_result(target, Err(error));
+            return None;
         }
-        .and_then(|()| {
-            if let Some(ids) = ids {
-                soundboard.bind_sound_hotkeys(&ids, Some(key))
-            } else {
-                soundboard.bind_hotkey(target, Some(key), draft)
-            }
-        });
+        Some(CapturedBinding { target, ids, key })
+    }
+
+    pub(super) fn capture_result(&mut self, target: BindingTarget, result: anyhow::Result<()>) {
         let message = if matches!(target, BindingTarget::Sound(_)) {
             &mut self.message
         } else {
@@ -206,8 +203,7 @@ impl HotkeyManager {
         }
     }
 
-    pub(super) fn begin_capture(&mut self, target: BindingTarget, soundboard: &mut Soundboard) {
-        soundboard.stop();
+    pub(super) fn begin_capture(&mut self, target: BindingTarget) {
         self.capture = Some(KeyCapture {
             target,
             ids: None,
@@ -221,136 +217,8 @@ impl HotkeyManager {
         }
     }
 
-    pub(super) fn begin_batch_capture(
-        &mut self,
-        ids: &HashSet<SoundId>,
-        soundboard: &mut Soundboard,
-    ) {
-        let Some(index) = soundboard
-            .library()
-            .sounds
-            .iter()
-            .position(|sound| ids.contains(&sound.id))
-        else {
-            return;
-        };
-        self.begin_capture(BindingTarget::Sound(index), soundboard);
+    pub(super) fn begin_batch_capture(&mut self, target: BindingTarget, ids: &HashSet<SoundId>) {
+        self.begin_capture(target);
         self.capture.as_mut().unwrap().ids = Some(ids.clone());
     }
-}
-
-fn hotkey_badge_size(ui: &egui::Ui, key: Hotkey, max_width: f32) -> egui::Vec2 {
-    let text_size = ui
-        .painter()
-        .layout_no_wrap(
-            key.label(),
-            egui::TextStyle::Body.resolve(ui.style()),
-            ui.visuals().text_color(),
-        )
-        .size();
-    egui::vec2(
-        (text_size.x + 18.0).clamp(24.0, max_width.max(24.0)),
-        text_size.y + 10.0,
-    )
-}
-
-pub(super) fn hotkey_badge(ui: &mut egui::Ui, key: Hotkey, max_width: f32) {
-    let text = key.label();
-    let font = egui::TextStyle::Body.resolve(ui.style());
-    let size = hotkey_badge_size(ui, key, max_width);
-    // Allocate and paint only the text's measured width. A Frame inherits the
-    // centered column's bounds and can stretch its border across the whole row.
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
-    ui.painter().rect(
-        rect,
-        4,
-        ui.visuals().extreme_bg_color,
-        ui.visuals().widgets.noninteractive.bg_stroke,
-        egui::StrokeKind::Inside,
-    );
-    ui.place(
-        rect.shrink2(egui::vec2(9.0, 5.0)),
-        egui::Label::new(egui::RichText::new(&text).font(font))
-            .truncate()
-            .show_tooltip_when_elided(false),
-    );
-    response.on_hover_text(text);
-}
-
-pub(super) fn hotkey_editor(
-    ui: &mut egui::Ui,
-    label: &str,
-    key: &mut Option<Hotkey>,
-    target: BindingTarget,
-    capture_target: Option<BindingTarget>,
-) -> bool {
-    let binding = capture_target == Some(target);
-    let enabled = capture_target.is_none() || binding;
-    ui.push_id(label, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(label);
-            let mut capture = false;
-            let hotkey = *key;
-            let button_text = if binding {
-                Text::PressKey.text()
-            } else {
-                Text::BindHotkey.text()
-            };
-            let available_width = ui.available_width();
-            let button_width = if hotkey.is_some() {
-                ICON_BUTTON_SIZE
-            } else {
-                (ui.painter()
-                    .layout_no_wrap(
-                        button_text.into(),
-                        egui::TextStyle::Button.resolve(ui.style()),
-                        ui.visuals().text_color(),
-                    )
-                    .size()
-                    .x
-                    + 2.0 * ui.spacing().button_padding.x)
-                    .min(available_width)
-            };
-            let badge_width = hotkey.map(|hotkey| {
-                hotkey_badge_size(
-                    ui,
-                    hotkey,
-                    available_width - button_width - ui.spacing().item_spacing.x,
-                )
-                .x
-            });
-            let group_width =
-                button_width + badge_width.map_or(0.0, |width| width + ui.spacing().item_spacing.x);
-            let (row_rect, _) =
-                ui.allocate_exact_size(egui::vec2(available_width, 30.0), egui::Sense::hover());
-            // Center the key and clear button together as one compact group.
-            let group_rect =
-                egui::Rect::from_center_size(row_rect.center(), egui::vec2(group_width, 30.0));
-            ui.scope_builder(
-                egui::UiBuilder::new()
-                    .max_rect(group_rect)
-                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                |ui| {
-                    if let Some(hotkey) = hotkey {
-                        hotkey_badge(ui, hotkey, badge_width.unwrap());
-                        if icon_button(ui, enabled, ButtonIcon::ClearHotkey).clicked() {
-                            *key = None;
-                        }
-                    } else {
-                        capture = ui
-                            .add_enabled(enabled, egui::Button::new(button_text).truncate())
-                            .on_hover_text(if binding {
-                                Text::CaptureHotkeyHint.text()
-                            } else {
-                                Text::BindHotkey.text()
-                            })
-                            .clicked();
-                    }
-                },
-            );
-            capture
-        })
-        .inner
-    })
-    .inner
 }

@@ -1,33 +1,15 @@
-use super::decoder::SoundDecoder;
+use super::sound::{Sound, SoundId, is_valid_name};
 use crate::{
     database,
     hotkeys::Hotkey,
-    i18n::{Details, Message, Text, UserContext},
+    i18n::{Text, UserContext},
 };
 use anyhow::ensure;
 use rusqlite::{
-    Connection, TransactionBehavior, params,
+    Connection, params,
     types::{FromSql, FromSqlError, FromSqlResult, ValueRef},
 };
-use std::{
-    collections::HashSet,
-    fs::File,
-    io::{self, Seek, Write},
-    path::{Path, PathBuf},
-    sync::{Mutex, mpsc},
-    thread,
-};
-use voice_box_shared::pcm_transport::SAMPLE_RATE;
-
-pub(crate) type SoundId = i64;
-
-#[derive(Clone, Debug)]
-pub(crate) struct Sound {
-    pub id: SoundId,
-    pub name: String,
-    pub hotkey: Option<Hotkey>,
-    pub duration_secs: f64,
-}
+use std::collections::HashSet;
 
 #[derive(Clone, Default)]
 pub(crate) struct Library {
@@ -68,7 +50,7 @@ impl Library {
         ids: &HashSet<SoundId>,
         to_top: bool,
         save: impl FnOnce(&Self) -> anyhow::Result<()>,
-    ) -> anyhow::Result<Vec<usize>> {
+    ) -> anyhow::Result<()> {
         ensure!(
             !ids.is_empty()
                 && self
@@ -79,15 +61,14 @@ impl Library {
                     == ids.len(),
             Text::SoundNotFound
         );
-        let mut order: Vec<_> = (0..self.sounds.len()).collect();
-        order.sort_by_key(|&index| ids.contains(&self.sounds[index].id) != to_top);
         let original = self.sounds.clone();
-        self.sounds = order.iter().map(|&index| original[index].clone()).collect();
+        self.sounds
+            .sort_by_key(|sound| ids.contains(&sound.id) != to_top);
         if let Err(error) = save(self) {
             self.sounds = original;
             return Err(error);
         }
-        Ok(order)
+        Ok(())
     }
 
     pub(super) fn move_sound(
@@ -232,250 +213,4 @@ fn read_hotkey(value: ValueRef<'_>) -> FromSqlResult<Option<Hotkey>> {
         Some(key) if !key.is_valid() => Err(FromSqlError::Other("invalid sound hotkey".into())),
         _ => Ok(hotkey),
     }
-}
-
-pub(super) struct ImportedSounds {
-    pub(super) sounds: Vec<Sound>,
-    pub(super) errors: Vec<Message>,
-}
-
-pub(crate) fn is_valid_name(name: &str) -> bool {
-    !name.trim().is_empty() && !name.chars().any(char::is_control)
-}
-
-struct AudioWriter<'a> {
-    connection: &'a Connection,
-    id: SoundId,
-    chunk: i64,
-    buffer: Vec<u8>,
-    written: u64,
-    length: u64,
-}
-
-impl Write for AudioWriter<'_> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        let count = bytes
-            .len()
-            .min(database::AUDIO_CHUNK_BYTES - self.buffer.len())
-            .min((self.length - self.written) as usize);
-        self.buffer.extend_from_slice(&bytes[..count]);
-        self.written += count as u64;
-        if self.buffer.len() == database::AUDIO_CHUNK_BYTES {
-            self.flush()?;
-            self.buffer.clear();
-            self.chunk += 1;
-        }
-        Ok(count)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        if !self.buffer.is_empty() {
-            self.connection
-                .prepare_cached(
-                    "INSERT INTO sound_data(sound_id, chunk_index, content) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(sound_id, chunk_index) DO UPDATE SET content = excluded.content",
-                )
-                .and_then(|mut insert| insert.execute(params![self.id, self.chunk, self.buffer]))
-                .map_err(io::Error::other)?;
-        }
-        Ok(())
-    }
-}
-
-pub(crate) fn insert_sound(
-    connection: &mut Connection,
-    name: &str,
-    duration_secs: f64,
-    length: u64,
-    write: impl FnOnce(&mut dyn Write) -> anyhow::Result<()>,
-) -> anyhow::Result<Sound> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let sound = write_sound(&transaction, name, duration_secs, length, write)?;
-    transaction.commit()?;
-    Ok(sound)
-}
-
-fn write_sound(
-    connection: &Connection,
-    name: &str,
-    duration_secs: f64,
-    length: u64,
-    write: impl FnOnce(&mut dyn Write) -> anyhow::Result<()>,
-) -> anyhow::Result<Sound> {
-    let name = name.trim();
-    ensure!(is_valid_name(name), Text::InvalidSoundName);
-    ensure!(length > 0, Text::NoPlayableAudio);
-    ensure!(
-        duration_secs.is_finite() && duration_secs > 0.0,
-        Text::InvalidAudioDuration
-    );
-    connection.prepare_cached(
-        "INSERT INTO sounds(name, duration_secs, byte_length, position) SELECT ?1, ?2, ?3, COALESCE(MAX(position) + 1, 0) FROM sounds",
-    )?.execute(params![name, duration_secs, i64::try_from(length)?])?;
-    let id = connection.last_insert_rowid();
-    {
-        let mut output = AudioWriter {
-            connection,
-            id,
-            chunk: 0,
-            buffer: Vec::with_capacity(database::AUDIO_CHUNK_BYTES),
-            written: 0,
-            length,
-        };
-        write(&mut output)?;
-        output.flush()?;
-        ensure!(output.written == length, Text::AudioChangedDuringImport);
-    }
-    Ok(Sound {
-        id,
-        name: name.to_owned(),
-        duration_secs,
-        hotkey: None,
-    })
-}
-
-pub(super) fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSounds> {
-    let (files, mut imported) = validate_files(sources)?;
-    if !files.is_empty() {
-        let result = database::open().and_then(|mut connection| {
-            connection.busy_timeout(std::time::Duration::ZERO)?;
-            connection.pragma_update(None, "cache_size", -32768)?;
-            insert_files(&mut connection, files)
-        });
-        match result {
-            Ok(sounds) => imported.sounds = sounds,
-            Err(error) => imported.errors.push(Message::ImportSoundsFailed {
-                error: Details::new(error),
-            }),
-        }
-    }
-    Ok(imported)
-}
-
-struct ValidatedFile {
-    file: File,
-    source: PathBuf,
-    name: String,
-    duration_secs: f64,
-    length: u64,
-}
-
-fn validate_files(sources: Vec<PathBuf>) -> anyhow::Result<(Vec<ValidatedFile>, ImportedSounds)> {
-    let mut imported = ImportedSounds {
-        sounds: Vec::new(),
-        errors: Vec::new(),
-    };
-    let mut seen = HashSet::new();
-    let mut jobs = Vec::new();
-    for (index, source) in sources.into_iter().enumerate() {
-        let path = source
-            .canonicalize()
-            .user_context(Text::ReadSourceAudioPath);
-        if path.as_ref().is_ok_and(|path| !seen.insert(path.clone())) {
-            continue;
-        }
-        jobs.push((index, source, path));
-    }
-    let workers = thread::available_parallelism()
-        .map_or(1, |count| count.get().saturating_sub(1).max(1))
-        .min(jobs.len());
-    let pending = Mutex::new(jobs.into_iter());
-    let (sender, receiver) = mpsc::channel();
-    thread::scope(|scope| -> anyhow::Result<()> {
-        let mut threads = Vec::new();
-        for _ in 0..workers {
-            threads.push(
-                thread::Builder::new()
-                    .name("VoiceBoxImportDecoder".into())
-                    .spawn_scoped(scope, || {
-                        loop {
-                            let Some((index, source, path)) =
-                                pending.lock().expect("pending audio imports").next()
-                            else {
-                                break;
-                            };
-                            let result = path.and_then(|path| validate_file(&path));
-                            let _ = sender.send((index, source, result));
-                        }
-                    })?,
-            );
-        }
-        for worker in threads {
-            worker
-                .join()
-                .map_err(|_| anyhow::anyhow!(Text::ImportThreadExited))?;
-        }
-        Ok(())
-    })?;
-    drop(sender);
-    let mut results: Vec<_> = receiver.into_iter().collect();
-    results.sort_unstable_by_key(|(index, _, _)| *index);
-    let mut files = Vec::new();
-    for (_, source, result) in results {
-        match result {
-            Ok(file) => files.push(file),
-            Err(error) => imported.errors.push(Message::ImportFileFailed {
-                path: source.display().to_string(),
-                error: Details::new(error),
-            }),
-        }
-    }
-    Ok((files, imported))
-}
-
-fn validate_file(source: &Path) -> anyhow::Result<ValidatedFile> {
-    let mut file = File::open(source).user_context(Text::OpenAudioFile)?;
-    let metadata = file.metadata()?;
-    ensure!(metadata.is_file(), Text::AudioIsNotFile);
-    let name = source
-        .file_stem()
-        .user_context(Text::InvalidAudioFileName)?
-        .to_string_lossy()
-        .trim()
-        .to_owned();
-    ensure!(is_valid_name(&name), Text::InvalidSoundName);
-    let mut decoder = SoundDecoder::new(Box::new(file.try_clone()?))?;
-    let mut frames = 0_u64;
-    while decoder.next_frame()?.is_some() {
-        frames += 1;
-    }
-    ensure!(frames > 0, Text::NoPlayableAudio);
-    file.rewind()?;
-    ensure!(metadata.len() > 0, Text::NoPlayableAudio);
-    Ok(ValidatedFile {
-        file,
-        source: source.to_owned(),
-        name,
-        duration_secs: frames as f64 / f64::from(SAMPLE_RATE),
-        length: metadata.len(),
-    })
-}
-
-fn insert_files(
-    connection: &mut Connection,
-    files: Vec<ValidatedFile>,
-) -> anyhow::Result<Vec<Sound>> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let mut sounds = Vec::with_capacity(files.len());
-    for mut file in files {
-        let sound = write_sound(
-            &transaction,
-            &file.name,
-            file.duration_secs,
-            file.length,
-            |output| {
-                io::copy(&mut file.file, output)?;
-                Ok(())
-            },
-        )
-        .map_err(|error| {
-            anyhow::anyhow!(Message::ImportFileFailed {
-                path: file.source.display().to_string(),
-                error: Details::new(error),
-            })
-        })?;
-        sounds.push(sound);
-    }
-    transaction.commit()?;
-    Ok(sounds)
 }

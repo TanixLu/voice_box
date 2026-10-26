@@ -7,6 +7,8 @@ mod microphone;
 mod overlay;
 mod picker;
 mod recording_import;
+mod sound_list;
+mod sound_settings;
 mod soundboard_panel;
 mod style;
 mod voice;
@@ -179,11 +181,7 @@ impl VoiceBoxApp {
             }
         }
         if !self.interaction_blocked() {
-            self.hotkeys.poll_capture(
-                ui.ctx(),
-                &mut self.soundboard.model,
-                self.soundboard.draft_settings.as_mut(),
-            );
+            self.soundboard.poll_capture(ui.ctx(), &mut self.hotkeys);
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 self.soundboard.cancel_rename();
             }
@@ -361,7 +359,19 @@ impl eframe::App for VoiceBoxApp {
             && !self.soundboard.recording_open()
             && !self.confirm_full_uninstall
             && !(focused && (self.soundboard.renaming() || ctx.text_edit_focused()));
-        for action in self.hotkeys.poll(shortcuts_enabled, &self.soundboard.model) {
+        let bindings = std::iter::once(self.soundboard.model.settings.playback_stop_hotkey)
+            .chain(std::iter::once(
+                self.soundboard.model.settings.playback_random_hotkey,
+            ))
+            .chain(
+                self.soundboard
+                    .model
+                    .library()
+                    .sounds
+                    .iter()
+                    .map(|sound| sound.hotkey),
+            );
+        for action in self.hotkeys.poll(shortcuts_enabled, bindings) {
             match action {
                 PlaybackAction::Stop => self.soundboard.model.stop(),
                 PlaybackAction::Random(hotkey) => {

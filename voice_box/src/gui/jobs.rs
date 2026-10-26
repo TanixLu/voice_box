@@ -1,10 +1,7 @@
 use super::VoiceBoxApp;
+use crate::devices::{Microphone, PluginOperationResult, Speaker};
 use crate::i18n::Text;
 use crate::i18n::{Details, Message};
-use crate::{
-    devices::{Microphone, PluginOperationResult, Speaker},
-    settings::OutputDevice,
-};
 use std::sync::mpsc;
 use voice_box_shared::apo_cfg::ApoConfig;
 
@@ -149,36 +146,7 @@ impl VoiceBoxApp {
                 self.jobs.status.clear();
             }
             JobResult::OutputDevices(Ok((microphones, speakers))) => {
-                self.soundboard.microphones = microphones
-                    .into_iter()
-                    .map(|mic| {
-                        let name = super::microphone::display_name(&mic);
-                        (
-                            OutputDevice {
-                                id: mic.device_id,
-                                name: mic.name,
-                            },
-                            name,
-                        )
-                    })
-                    .collect();
-                self.soundboard.speakers = speakers
-                    .into_iter()
-                    .map(|speaker| {
-                        let device = OutputDevice {
-                            id: speaker.device_id,
-                            name: speaker.name.clone(),
-                        };
-                        let name = if speaker.is_default {
-                            Message::DefaultDevice { name: speaker.name }
-                                .text()
-                                .into_owned()
-                        } else {
-                            speaker.name
-                        };
-                        (device, name)
-                    })
-                    .collect();
+                self.soundboard.set_output_devices(microphones, speakers);
                 self.jobs.status.clear();
             }
             JobResult::Plugin(PluginOperationResult { result, statuses }) => {

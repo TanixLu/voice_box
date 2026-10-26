@@ -1,4 +1,5 @@
 use crate::i18n::Text;
+use crate::{hotkeys::Hotkey, settings::BindingTarget};
 pub(super) const ICON_BUTTON_SIZE: f32 = 30.0;
 
 /// Right-align a trailing button when it fits, otherwise let the row wrap it.
@@ -177,4 +178,131 @@ pub(super) fn warning(ui: &mut egui::Ui, text: &str) {
         )
         .wrap(),
     );
+}
+
+pub(super) fn format_duration(seconds: f64) -> String {
+    let total_seconds = seconds.max(0.0) as u64;
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    if minutes >= 60 {
+        format!("{}:{:02}:{seconds:02}", minutes / 60, minutes % 60)
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
+}
+
+fn hotkey_badge_size(ui: &egui::Ui, key: Hotkey, max_width: f32) -> egui::Vec2 {
+    let text_size = ui
+        .painter()
+        .layout_no_wrap(
+            key.label(),
+            egui::TextStyle::Body.resolve(ui.style()),
+            ui.visuals().text_color(),
+        )
+        .size();
+    egui::vec2(
+        (text_size.x + 18.0).clamp(24.0, max_width.max(24.0)),
+        text_size.y + 10.0,
+    )
+}
+
+pub(super) fn hotkey_badge(ui: &mut egui::Ui, key: Hotkey, max_width: f32) {
+    let text = key.label();
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let size = hotkey_badge_size(ui, key, max_width);
+    // Allocate and paint only the text's measured width. A Frame inherits the
+    // centered column's bounds and can stretch its border across the whole row.
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    ui.painter().rect(
+        rect,
+        4,
+        ui.visuals().extreme_bg_color,
+        ui.visuals().widgets.noninteractive.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+    ui.place(
+        rect.shrink2(egui::vec2(9.0, 5.0)),
+        egui::Label::new(egui::RichText::new(&text).font(font))
+            .truncate()
+            .show_tooltip_when_elided(false),
+    );
+    response.on_hover_text(text);
+}
+
+pub(super) fn hotkey_editor(
+    ui: &mut egui::Ui,
+    label: &str,
+    key: &mut Option<Hotkey>,
+    target: BindingTarget,
+    capture_target: Option<BindingTarget>,
+) -> bool {
+    let binding = capture_target == Some(target);
+    let enabled = capture_target.is_none() || binding;
+    ui.push_id(label, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            let mut capture = false;
+            let hotkey = *key;
+            let button_text = if binding {
+                Text::PressKey.text()
+            } else {
+                Text::BindHotkey.text()
+            };
+            let available_width = ui.available_width();
+            let button_width = if hotkey.is_some() {
+                ICON_BUTTON_SIZE
+            } else {
+                (ui.painter()
+                    .layout_no_wrap(
+                        button_text.into(),
+                        egui::TextStyle::Button.resolve(ui.style()),
+                        ui.visuals().text_color(),
+                    )
+                    .size()
+                    .x
+                    + 2.0 * ui.spacing().button_padding.x)
+                    .min(available_width)
+            };
+            let badge_width = hotkey.map(|hotkey| {
+                hotkey_badge_size(
+                    ui,
+                    hotkey,
+                    available_width - button_width - ui.spacing().item_spacing.x,
+                )
+                .x
+            });
+            let group_width =
+                button_width + badge_width.map_or(0.0, |width| width + ui.spacing().item_spacing.x);
+            let (row_rect, _) =
+                ui.allocate_exact_size(egui::vec2(available_width, 30.0), egui::Sense::hover());
+            // Center the key and clear button together as one compact group.
+            let group_rect =
+                egui::Rect::from_center_size(row_rect.center(), egui::vec2(group_width, 30.0));
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(group_rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                |ui| {
+                    if let Some(hotkey) = hotkey {
+                        hotkey_badge(ui, hotkey, badge_width.unwrap());
+                        if icon_button(ui, enabled, ButtonIcon::ClearHotkey).clicked() {
+                            *key = None;
+                        }
+                    } else {
+                        capture = ui
+                            .add_enabled(enabled, egui::Button::new(button_text).truncate())
+                            .on_hover_text(if binding {
+                                Text::CaptureHotkeyHint.text()
+                            } else {
+                                Text::BindHotkey.text()
+                            })
+                            .clicked();
+                    }
+                },
+            );
+            capture
+        })
+        .inner
+    })
+    .inner
 }
