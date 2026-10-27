@@ -8,7 +8,7 @@ use std::{
 };
 use symphonia::core::io::MediaSource;
 
-const AUDIO_CHUNK_BYTES: usize = 64 * 1024;
+const AUDIO_CHUNK_BYTES: usize = 32 * 1024;
 
 pub(crate) struct AudioSource {
     connection: Mutex<Connection>,

@@ -41,7 +41,7 @@ pub(super) fn open_at(path: &Path) -> anyhow::Result<Connection> {
          CREATE TABLE IF NOT EXISTS sound_data (
              sound_id INTEGER NOT NULL REFERENCES sounds(id) ON DELETE CASCADE,
              chunk_index INTEGER NOT NULL CHECK(chunk_index >= 0),
-             content BLOB NOT NULL CHECK(length(content) BETWEEN 1 AND 65536),
+             content BLOB NOT NULL CHECK(length(content) BETWEEN 1 AND 32768),
              PRIMARY KEY(sound_id, chunk_index)
          ) STRICT, WITHOUT ROWID;",
     )?;
