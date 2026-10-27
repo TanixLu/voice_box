@@ -262,35 +262,31 @@ impl SoundboardPanel {
             ui.with_layout(
                 egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
                 |ui| {
-                    if self.model.deleting() || jobs.exporting() {
-                        ui.spinner();
+                    if !self.list.batch_mode() {
+                        if ui.button(Text::Settings.text()).clicked() {
+                            self.settings.open(&self.model.settings);
+                            jobs.begin(ui.ctx(), Text::ReadingOutputDevices, || {
+                                super::jobs::JobResult::OutputDevices(
+                                    crate::devices::enumerate_soundboard_devices(),
+                                )
+                            });
+                        }
+                        // This row is laid out right-to-left: recording sits to the right of import.
+                        if ui.button(Text::RecordImport.text()).clicked() {
+                            self.model.stop();
+                            self.cancel_rename();
+                            self.cancel_delete();
+                            hotkeys.cancel_capture();
+                            self.recording_import = Some(RecordingImport::default());
+                        }
+                        if ui.button(Text::Import.text()).clicked() {
+                            self.model.import(
+                                super::picker::choose_files,
+                                super::wake_ui(ui.ctx().clone()),
+                            );
+                        }
                     }
-                    if self.list.batch_mode() {
-                        return;
-                    }
-                    if ui.button(Text::Settings.text()).clicked() {
-                        self.settings.open(&self.model.settings);
-                        jobs.begin(ui.ctx(), Text::ReadingOutputDevices, || {
-                            super::jobs::JobResult::OutputDevices(
-                                crate::devices::enumerate_soundboard_devices(),
-                            )
-                        });
-                    }
-                    // This row is laid out right-to-left: recording sits to the right of import.
-                    if ui.button(Text::RecordImport.text()).clicked() {
-                        self.model.stop();
-                        self.cancel_rename();
-                        self.cancel_delete();
-                        hotkeys.cancel_capture();
-                        self.recording_import = Some(RecordingImport::default());
-                    }
-                    if ui.button(Text::Import.text()).clicked() {
-                        self.model.import(
-                            super::picker::choose_files,
-                            super::wake_ui(ui.ctx().clone()),
-                        );
-                    }
-                    if self.model.importing() {
+                    if self.model.importing() || self.model.deleting() || jobs.exporting() {
                         ui.spinner();
                     }
                 },
