@@ -20,7 +20,7 @@ use windows::{
             Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
         },
     },
-    core::PCWSTR,
+    core::{GUID, PCWSTR},
 };
 
 pub const SAMPLE_RATE: u32 = 48_000;
@@ -104,10 +104,7 @@ struct Header {
 pub fn transport_path(guid: &str) -> anyhow::Result<PathBuf> {
     // Never derive an arbitrary filesystem path from endpoint or IPC input.
     let id = guid.trim_matches(['{', '}']);
-    ensure!(
-        id.len() == 36 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'),
-        SharedError::InvalidMicrophoneId
-    );
+    ensure!(GUID::try_from(id).is_ok(), SharedError::InvalidMicrophoneId);
     Ok(super::paths::data_dir()?.join(format!("soundboard-{}.pcm", id.to_ascii_lowercase())))
 }
 

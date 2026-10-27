@@ -1,3 +1,7 @@
+pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
+pub const MAX_SAMPLE_RATE: f64 = 192_000.0;
+pub const MAX_CHANNELS: usize = 32;
+
 #[derive(Clone, Copy)]
 pub enum SampleFormat {
     Pcm { bytes: u8, valid_bits: u8 },

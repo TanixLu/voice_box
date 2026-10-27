@@ -7,12 +7,10 @@ use super::memory::Resident;
 use high_pass::HighPass;
 use limiter::Limiter;
 use ul_unas_rs::{ALGORITHM_DELAY, Denoiser, FRAME_SIZE, SAMPLE_RATE};
-pub use voice_box_shared::audio::SampleFormat;
-use voice_box_shared::resample::Resampler;
-
-pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
-pub const MAX_SAMPLE_RATE: f64 = 192_000.0;
-pub const MAX_CHANNELS: usize = 32;
+use voice_box_shared::{
+    audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
+    resample::Resampler,
+};
 
 struct Channel {
     denoiser: Box<Denoiser>,

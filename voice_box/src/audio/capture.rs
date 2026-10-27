@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 use voice_box_shared::{
-    audio::SampleFormat,
+    audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
     preview::{MAX_RECORD_SECONDS, MAX_SAMPLES},
     utils::wide_null,
 };
@@ -64,7 +64,8 @@ pub(crate) fn capture(
     let channels = format.get_nchannels();
     let rate = format.get_samplespersec();
     ensure!(
-        (1..=32).contains(&channels) && (8_000..=192_000).contains(&rate),
+        (1..=MAX_CHANNELS).contains(&(channels as usize))
+            && (MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&f64::from(rate)),
         Text::UnsupportedPreviewChannels
     );
     let sample_format = match (format.get_subformat()?, format.get_bitspersample()) {

@@ -1,10 +1,8 @@
 use super::{ApoCom, object_from, unknown_vtable};
-use crate::{
-    dsp::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
-    etw::{self, apo_log},
-};
+use crate::etw::{self, apo_log};
 use core::ffi::c_void;
 use std::sync::atomic::Ordering;
+use voice_box_shared::audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat};
 use windows::Win32::{
     Foundation::{E_POINTER, S_FALSE, S_OK},
     Media::{

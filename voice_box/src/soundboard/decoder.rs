@@ -9,6 +9,7 @@ use symphonia::core::{
     io::{MediaSource, MediaSourceStream},
 };
 use voice_box_shared::{
+    audio::{MAX_SAMPLE_RATE, MIN_SAMPLE_RATE},
     pcm_transport::{SAMPLE_RATE, sanitize_sample},
     resample::Resampler,
 };
@@ -47,7 +48,8 @@ impl SoundDecoder {
             .user_context(Text::MissingChannels)?
             .count();
         ensure!(
-            (8_000..=192_000).contains(&rate) && (1..=2).contains(&channels),
+            (MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&f64::from(rate))
+                && (1..=2).contains(&channels),
             Text::SupportedAudioRange
         );
         let decoder = symphonia::default::get_codecs()

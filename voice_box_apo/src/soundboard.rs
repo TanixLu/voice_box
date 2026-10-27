@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 use voice_box_shared::{
-    audio::SampleFormat,
+    audio::{MAX_CHANNELS, SampleFormat},
     pcm_transport::{Clock, Mapping, SAMPLE_RATE, Slot},
 };
 use windows::{
@@ -194,7 +194,7 @@ impl Injection {
         let mute_microphone = live && self.state.mute_microphone.load(Acquire);
         let gain = f32::from_bits(self.state.gain.load(Acquire) as u32);
         let bytes = self.format.bytes();
-        let mut values = [0.0_f32; super::dsp::MAX_CHANNELS];
+        let mut values = [0.0_f32; MAX_CHANNELS];
         for frame in buffer.chunks_exact_mut(bytes * self.channels) {
             let stereo = if live {
                 self.state
