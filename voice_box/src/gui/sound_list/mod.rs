@@ -32,6 +32,7 @@ pub(super) enum BatchAction {
     ClearHotkey,
 }
 
+#[derive(Default)]
 struct RowActions {
     play: Option<usize>,
     stop: bool,
@@ -331,14 +332,7 @@ impl SoundList {
         status: Status,
         filter: &str,
     ) -> RowActions {
-        let mut play = None;
-        let mut stop = false;
-        let mut remove = None;
-        let mut delete_clicked = false;
-        let mut capture = None;
-        let mut rename = None;
-        let mut clear_hotkey = None;
-        let mut rename_visible = false;
+        let mut result = RowActions::default();
         let renaming = self.rename_editor.is_some();
         let capture_target = status.capture_target;
         let capturing = capture_target.is_some();
@@ -350,7 +344,6 @@ impl SoundList {
         if !can_reorder {
             egui::DragAndDrop::clear_payload(ui.ctx());
         }
-        let mut reorder = None;
         let footer_height = if self.selection.is_some() {
             58.0 + self.batch_actions_height
         } else {
@@ -380,7 +373,7 @@ impl SoundList {
                             .rename_editor
                             .as_mut()
                             .filter(|edit| edit.index == index);
-                        rename_visible |= edit.is_some();
+                        result.rename_visible |= edit.is_some();
                         let response = row::show(
                             ui,
                             row::Row {
@@ -403,23 +396,27 @@ impl SoundList {
                             match action {
                                 row::Action::TogglePlayback => {
                                     if active {
-                                        stop = true;
+                                        result.stop = true;
                                     } else {
-                                        play = Some(index);
+                                        result.play = Some(index);
                                     }
                                 }
                                 row::Action::Delete => {
-                                    delete_clicked = true;
+                                    result.delete_clicked = true;
                                     if self.pending_delete_index == Some(index) {
-                                        remove = Some(index);
+                                        result.remove = Some(index);
                                     } else {
                                         self.pending_delete_index = Some(index);
                                     }
                                 }
-                                row::Action::ClearHotkey => clear_hotkey = Some(index),
-                                row::Action::Capture => capture = Some(BindingTarget::Sound(index)),
-                                row::Action::Rename => rename = Some((index, sound.name.clone())),
-                                row::Action::MoveTo(to) => reorder = Some((index, to)),
+                                row::Action::ClearHotkey => result.clear_hotkey = Some(index),
+                                row::Action::Capture => {
+                                    result.capture = Some(BindingTarget::Sound(index));
+                                }
+                                row::Action::Rename => {
+                                    result.rename = Some((index, sound.name.clone()));
+                                }
+                                row::Action::MoveTo(to) => result.reorder = Some((index, to)),
                             }
                         }
                         let toggle_selection = response.toggle_selection;
@@ -453,7 +450,7 @@ impl SoundList {
                             );
                         }
                         if ui.input(|input| input.pointer.primary_released()) {
-                            reorder = Some((*from, to));
+                            result.reorder = Some((*from, to));
                             egui::DragAndDrop::clear_payload(ui.ctx());
                         } else {
                             let viewport = ui.clip_rect();
@@ -477,17 +474,7 @@ impl SoundList {
                     }
                 });
         });
-        RowActions {
-            play,
-            stop,
-            remove,
-            delete_clicked,
-            capture,
-            rename,
-            clear_hotkey,
-            rename_visible,
-            reorder,
-        }
+        result
     }
 
     pub(super) fn batch_ui(
