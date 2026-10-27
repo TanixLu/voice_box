@@ -165,7 +165,7 @@ catalog! {
     SelectSoundHint => ("Click to select; Shift-click to select a range", "点击选择，Shift + 点击选择连续区间");
     DeleteSoundHint => ("Delete sound; click again to confirm", "删除音效，点击后再次确认");
     ConfirmDeleteSound => ("Confirm sound deletion", "确认删除音效");
-    ConfirmDeleteSoundHint => ("Click again to delete the sound from the library, keeping the original import file. Click elsewhere or press Esc to cancel", "再次点击确认从音效库删除音效，保留导入来源文件；点击其他位置或按 Esc 取消");
+    ConfirmDeleteSoundHint => ("Click again to delete the sound from the library. Click elsewhere or press Esc to cancel", "再次点击确认从音效库删除音效；点击其他位置或按 Esc 取消");
     StopPlayback => ("Stop playback", "停止播放");
     PlaySound => ("Play sound", "播放音效");
     CreatePlaybackBuffer => ("Failed to create the playback transport buffer", "创建播放传输缓冲区失败");
