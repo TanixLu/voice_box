@@ -83,4 +83,5 @@ jobs:
           if (-not (Test-Path -LiteralPath 'target/release/voice_box.exe' -PathType Leaf)) {
             throw 'Release executable was not produced.'
           }
-          gh release create "$env:RELEASE_TAG" 'target/release/voice_box.exe' --repo "$env:GITHUB_REPOSITORY" --title "$env:RELEASE_TAG" --generate-notes --verify-tag
+          Rename-Item -LiteralPath 'target/release/voice_box.exe' -NewName 'VoiceBox.exe' -ErrorAction Stop
+          gh release create "$env:RELEASE_TAG" 'target/release/VoiceBox.exe' --repo "$env:GITHUB_REPOSITORY" --title "$env:RELEASE_TAG" --generate-notes --verify-tag
