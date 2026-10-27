@@ -67,7 +67,7 @@ impl RecordingImport {
                     // Keep the complete editor visible instead of shrinking to its previous size.
                     .min_scrolled_height(content_height)
                     .max_height(content_height)
-                    .auto_shrink([false, false])
+                    .auto_shrink([false, true])
                     .show(ui, |ui| {
                         self.record_ui(ui);
                         ui.add_space(8.0);
@@ -77,6 +77,7 @@ impl RecordingImport {
                             warning(ui, &self.recorder.error.text());
                         }
                     });
+                ui.add_space(12.0);
             });
         !self.saving() && (close || ctx.input(|input| input.key_pressed(egui::Key::Escape)))
     }
