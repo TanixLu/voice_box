@@ -11,11 +11,12 @@ mod sound_list;
 mod sound_settings;
 mod soundboard_panel;
 mod style;
+mod tray;
 mod voice;
 mod widgets;
 
 use crate::i18n::Text;
-use crate::i18n::{Details, Message};
+use crate::i18n::{Details, Message, UserContext};
 use crate::{apo_cfg_writer, settings, soundboard::library::Library};
 use hotkey_binding::{HotkeyManager, PlaybackAction};
 use jobs::{JobResult, Jobs};
@@ -31,6 +32,15 @@ use widgets::section;
 
 fn wake_ui(ctx: egui::Context) -> impl Fn() + Clone + Send + 'static {
     move || ctx.request_repaint()
+}
+
+fn close_to_tray(ctx: &egui::Context, exiting: bool, tray_available: bool) {
+    if !exiting && ctx.input(|input| input.viewport().close_requested()) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        if tray_available {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+    }
 }
 
 pub fn run(settings: settings::Settings) -> anyhow::Result<()> {
@@ -55,7 +65,7 @@ pub fn run(settings: settings::Settings) -> anyhow::Result<()> {
         Box::new(move |cc| {
             Ok(Box::new(VoiceBoxApp::new(
                 cc, apo_config, settings, library,
-            )))
+            )?))
         }),
     )
     .map_err(|error| {
@@ -98,7 +108,8 @@ struct VoiceBoxApp {
     soundboard: SoundboardPanel,
     hotkeys: HotkeyManager,
     jobs: Jobs,
-    close_enabled: bool,
+    tray: tray::Tray,
+    exit_requested: bool,
     confirm_full_uninstall: bool,
     uninstalling: bool,
     uninstall_requested: bool,
@@ -113,8 +124,9 @@ impl VoiceBoxApp {
         apo_config: ApoConfig,
         settings: settings::Settings,
         library: Library,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let ctx = &cc.egui_ctx;
+        let tray = tray::Tray::new(cc).user_context(Text::CreateTray)?;
         let preferences: UiPreferences = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, "voice_box.ui"))
@@ -136,7 +148,8 @@ impl VoiceBoxApp {
             soundboard: SoundboardPanel::new(settings, library),
             hotkeys: HotkeyManager::new(ctx),
             jobs: Jobs::default(),
-            close_enabled: true,
+            tray,
+            exit_requested: false,
             confirm_full_uninstall: false,
             uninstalling: false,
             uninstall_requested: false,
@@ -145,7 +158,7 @@ impl VoiceBoxApp {
             overlay_visible: false,
         };
         app.microphones.refresh(ctx, &mut app.jobs);
-        app
+        Ok(app)
     }
 
     fn interaction_blocked(&self) -> bool {
@@ -154,18 +167,11 @@ impl VoiceBoxApp {
             || self.uninstall_requested
     }
 
-    fn update_close_button(&mut self, ctx: &egui::Context) {
-        let enabled = !self.interaction_blocked();
-        if !enabled && ctx.input(|input| input.viewport().close_requested()) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-        }
-        if self.close_enabled != enabled {
-            ctx.send_viewport_cmd(egui::ViewportCommand::EnableButtons {
-                close: enabled,
-                minimized: true,
-                maximize: !self.uninstalling,
-            });
-            self.close_enabled = enabled;
+    fn request_exit(&mut self, ctx: &egui::Context) {
+        if !self.interaction_blocked() {
+            self.exit_requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
@@ -196,12 +202,7 @@ impl VoiceBoxApp {
                 self.soundboard.cancel_delete();
             }
         }
-        if self.uninstall_requested {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-            return;
-        }
         if self.uninstalling {
-            self.update_close_button(ui.ctx());
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(64.0);
@@ -252,6 +253,17 @@ impl VoiceBoxApp {
                                 }
                                 if ui.button(Text::Licenses.text()).clicked() {
                                     self.show_licenses = true;
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui
+                                    .add_enabled(
+                                        !self.interaction_blocked(),
+                                        egui::Button::new(Text::Exit.text()),
+                                    )
+                                    .clicked()
+                                {
+                                    self.request_exit(ui.ctx());
                                     ui.close();
                                 }
                             });
@@ -324,9 +336,6 @@ impl VoiceBoxApp {
         }
         self.soundboard.file_error_ui(ui.ctx());
         self.full_uninstall_ui(ui.ctx());
-
-        // Include operations started by a button click during this frame.
-        self.update_close_button(ui.ctx());
     }
 }
 
@@ -347,6 +356,22 @@ impl eframe::App for VoiceBoxApp {
         self.soundboard.model.poll(wake_ui(ctx.clone()));
         self.soundboard.finish_delete();
         self.soundboard.poll_recording(ctx);
+        while let Ok(action) = self.tray.receiver.try_recv() {
+            match action {
+                tray::Action::Show => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+                tray::Action::Exit => self.request_exit(ctx),
+            }
+        }
+        close_to_tray(
+            ctx,
+            self.exit_requested || self.uninstall_requested,
+            self.tray.available(),
+        );
+        self.tray.set_exit_enabled(!self.interaction_blocked());
         let focused = ctx.input(|input| {
             input.viewport().focused == Some(true) && input.viewport().minimized != Some(true)
         });
@@ -381,6 +406,7 @@ impl eframe::App for VoiceBoxApp {
             }
         }
         if self.uninstall_requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         // Bootstrap the child while minimized; visible children keep UI passes running.
@@ -419,6 +445,8 @@ impl eframe::App for VoiceBoxApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
+        // Include operations started during this UI pass before the native menu can open.
+        self.tray.set_exit_enabled(!self.interaction_blocked());
         self.overlay_visible = false;
         let overlay_enabled = self.soundboard.model.settings.playback_show_overlay
             && !self.uninstalling

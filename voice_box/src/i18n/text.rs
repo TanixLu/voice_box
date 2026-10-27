@@ -264,6 +264,9 @@ catalog! {
     Voice => ("Voice", "语音");
     Soundboard => ("Sounds", "音效");
     More => ("More", "更多");
+    ShowMainWindow => ("Show main window", "显示主界面");
+    Exit => ("Exit", "退出");
+    CreateTray => ("Failed to create the tray icon", "创建托盘图标失败");
     FullUninstall => ("Uninstall VoiceBox", "完全卸载");
     SavingApoCfg => ("Saving settings…", "正在保存设置…");
     RecorderExited => ("The recording tool exited unexpectedly. Please try again", "录音工具意外退出，请重试");
