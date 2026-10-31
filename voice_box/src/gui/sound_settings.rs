@@ -1,5 +1,7 @@
 //! A settings draft and its presentation; effects are handled by the parent panel.
 
+use voice_box_shared::pcm_transport::GainPercent;
+
 use crate::{
     devices::{Microphone, Speaker},
     gui::widgets::{ButtonIcon, hint, hotkey_editor, icon_button, trailing_button, warning},
@@ -76,8 +78,8 @@ impl SoundSettings {
             return Action::None;
         }
         let defaults = Settings {
-            language: current.language,
-            theme: current.theme,
+            language_preference: current.language_preference,
+            theme_preference: current.theme_preference,
             startup_enabled: current.startup_enabled,
             ..Settings::default()
         };
@@ -113,7 +115,7 @@ impl SoundSettings {
                         playback_volume(
                             ui,
                             Text::MicrophoneOutput.text(),
-                            &mut settings.playback_microphone_output_volume,
+                            &mut settings.playback_microphone_output_gain_percent,
                         );
                         output_device_picker(
                             ui,
@@ -125,7 +127,7 @@ impl SoundSettings {
                         playback_volume(
                             ui,
                             Text::SpeakerOutput.text(),
-                            &mut settings.playback_speaker_output_volume,
+                            &mut settings.playback_speaker_output_gain_percent,
                         );
                         output_device_picker(
                             ui,
@@ -222,8 +224,8 @@ impl SoundSettings {
             Action::Closed
         } else if save {
             let draft = self.draft.as_mut().unwrap();
-            draft.language = current.language;
-            draft.theme = current.theme;
+            draft.language_preference = current.language_preference;
+            draft.theme_preference = current.theme_preference;
             draft.startup_enabled = current.startup_enabled;
             Action::Save(draft.clone())
         } else if let Some(target) = capture {
@@ -277,17 +279,17 @@ fn output_device_picker(
         });
 }
 
-fn playback_volume(ui: &mut egui::Ui, label: &str, volume: &mut f32) -> bool {
+fn playback_volume(ui: &mut egui::Ui, label: &str, gain_percent: &mut GainPercent) -> bool {
     ui.horizontal_wrapped(|ui| {
         ui.label(label);
         ui.add(
-            egui::Slider::new(volume, 0.0..=2.0)
-                .step_by(0.01)
+            egui::Slider::new(gain_percent.inner_mut_u16(), 0..=GainPercent::MAX_VALUE)
+                .step_by(1.0)
                 .custom_formatter(|value, _| {
                     if value == 0.0 {
                         Text::NoOutput.text().into()
                     } else {
-                        format!("{:.0}%", value * 100.0)
+                        format!("{:.0}%", value)
                     }
                 })
                 .custom_parser(|text| {
@@ -300,7 +302,6 @@ fn playback_volume(ui: &mut egui::Ui, label: &str, volume: &mut f32) -> bool {
                             .parse::<f64>()
                             .ok()
                             .filter(|value| value.is_finite())
-                            .map(|value| value / 100.0)
                     }
                 }),
         )

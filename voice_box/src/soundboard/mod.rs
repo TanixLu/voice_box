@@ -323,8 +323,11 @@ impl Soundboard {
         let Some(sound) = self.library.sounds.get(index) else {
             return;
         };
-        if self.settings.playback_speaker_output_volume == 0.0
-            && self.settings.playback_microphone_output_volume == 0.0
+        if self.settings.playback_speaker_output_gain_percent.is_zero()
+            && self
+                .settings
+                .playback_microphone_output_gain_percent
+                .is_zero()
         {
             self.set_error(Text::OutputsMuted.into());
             return;
@@ -366,8 +369,8 @@ impl Soundboard {
                 .playback_speaker_output_device
                 .as_ref()
                 .map(|device| device.id.clone()),
-            microphone_volume: self.settings.playback_microphone_output_volume,
-            speaker_volume: self.settings.playback_speaker_output_volume,
+            microphone_gain_percent: self.settings.playback_microphone_output_gain_percent,
+            speaker_gain_percent: self.settings.playback_speaker_output_gain_percent,
             include_microphone: self.settings.playback_include_microphone_audio,
             hold_hotkey: self.settings.playback_auto_hold_hotkey,
             repeat: self.settings.playback_repeat,

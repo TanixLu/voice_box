@@ -5,8 +5,8 @@ use wasapi::{DeviceEnumerator, DeviceState, Direction};
 use voice_box_shared::error::SharedError;
 
 use crate::{
-    audio::Apartment,
     setup::{self, PluginStatus},
+    utils::ComGuard,
 };
 
 pub struct Speaker {
@@ -17,7 +17,7 @@ pub struct Speaker {
 
 pub fn enumerate_soundboard_devices() -> anyhow::Result<(Vec<Microphone>, Vec<Speaker>)> {
     let (microphones, _) = enumerate_microphones()?;
-    let _apartment = Apartment::new()?;
+    let _com_guard = ComGuard::mta()?;
     let enumerator = DeviceEnumerator::new()?;
     let default_id = enumerator
         .get_default_device(&Direction::Render)
@@ -40,7 +40,7 @@ pub fn enumerate_soundboard_devices() -> anyhow::Result<(Vec<Microphone>, Vec<Sp
 }
 
 pub fn soundboard_microphone_guid(device_id: Option<&str>) -> anyhow::Result<String> {
-    let _apartment = Apartment::new()?;
+    let _com_guard = ComGuard::mta()?;
     let enumerator = DeviceEnumerator::new()?;
     let device = match device_id {
         Some(id) => enumerator.get_device(id)?,
@@ -86,7 +86,7 @@ pub struct PluginOperationResult {
 }
 
 pub fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
-    let _apartment = Apartment::new()?;
+    let _com_guard = ComGuard::mta()?;
     let enumerator = DeviceEnumerator::new()?;
     let default_id = enumerator
         .get_default_device(&Direction::Capture)

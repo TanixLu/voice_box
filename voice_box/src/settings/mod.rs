@@ -4,7 +4,7 @@ mod storage;
 
 use anyhow::ensure;
 
-use voice_box_shared::pcm_transport::MAX_VOLUME;
+use voice_box_shared::pcm_transport::GainPercent;
 
 use crate::{
     database,
@@ -20,7 +20,7 @@ pub enum BindingTarget {
     Random,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OutputDevice {
     pub id: String,
     pub name: String,
@@ -28,7 +28,7 @@ pub struct OutputDevice {
 
 macro_rules! define_settings {
     ($($field:ident: $ty:ty = $default:expr;)*) => {
-        #[derive(Clone, Debug, PartialEq)]
+        #[derive(Clone, PartialEq, Eq)]
         pub struct Settings {
             $(pub $field: $ty,)*
         }
@@ -44,13 +44,13 @@ macro_rules! define_settings {
 }
 
 define_settings! {
-    language: LanguagePreference = LanguagePreference::System;
-    theme: egui::ThemePreference = egui::ThemePreference::System;
+    language_preference: LanguagePreference = LanguagePreference::System;
+    theme_preference: egui::ThemePreference = egui::ThemePreference::System;
     startup_enabled: bool = false;
     playback_microphone_output_device: Option<OutputDevice> = None;
     playback_speaker_output_device: Option<OutputDevice> = None;
-    playback_speaker_output_volume: f32 = 1.0;
-    playback_microphone_output_volume: f32 = 1.0;
+    playback_speaker_output_gain_percent: GainPercent = GainPercent::new(100);
+    playback_microphone_output_gain_percent: GainPercent = GainPercent::new(100);
     playback_include_microphone_audio: bool = true;
     playback_auto_hold_hotkey: Option<Hotkey> = None;
     playback_stop_hotkey: Option<Hotkey> = None;
@@ -116,15 +116,6 @@ impl Settings {
         &self,
         sound_hotkeys: impl Iterator<Item = Hotkey> + Clone,
     ) -> anyhow::Result<()> {
-        ensure!(
-            [
-                self.playback_speaker_output_volume,
-                self.playback_microphone_output_volume
-            ]
-            .iter()
-            .all(|volume| { volume.is_finite() && (0.0..=MAX_VOLUME).contains(volume) }),
-            Text::InvalidPlaybackVolume
-        );
         for (target, key) in [
             (BindingTarget::Hold, self.playback_auto_hold_hotkey),
             (BindingTarget::Stop, self.playback_stop_hotkey),
@@ -138,53 +129,10 @@ impl Settings {
     }
 
     pub fn sanitize(&mut self) {
-        for (key, volume) in [
-            (
-                "playback_speaker_output_volume",
-                &mut self.playback_speaker_output_volume,
-            ),
-            (
-                "playback_microphone_output_volume",
-                &mut self.playback_microphone_output_volume,
-            ),
-        ] {
-            let sanitized = if volume.is_finite() {
-                volume.clamp(0.0, MAX_VOLUME)
-            } else {
-                1.0
-            };
-            if *volume != sanitized {
-                tracing::warn!(key, "Invalid playback volume; sanitizing setting");
-                *volume = sanitized;
-            }
-        }
-        for (key, hotkey, hold) in [
-            (
-                "playback_auto_hold_hotkey",
-                &mut self.playback_auto_hold_hotkey,
-                true,
-            ),
-            (
-                "playback_stop_hotkey",
-                &mut self.playback_stop_hotkey,
-                false,
-            ),
-            (
-                "playback_random_hotkey",
-                &mut self.playback_random_hotkey,
-                false,
-            ),
-        ] {
-            if hotkey.is_some_and(|key| {
-                if hold {
-                    !key.is_valid_for_hold()
-                } else {
-                    !key.is_valid()
-                }
-            }) {
-                tracing::warn!(key, "Invalid hotkey; clearing setting");
-                *hotkey = None;
-            }
-        }
+        let _ = self
+            .playback_auto_hold_hotkey
+            .take_if(|key| !key.is_valid_for_hold());
+        let _ = self.playback_stop_hotkey.take_if(|key| !key.is_valid());
+        let _ = self.playback_random_hotkey.take_if(|key| !key.is_valid());
     }
 }

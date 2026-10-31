@@ -11,10 +11,7 @@ use windows::{
     Win32::{
         Foundation::{HANDLE, WAIT_OBJECT_0},
         System::{
-            Com::{
-                CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateGuid, CoCreateInstance,
-                CoInitializeEx, CoUninitialize,
-            },
+            Com::{CLSCTX_INPROC_SERVER, CoCreateGuid, CoCreateInstance},
             Threading::{
                 CREATE_NO_WINDOW, CreateEventW, INFINITE, SetEvent, WaitForMultipleObjects,
             },
@@ -34,17 +31,18 @@ use voice_box_shared::{
 };
 
 use crate::{
-    i18n::{Message, Text, UserContext},
+    i18n::{Message, Text, UserContext, current_language},
     setup,
+    single::SINGLE_INSTANCE_MUTEX,
     static_data::UNINSTALL_CLEANUP_SCRIPT,
-    utils::powershell_path,
+    utils::{ComGuard, powershell_path},
 };
 
 // The GUI is already elevated; only self-deletion needs a separate process.
 pub fn run() -> anyhow::Result<()> {
-    crate::startup::synchronize(false)?;
+    crate::startup::synchronize_startup(false)?;
     let cleanup = start_cleanup(&data_dir()?)?;
-    let _apartment = ShellApartment::new()?;
+    let _com_guard = ComGuard::sta()?;
     setup::with_audio_service_stopped(|| {
         setup::unregister_all()?;
         recycle(&apo_dll_path()?).user_context(Text::RecycleApo)
@@ -106,7 +104,7 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
         .arg(UNINSTALL_CLEANUP_SCRIPT)
         // Paths are data, never interpolated into PowerShell source code.
         .envs(
-            cleanup_texts(crate::i18n::current_language())
+            cleanup_texts(current_language())
                 .map(|(name, value)| (format!("VOICEBOX_UNINSTALL_TEXT_{name}"), value)),
         )
         .env("VOICEBOX_UNINSTALL_EXE", std::env::current_exe()?)
@@ -114,10 +112,7 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
         .env("VOICEBOX_UNINSTALL_READY", event_name)
         .env("VOICEBOX_UNINSTALL_COMPLETE", complete_name)
         .env("VOICEBOX_UNINSTALL_CANCEL", cancel_name)
-        .env(
-            "VOICEBOX_SINGLE_INSTANCE_MUTEX",
-            super::SINGLE_INSTANCE_MUTEX,
-        )
+        .env("VOICEBOX_SINGLE_INSTANCE_MUTEX", SINGLE_INSTANCE_MUTEX)
         .env(
             "VOICEBOX_UNINSTALL_PROCESS_ID",
             std::process::id().to_string(),
@@ -136,21 +131,6 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
         Text::CleanupInitializationFailed
     );
     Ok(cleanup_state)
-}
-
-struct ShellApartment;
-
-impl ShellApartment {
-    fn new() -> anyhow::Result<Self> {
-        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()? };
-        Ok(Self)
-    }
-}
-
-impl Drop for ShellApartment {
-    fn drop(&mut self) {
-        unsafe { CoUninitialize() };
-    }
 }
 
 fn recycle(path: &Path) -> anyhow::Result<()> {

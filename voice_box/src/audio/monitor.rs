@@ -13,8 +13,9 @@ use windows::{
 use voice_box_shared::utils::wide_null;
 
 use crate::{
-    audio::{Apartment, Stream, enumerator},
+    audio::{Stream, enumerator},
     i18n::Text,
+    utils::ComGuard,
 };
 
 /// The soundboard reuses the same WASAPI/COM lifetime and format negotiation as
@@ -29,11 +30,11 @@ pub struct Monitor {
     cursor: u64,
     last_position: u64,
     last_progress: Instant,
-    _apartment: Apartment,
+    _com_guard: ComGuard,
 }
 impl Monitor {
     pub fn open(device_id: Option<&str>) -> anyhow::Result<Self> {
-        let apartment = Apartment::new()?;
+        let _com_guard = ComGuard::mta()?;
         let enumerator = enumerator()?;
         let device = match device_id {
             Some(id) => {
@@ -60,7 +61,7 @@ impl Monitor {
             cursor: 0,
             last_position: 0,
             last_progress: Instant::now(),
-            _apartment: apartment,
+            _com_guard,
         })
     }
     pub fn fill(&mut self, now: u64, sample: impl Fn(u64) -> [f32; 2]) -> anyhow::Result<()> {

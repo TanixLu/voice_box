@@ -1,5 +1,3 @@
-//! Typed messages retain their arguments until presentation, including error chains.
-
 use std::{borrow::Cow, error::Error, fmt, sync::Arc};
 
 use crate::{

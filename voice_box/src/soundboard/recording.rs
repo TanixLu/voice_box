@@ -28,7 +28,7 @@ pub enum Edge {
     Right,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Selection {
     pub start: usize,
     pub end: usize,

@@ -8,26 +8,26 @@ use anyhow::ensure;
 
 use voice_box_shared::{
     paths::transport_path,
-    pcm_transport::{Clock, DECODE_AHEAD_FRAMES, Mapping, SAMPLE_RATE},
+    pcm_transport::{Clock, DECODE_AHEAD_FRAMES, GainPercent, Mapping, SAMPLE_RATE},
 };
 
 use crate::{
     audio::monitor::Monitor,
     devices,
-    hotkeys::HeldKeys,
+    hotkeys::{HeldKeys, Hotkey},
     i18n::{Details, Message, Text, UserContext},
     soundboard::{decoder::SoundDecoder, sound::SoundId},
 };
 
 /// Runtime output choices only; no GUI preferences or persistence behavior.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Config {
     pub microphone_device: Option<String>,
     pub speaker_device: Option<String>,
-    pub microphone_volume: f32,
-    pub speaker_volume: f32,
+    pub microphone_gain_percent: GainPercent,
+    pub speaker_gain_percent: GainPercent,
     pub include_microphone: bool,
-    pub hold_hotkey: Option<crate::hotkeys::Hotkey>,
+    pub hold_hotkey: Option<Hotkey>,
     pub repeat: bool,
 }
 
@@ -114,8 +114,8 @@ pub fn run(
     tracing::info!(
         sound_id = id,
         duration_secs = ?duration_secs,
-        speaker_volume = settings.speaker_volume,
-        microphone_volume = settings.microphone_volume,
+        speaker_gain_percent = ?settings.speaker_gain_percent,
+        microphone_gain_percent = ?settings.microphone_gain_percent,
         repeat = settings.repeat,
         "Soundboard playback started"
     );
@@ -179,22 +179,22 @@ pub fn run(
             });
         }
         if let Some(mut next) = configure.take() {
-            if next.microphone_volume > 0.0
+            if !next.microphone_gain_percent.is_zero()
                 && let Some(error) = &microphone_error
             {
-                if next.speaker_volume == 0.0 {
+                if next.speaker_gain_percent.is_zero() {
                     return Err(anyhow::anyhow!(error.clone()));
                 }
                 tracing::warn!("{error}");
                 let _ = events.send(Event::OutputError(revision, error.clone()));
             }
             if guid.is_none() {
-                next.microphone_volume = 0.0;
+                next.microphone_gain_percent = GainPercent::ZERO;
                 next.include_microphone = true;
             }
             settings = next;
         }
-        if settings.microphone_volume == 0.0 && settings.speaker_volume == 0.0 {
+        if settings.microphone_gain_percent.is_zero() && settings.speaker_gain_percent.is_zero() {
             break "outputs_muted";
         }
         if settings.hold_hotkey != held_binding {
@@ -235,11 +235,11 @@ pub fn run(
         mapping.publish(
             generation,
             base + pending.len() as u64,
-            settings.microphone_volume,
-            !settings.include_microphone,
+            settings.microphone_gain_percent,
+            settings.include_microphone,
             now,
         );
-        if settings.speaker_volume > 0.0 && !monitor_failed {
+        if !settings.speaker_gain_percent.is_zero() && !monitor_failed {
             let result = (|| -> anyhow::Result<()> {
                 if monitor.is_none() {
                     monitor = Some(Monitor::open(settings.speaker_device.as_deref())?);
@@ -249,13 +249,13 @@ pub fn run(
                 monitor.as_mut().unwrap().fill(clock.frame(), |frame| {
                     let stereo = mapping.read(frame, generation);
                     [
-                        stereo[0] * settings.speaker_volume,
-                        stereo[1] * settings.speaker_volume,
+                        stereo[0] * settings.speaker_gain_percent.as_f32_gain(),
+                        stereo[1] * settings.speaker_gain_percent.as_f32_gain(),
                     ]
                 })
             })();
             if let Err(error) = result {
-                if settings.microphone_volume == 0.0 {
+                if settings.microphone_gain_percent.is_zero() {
                     return Err(error.user_context(Text::SpeakerPlaybackFailed));
                 }
                 monitor = None;

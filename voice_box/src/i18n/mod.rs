@@ -1,26 +1,21 @@
-//! Application language and presentation. Audio code never reads this state.
-
 mod message;
 mod shared_error;
 mod text;
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use strum::EnumIter;
+
 pub use crate::i18n::{
     message::{Details, Message, UserContext},
     text::Text,
 };
+use crate::utils::win_preferred_ui_languages;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, TryFromPrimitive, IntoPrimitive, EnumIter)]
+#[repr(u8)]
 pub enum Language {
-    English,
-    SimplifiedChinese,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum LanguagePreference {
-    #[default]
-    System,
     English,
     SimplifiedChinese,
 }
@@ -28,89 +23,46 @@ pub enum LanguagePreference {
 static LANGUAGE: AtomicU8 = AtomicU8::new(0);
 
 pub fn current_language() -> Language {
-    match LANGUAGE.load(Ordering::Relaxed) {
-        1 => Language::SimplifiedChinese,
-        _ => Language::English,
-    }
+    Language::try_from(LANGUAGE.load(Ordering::Relaxed)).unwrap_or(Language::English)
 }
 
 pub fn set_language(language: Language) {
-    LANGUAGE.store(
-        match language {
-            Language::English => 0,
-            Language::SimplifiedChinese => 1,
-        },
-        Ordering::Relaxed,
-    );
+    LANGUAGE.store(language.into(), Ordering::Relaxed);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, EnumIter)]
+pub enum LanguagePreference {
+    System,
+    English,
+    SimplifiedChinese,
 }
 
 impl LanguagePreference {
-    pub fn resolve(self) -> Language {
-        match self {
-            Self::System => system_language(),
-            Self::English => Language::English,
-            Self::SimplifiedChinese => Language::SimplifiedChinese,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
+    pub fn text(&self) -> &'static str {
         match self {
             Self::System => Text::FollowSystem.text(),
             Self::English => "English",
             Self::SimplifiedChinese => "简体中文",
         }
     }
-}
 
-fn match_language(name: &str) -> Option<Language> {
-    let name = name.replace('_', "-").to_ascii_lowercase();
-    let parts: Vec<_> = name.split('-').collect();
-    match parts.first().copied() {
-        Some("en") => Some(Language::English),
-        Some("zh")
-            if !parts.contains(&"hant")
-                && (parts.contains(&"hans") || parts.contains(&"cn") || parts.contains(&"sg")) =>
-        {
-            Some(Language::SimplifiedChinese)
+    pub fn resolve(self) -> Language {
+        match self {
+            Self::System => {
+                for tag in win_preferred_ui_languages() {
+                    let tag = tag.replace('_', "-").to_ascii_lowercase();
+                    match tag.as_str() {
+                        "zh-cn" | "zh-sg" | "zh-hans" | "zh-hans-cn" | "zh-hans-sg"
+                        | "zh-hans-hk" | "zh-hans-mo" => return Language::SimplifiedChinese,
+                        "en" => return Language::English,
+                        _ if tag.starts_with("en-") => return Language::English,
+                        _ => continue,
+                    }
+                }
+                Language::English
+            }
+            Self::English => Language::English,
+            Self::SimplifiedChinese => Language::SimplifiedChinese,
         }
-        _ => None,
-    }
-}
-
-fn choose_language<'a>(names: impl IntoIterator<Item = &'a str>) -> Language {
-    names
-        .into_iter()
-        .find_map(match_language)
-        .unwrap_or(Language::English)
-}
-
-fn system_language() -> Language {
-    use windows::Win32::Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME};
-    let mut count = 0;
-    let mut size = 0;
-    unsafe {
-        if GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, None, &mut size).is_err()
-            || size == 0
-            || size > 65_536
-        {
-            return Language::English;
-        }
-        let mut buffer = vec![0u16; size as usize];
-        if GetUserPreferredUILanguages(
-            MUI_LANGUAGE_NAME,
-            &mut count,
-            Some(windows::core::PWSTR(buffer.as_mut_ptr())),
-            &mut size,
-        )
-        .is_err()
-        {
-            return Language::English;
-        }
-        let names: Vec<_> = buffer
-            .split(|&c| c == 0)
-            .filter(|s| !s.is_empty())
-            .map(String::from_utf16_lossy)
-            .collect();
-        choose_language(names.iter().map(String::as_str))
     }
 }

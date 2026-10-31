@@ -24,7 +24,7 @@ use windows::{
 
 use voice_box_shared::{
     audio::{MAX_CHANNELS, SampleFormat},
-    pcm_transport::{Clock, Mapping, SAMPLE_RATE, Slot},
+    pcm_transport::{Clock, GainPercent, Mapping, SAMPLE_RATE, Slot},
 };
 
 use crate::{
@@ -43,8 +43,8 @@ struct Storage {
     kernels: [[f32; TAPS]; PHASES],
     generation: AtomicU64,
     deadline: AtomicU64,
-    gain: AtomicU64,
-    mute_microphone: AtomicBool,
+    gain_percent: AtomicU64,
+    include_microphone: AtomicBool,
 }
 struct Resident {
     pointer: NonNull<Storage>,
@@ -195,8 +195,10 @@ impl Injection {
             self.position = now as f64;
         }
         let live = generation != 0 && now < self.state.deadline.load(Acquire);
-        let mute_microphone = live && self.state.mute_microphone.load(Acquire);
-        let gain = f32::from_bits(self.state.gain.load(Acquire) as u32);
+        let gain_percent = GainPercent::from_u64_bits(self.state.gain_percent.load(Acquire));
+        let gain = gain_percent.as_f32_gain();
+        let mute_microphone =
+            live && !gain_percent.is_zero() && !self.state.include_microphone.load(Acquire);
         let bytes = self.format.bytes();
         let mut values = [0.0_f32; MAX_CHANNELS];
         for frame in buffer.chunks_exact_mut(bytes * self.channels) {
@@ -269,12 +271,12 @@ fn receive(path: PathBuf, state: &Resident, stop: &AtomicBool, clock: Clock) {
             retry_at = now + u64::from(SAMPLE_RATE) / 100;
         }
         if let Some(mapping) = &mapping {
-            let (generation, end, gain, mute_microphone) = mapping.status(now);
+            let (generation, end, gain_percent, include_microphone) = mapping.status(now);
             if generation != previous || cursor < now.saturating_sub(480) {
                 state.generation.store(0, Release);
                 cursor = now.saturating_sub(480);
             }
-            if generation != 0 && gain > 0.0 {
+            if generation != 0 && !gain_percent.is_zero() {
                 // Bound work even for malformed shared headers. Each reader owns
                 // its own cursor; recording clients never consume one another's PCM.
                 let end = end.min(now + 2880);
@@ -284,8 +286,10 @@ fn receive(path: PathBuf, state: &Resident, stop: &AtomicBool, clock: Clock) {
                     cursor += 1;
                 }
             }
-            state.gain.store(u64::from(gain.to_bits()), Release);
-            state.mute_microphone.store(mute_microphone, Release);
+            state
+                .gain_percent
+                .store(gain_percent.to_u64_bits(), Release);
+            state.include_microphone.store(include_microphone, Release);
             state.deadline.store(
                 if generation == 0 {
                     0

@@ -1,6 +1,6 @@
-//! Central bilingual catalog. Every entry requires both languages.
+use strum::IntoEnumIterator;
 
-use crate::i18n::Language;
+use crate::i18n::{Language, current_language};
 
 macro_rules! catalog {
     ($($key:ident => ($en:literal, $zh:literal);)*) => {
@@ -15,11 +15,11 @@ macro_rules! catalog {
                 }
             }
             pub fn text(self) -> &'static str {
-                self.in_language(super::current_language())
+                self.in_language(current_language())
             }
             pub fn matches_input(self, input: &str) -> bool {
-                [Language::English, Language::SimplifiedChinese].into_iter()
-                    .any(|language| input.trim().eq_ignore_ascii_case(self.in_language(language)))
+                let input = input.trim();
+                Language::iter().any(|language| input.eq_ignore_ascii_case(self.in_language(language)))
             }
         }
     }
@@ -118,7 +118,6 @@ catalog! {
     Close => ("Close", "关闭");
     InvalidHotkey => ("Invalid hotkey", "无效快捷键");
     HoldKeyConflict => ("The automatic hold key cannot use the same primary key as a play or stop shortcut", "自动按键不能与播放或停止快捷键使用同一个主键");
-    InvalidPlaybackVolume => ("Invalid playback volume", "播放音量无效");
     SaveAppSettingsFailed => ("Failed to save application settings", "保存应用设置失败");
     SaveSoundLibrary => ("Failed to save sound library metadata", "保存音效库元数据失败");
     OpenSoundSettingsFirst => ("Open sound settings first", "请先打开音效设置");

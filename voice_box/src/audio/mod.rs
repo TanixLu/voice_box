@@ -25,19 +25,6 @@ use windows::Win32::{
 
 use crate::i18n::Message;
 
-pub struct Apartment;
-impl Apartment {
-    pub fn new() -> anyhow::Result<Self> {
-        wasapi::initialize_mta().ok()?;
-        Ok(Self)
-    }
-}
-impl Drop for Apartment {
-    fn drop(&mut self) {
-        wasapi::deinitialize();
-    }
-}
-
 struct AudioEvent(HANDLE);
 impl AudioEvent {
     fn wait(&self) -> anyhow::Result<()> {

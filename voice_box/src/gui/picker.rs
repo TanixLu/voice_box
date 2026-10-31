@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use crate::i18n::Text;
+use crate::{
+    i18n::{Text, current_language},
+    utils::ComGuard,
+};
 
 pub fn choose_files() -> anyhow::Result<Vec<PathBuf>> {
     choose_paths(false)
@@ -13,10 +16,7 @@ pub fn choose_folder() -> anyhow::Result<Option<PathBuf>> {
 fn choose_paths(folder: bool) -> anyhow::Result<Vec<PathBuf>> {
     use windows::{
         Win32::{
-            System::Com::{
-                CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-                CoTaskMemFree, CoUninitialize,
-            },
+            System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree},
             UI::Shell::{
                 Common::COMDLG_FILTERSPEC, FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST,
                 FOS_FORCEFILESYSTEM, FOS_NOVALIDATE, FOS_PATHMUSTEXIST, FileOpenDialog,
@@ -25,21 +25,10 @@ fn choose_paths(folder: bool) -> anyhow::Result<Vec<PathBuf>> {
         },
         core::{HSTRING, PCWSTR, w},
     };
-    struct Apartment;
-    impl Drop for Apartment {
-        fn drop(&mut self) {
-            unsafe {
-                CoUninitialize();
-            }
-        }
-    }
-    unsafe {
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
-    }
-    let _apartment = Apartment;
+    let _com_guard = ComGuard::sta()?;
     let dialog: IFileOpenDialog =
         unsafe { CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)? };
-    let language = crate::i18n::current_language();
+    let language = current_language();
     let title = HSTRING::from(
         if folder {
             Text::ExportSoundsTitle

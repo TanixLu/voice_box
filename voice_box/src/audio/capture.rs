@@ -24,8 +24,9 @@ use voice_box_shared::{
 };
 
 use crate::{
-    audio::{Apartment, Stream, enumerator},
+    audio::{Stream, enumerator},
     i18n::{Text, UserContext},
+    utils::ComGuard,
 };
 
 pub struct Recording {
@@ -46,7 +47,7 @@ pub fn capture(
     stop: &AtomicBool,
     started: &dyn Fn(),
 ) -> anyhow::Result<Recording> {
-    let _apartment = Apartment::new()?;
+    let _com_guard = ComGuard::mta()?;
     let device_id = wide_null(device_id);
     let device = unsafe { enumerator()?.GetDevice(PCWSTR(device_id.as_ptr()))? };
     let client = unsafe { device.Activate::<IAudioClient>(CLSCTX_ALL, None)? };

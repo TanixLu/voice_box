@@ -1,5 +1,3 @@
-//! Management-only initialization and atomic writes to apo.cfg.
-
 use std::{
     io::{self, Write},
     path::Path,
@@ -14,8 +12,9 @@ use voice_box_shared::{
 
 use crate::i18n::{Text, UserContext};
 
-pub fn initialize() -> anyhow::Result<()> {
+pub fn init() -> anyhow::Result<()> {
     std::fs::create_dir_all(data_dir()?).user_context(Text::CreateDataDirectory)?;
+    // 这里****************
     match ApoCfgFile::read() {
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {

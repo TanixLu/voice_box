@@ -14,7 +14,7 @@ use windows::Win32::{
     },
 };
 
-use crate::i18n::{Details, Message, Text, UserContext};
+use crate::i18n::{Details, Message, Text, UserContext, current_language};
 
 const SIMULATED_INPUT_TAG: usize = 0x5642_4b59;
 
@@ -32,7 +32,7 @@ impl Hotkey {
         key_name(self.virtual_key_code).is_some() && self.modifiers & !0xf == 0
     }
     pub fn label(self) -> String {
-        self.label_in_language(crate::i18n::current_language())
+        self.label_in_language(current_language())
     }
     pub fn label_in_language(self, language: crate::i18n::Language) -> String {
         let mut parts = Vec::new();

@@ -6,6 +6,7 @@ use rusqlite::{
     Connection, ToSql, Transaction, params,
     types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, Value, ValueRef},
 };
+use voice_box_shared::pcm_transport::GainPercent;
 
 pub use crate::impl_storage;
 use crate::{i18n::LanguagePreference, settings::OutputDevice};
@@ -154,7 +155,7 @@ macro_rules! enum_setting {
 enum_setting!(LanguagePreference {
     System => "system",
     English => "en",
-    SimplifiedChinese => "zh-CN",
+    SimplifiedChinese => "zh-hans",
 });
 
 enum_setting!(egui::ThemePreference {
@@ -206,5 +207,15 @@ impl ToSql for OutputDevice {
             "{}\0{}",
             self.id, self.name
         ))))
+    }
+}
+
+impl Stored for GainPercent {
+    fn read(values: &Values, key: &str) -> FromSqlResult<Option<Self>> {
+        Ok(scalar::<u16>(values, key)?.map(GainPercent::new))
+    }
+
+    fn write(&self, transaction: &Transaction<'_>, key: &str) -> rusqlite::Result<()> {
+        write_scalar(transaction, key, &self.as_u16())
     }
 }

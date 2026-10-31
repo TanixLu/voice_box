@@ -27,10 +27,45 @@ use windows::{
 use crate::error::SharedError;
 
 pub const SAMPLE_RATE: u32 = 48_000;
-pub const MAX_VOLUME: f32 = 2.0;
 pub const BUFFER_CAPACITY_FRAMES: usize = 32_768;
 pub const DECODE_AHEAD_FRAMES: u64 = 12_000; // 250 ms of decoded audio, bounded independently of file length.
 const MAGIC: u64 = u64::from_le_bytes(*b"VBPCM\0\0\0");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GainPercent(u16);
+
+impl GainPercent {
+    pub const ZERO: Self = Self(0);
+    pub const MAX_VALUE: u16 = 200;
+
+    pub fn new(value: u16) -> Self {
+        Self(value.min(Self::MAX_VALUE))
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn as_u16(&self) -> u16 {
+        self.0
+    }
+
+    pub fn inner_mut_u16(&mut self) -> &mut u16 {
+        &mut self.0
+    }
+
+    pub fn as_f32_gain(&self) -> f32 {
+        self.0 as f32 / 100.0
+    }
+
+    pub fn to_u64_bits(&self) -> u64 {
+        self.0 as u64
+    }
+
+    pub fn from_u64_bits(bits: u64) -> Self {
+        Self::new(bits as u16)
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct Clock {
@@ -100,8 +135,8 @@ struct Header {
     generation: AtomicU64,
     heartbeat: AtomicU64,
     end: AtomicU64,
-    gain: AtomicU64,
-    mute_microphone: AtomicU64,
+    gain_percent: AtomicU64,
+    include_microphone: AtomicU64,
 }
 
 pub struct Mapping {
@@ -112,7 +147,7 @@ pub struct Mapping {
 }
 impl Mapping {
     pub fn open(path: &Path, writer: bool) -> anyhow::Result<Self> {
-        let bytes = size_of::<Header>() + BUFFER_CAPACITY_FRAMES * size_of::<Slot>();
+        const SIZE: usize = size_of::<Header>() + BUFFER_CAPACITY_FRAMES * size_of::<Slot>();
         let file = OpenOptions::new()
             .read(true)
             .write(writer)
@@ -123,11 +158,11 @@ impl Mapping {
             // An existing reader can retain its mapping across GUI restarts. Never
             // truncate a live mapping; fixed-size atomic storage is reused instead.
             if file.metadata()?.len() == 0 {
-                file.set_len(bytes as u64)?;
+                file.set_len(SIZE as u64)?;
             }
         }
         ensure!(
-            file.metadata()?.len() == bytes as u64,
+            file.metadata()?.len() == SIZE as u64,
             SharedError::InvalidPlaybackLayout
         );
         let handle = unsafe {
@@ -154,7 +189,7 @@ impl Mapping {
                 },
                 0,
                 0,
-                bytes,
+                SIZE,
             )
         };
         if view.Value.is_null() {
@@ -200,28 +235,36 @@ impl Mapping {
     pub fn read(&self, frame: u64, generation: u64) -> [f32; 2] {
         self.slot(frame).read(frame, generation)
     }
-    pub fn publish(&self, generation: u64, end: u64, gain: f32, mute_microphone: bool, now: u64) {
-        let gain = sanitize_gain(gain);
-        self.header().gain.store(u64::from(gain.to_bits()), SeqCst);
+    pub fn publish(
+        &self,
+        generation: u64,
+        end: u64,
+        gain_percent: GainPercent,
+        include_microphone: bool,
+        now: u64,
+    ) {
+        self.header()
+            .gain_percent
+            .store(gain_percent.to_u64_bits(), SeqCst);
         self.header().end.store(end, SeqCst);
         self.header()
-            .mute_microphone
-            .store(u64::from(mute_microphone && gain > 0.0), SeqCst);
+            .include_microphone
+            .store(include_microphone as u64, SeqCst);
         self.header().heartbeat.store(now, SeqCst);
         self.header().generation.store(generation, SeqCst);
     }
-    pub fn status(&self, now: u64) -> (u64, u64, f32, bool) {
+    pub fn status(&self, now: u64) -> (u64, u64, GainPercent, bool) {
         let h = self.header();
         let heartbeat = h.heartbeat.load(SeqCst);
         if now.abs_diff(heartbeat) > u64::from(SAMPLE_RATE) / 2 {
-            return (0, 0, 0.0, false);
+            return (0, 0, GainPercent::ZERO, false);
         }
-        let gain = sanitize_gain(f32::from_bits(h.gain.load(SeqCst) as u32));
+        let gain_percent = GainPercent::from_u64_bits(h.gain_percent.load(SeqCst));
         (
             h.generation.load(SeqCst),
             h.end.load(SeqCst),
-            gain,
-            h.mute_microphone.load(SeqCst) != 0,
+            gain_percent,
+            h.include_microphone.load(SeqCst) != 0,
         )
     }
     pub fn stop(&self) {
@@ -229,13 +272,6 @@ impl Mapping {
     }
 }
 
-fn sanitize_gain(gain: f32) -> f32 {
-    if gain.is_finite() {
-        gain.clamp(0.0, MAX_VOLUME)
-    } else {
-        0.0
-    }
-}
 impl Drop for Mapping {
     fn drop(&mut self) {
         if self.writer {

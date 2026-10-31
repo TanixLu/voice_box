@@ -20,8 +20,9 @@ use windows::Win32::{
 };
 
 use crate::{
-    audio::{Apartment, Stream, capture::Recording, enumerator},
+    audio::{Stream, capture::Recording, enumerator},
     i18n::{Text, UserContext},
+    utils::ComGuard,
 };
 
 pub const MAX_RECORD_SECONDS: u32 = 600;
@@ -58,7 +59,7 @@ fn place_packet(samples: &mut Vec<f32>, start: usize, frames: usize, data: Optio
 }
 
 pub fn capture(stop: &AtomicBool, started: &dyn Fn()) -> anyhow::Result<Recording> {
-    let _apartment = Apartment::new()?;
+    let _com_guard = ComGuard::mta()?;
     let device = unsafe { enumerator()?.GetDefaultAudioEndpoint(eRender, eConsole) }
         .user_context(Text::DefaultSpeakerMissing)?;
     let client = unsafe { device.Activate::<IAudioClient>(CLSCTX_ALL, None)? };

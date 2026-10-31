@@ -15,6 +15,7 @@ mod tray;
 mod voice;
 mod widgets;
 
+use strum::IntoEnumIterator;
 use voice_box_shared::apo_cfg::{ApoCfgFile, ApoConfig};
 
 use crate::{
@@ -28,7 +29,7 @@ use crate::{
         voice::VoicePanel,
         widgets::section,
     },
-    i18n::{Details, Message, Text, UserContext},
+    i18n::{self, Details, LanguagePreference, Message, Text, UserContext},
     settings,
     soundboard::library::Library,
     static_data::ICON_PNG_DATA,
@@ -122,7 +123,7 @@ impl VoiceBoxApp {
     ) -> anyhow::Result<Self> {
         let ctx = &cc.egui_ctx;
         let tray = tray::Tray::new(cc, start_in_tray).user_context(Text::CreateTray)?;
-        ctx.set_theme(settings.theme);
+        ctx.set_theme(settings.theme_preference);
         apply_style(ctx);
         fonts::install(ctx);
         let mut app = Self {
@@ -169,7 +170,7 @@ impl VoiceBoxApp {
         if !self
             .jobs
             .begin(ctx, Text::SyncStartup, move || JobResult::Startup {
-                result: crate::startup::synchronize(enabled),
+                result: crate::startup::synchronize_startup(enabled),
                 notice,
             })
         {
@@ -211,23 +212,23 @@ impl VoiceBoxApp {
 
     fn theme_ui(&mut self, ui: &mut egui::Ui) {
         use egui::ThemePreference;
-        let previous = self.soundboard.model.settings.theme;
-        let mut theme = previous;
+        let previous = self.soundboard.model.settings.theme_preference;
+        let mut theme_preference = previous;
         ui.label(Text::ThemeLabel.text());
         for (preference, label) in [
             (ThemePreference::System, Text::FollowSystem),
             (ThemePreference::Light, Text::LightTheme),
             (ThemePreference::Dark, Text::DarkTheme),
         ] {
-            ui.selectable_value(&mut theme, preference, label.text());
+            ui.selectable_value(&mut theme_preference, preference, label.text());
         }
-        if previous != theme {
+        if previous != theme_preference {
             let mut settings = self.soundboard.model.settings.clone();
-            settings.theme = theme;
+            settings.theme_preference = theme_preference;
             match settings.save() {
                 Ok(()) => {
                     self.soundboard.model.settings = settings;
-                    ui.ctx().set_theme(theme);
+                    ui.ctx().set_theme(theme_preference);
                     ui.ctx().request_repaint();
                 }
                 Err(error) => {
@@ -239,24 +240,19 @@ impl VoiceBoxApp {
     }
 
     fn language_ui(&mut self, ui: &mut egui::Ui) {
-        use crate::i18n::{self, LanguagePreference};
-        let previous = self.soundboard.model.settings.language;
-        let mut language = previous;
+        let previous = self.soundboard.model.settings.language_preference;
+        let mut language_preference = previous;
         ui.label(Text::LanguageLabel.text());
-        for preference in [
-            LanguagePreference::System,
-            LanguagePreference::English,
-            LanguagePreference::SimplifiedChinese,
-        ] {
-            ui.selectable_value(&mut language, preference, preference.label());
+        for preference in LanguagePreference::iter() {
+            ui.selectable_value(&mut language_preference, preference, preference.text());
         }
-        if previous != language {
+        if previous != language_preference {
             let mut settings = self.soundboard.model.settings.clone();
-            settings.language = language;
+            settings.language_preference = language_preference;
             match settings.save() {
                 Ok(()) => {
                     self.soundboard.model.settings = settings;
-                    i18n::set_language(language.resolve());
+                    i18n::set_language(language_preference.resolve());
                     ui.ctx().request_repaint();
                 }
                 Err(error) => {

@@ -12,8 +12,9 @@ use windows::Win32::{
 };
 
 use crate::{
-    audio::{Apartment, Stream, capture::Recording, enumerator},
+    audio::{Stream, capture::Recording, enumerator},
     i18n::{Text, UserContext},
+    utils::ComGuard,
 };
 
 pub fn playback(
@@ -22,7 +23,7 @@ pub fn playback(
     stop: &AtomicBool,
     started: &dyn Fn(),
 ) -> anyhow::Result<()> {
-    let _apartment = Apartment::new()?;
+    let _com_guard = ComGuard::mta()?;
     let device = unsafe { enumerator()?.GetDefaultAudioEndpoint(eRender, eConsole)? };
     let client = unsafe { device.Activate::<IAudioClient>(CLSCTX_ALL, None)? };
     let format = WaveFormat::new(

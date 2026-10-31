@@ -1,4 +1,4 @@
-use crate::utils::base64_encode;
+use crate::utils::win_base64_encode;
 
 static COMPRESSED_APO_DLL: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/voice_box_apo.dll.lz4"));
@@ -25,5 +25,5 @@ pub fn startup_script(
     Ok(STARTUP_SCRIPT
         .replace("__VOICEBOX_ARGUMENT__", startup_argument)
         .replace("__VOICEBOX_SHA256__", hash)
-        .replace("__VOICEBOX_PATH__", &base64_encode(path.as_bytes())?))
+        .replace("__VOICEBOX_PATH__", &win_base64_encode(path.as_bytes())?))
 }

@@ -8,7 +8,7 @@ pub const MIN_GAIN_MILLIDB: i32 = -60_000;
 pub const MAX_GAIN_MILLIDB: i32 = 60_000;
 const MAX_CFG_BYTES: usize = 16_384;
 
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, PartialEq, Eq)]
 pub struct ApoConfig {
     pub denoising_enabled: bool,
     pub gain_millidb: i32,
@@ -40,6 +40,7 @@ pub struct ApoCfgFile {
     unknown: String,
 }
 
+// 这里整个文件****************
 impl ApoCfgFile {
     pub fn read() -> io::Result<Self> {
         // Bound allocation even if an editable configuration file is corrupted.

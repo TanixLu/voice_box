@@ -4,7 +4,7 @@ use crate::hotkeys::Hotkey;
 
 pub type SoundId = i64;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Sound {
     pub id: SoundId,
     pub name: String,

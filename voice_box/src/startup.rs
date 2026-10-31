@@ -1,21 +1,17 @@
 //! One machine-wide, administrator-managed logon task; the database owns its intent.
 
-use std::{os::windows::fs::MetadataExt, path::Path};
+use std::{os::windows::fs::MetadataExt, path::Path, sync::OnceLock};
 
 use anyhow::{Context, ensure};
 use windows::{
     Win32::{
         Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND},
         Security::{
-            Cryptography::{BCRYPT_SHA256_ALG_HANDLE, BCryptHash},
             DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
         },
         Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT,
         System::{
-            Com::{
-                CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
-                CoUninitialize,
-            },
+            Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
             TaskScheduler::{
                 IExecAction, ILogonTrigger, IRegisteredTask, ITaskDefinition, ITaskFolder,
                 ITaskService, TASK_ACTION_EXEC, TASK_CREATE_OR_UPDATE, TASK_DONT_ADD_PRINCIPAL_ACE,
@@ -33,10 +29,10 @@ use voice_box_shared::paths::system_dir;
 use crate::{
     i18n::{Text, UserContext},
     static_data::startup_script,
-    utils::{base64_encode, conhost_path, powershell_path},
+    utils::{ComGuard, conhost_path, powershell_path, win_base64_encode, win_sha256},
 };
 
-pub const STARTUP_ARGUMENT: &str = "--autostart";
+const SILENT_START_ARG: &str = "--silent-start";
 const TASK_NAME: &str = "VoiceBoxStartup";
 const ADMINISTRATORS: &str = "S-1-5-32-544";
 // A protected DACL and group owner also exclude the creator's unelevated token.
@@ -51,28 +47,18 @@ macro_rules! get {
     }};
 }
 
-struct Apartment;
-
-impl Apartment {
-    fn new() -> windows::core::Result<Self> {
-        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok()? };
-        Ok(Self)
-    }
-}
-
-impl Drop for Apartment {
-    fn drop(&mut self) {
-        unsafe { CoUninitialize() };
-    }
+pub fn silent_start() -> bool {
+    static SILENT_START: OnceLock<bool> = OnceLock::new();
+    *SILENT_START.get_or_init(|| std::env::args().any(|arg| arg == SILENT_START_ARG))
 }
 
 /// Returns true only when an enabled task was registered or repaired.
-pub fn synchronize(enabled: bool) -> anyhow::Result<bool> {
+pub fn synchronize_startup(enabled: bool) -> anyhow::Result<bool> {
     synchronize_inner(enabled).user_context(Text::SyncStartupFailed)
 }
 
 fn synchronize_inner(enabled: bool) -> anyhow::Result<bool> {
-    let _apartment = Apartment::new()?;
+    let _com_guard = ComGuard::mta()?;
     unsafe {
         let service: ITaskService = CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER)?;
         let empty = VARIANT::default();
@@ -95,7 +81,7 @@ fn synchronize_inner(enabled: bool) -> anyhow::Result<bool> {
                 Text::StartupRedirectedPath
             );
         }
-        let arguments = startup_arguments(&executable, &sha256(&std::fs::read(&executable)?)?)?;
+        let arguments = startup_arguments(&executable, &win_sha256(&std::fs::read(&executable)?)?)?;
         let expected = definition(&service, &arguments)?;
         match root.GetTask(&BSTR::from(TASK_NAME)) {
             Ok(task) if matches_task(&task, &expected)? => return Ok(false),
@@ -257,22 +243,16 @@ fn matches_definition(
     }
 }
 
-fn sha256(bytes: &[u8]) -> anyhow::Result<String> {
-    ensure!(bytes.len() <= u32::MAX as usize, "Executable is too large");
-    let mut hash = [0; 32];
-    unsafe { BCryptHash(BCRYPT_SHA256_ALG_HANDLE, None, bytes, &mut hash).ok()? };
-    Ok(hash.iter().map(|byte| format!("{byte:02X}")).collect())
-}
-
 fn startup_arguments(path: &Path, hash: &str) -> anyhow::Result<String> {
+    ensure!(path.is_absolute(), "Executable path must be absolute");
     let path = path.to_str().context("Invalid executable path")?;
     ensure!(
         hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()),
         "Invalid SHA-256"
     );
-    let script = startup_script(STARTUP_ARGUMENT, hash, path)?;
+    let script = startup_script(SILENT_START_ARG, hash, path)?;
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    let encoded = base64_encode(&bytes)?;
+    let encoded = win_base64_encode(&bytes)?;
     let arguments =
         format!("-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand {encoded}");
     ensure!(arguments.len() < 30_000, "Startup command is too long");
