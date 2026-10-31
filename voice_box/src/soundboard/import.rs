@@ -84,8 +84,12 @@ fn validate_files(sources: Vec<PathBuf>) -> anyhow::Result<(Vec<ValidatedFile>, 
                     .name("VoiceBoxImportDecoder".into())
                     .spawn_scoped(scope, || {
                         loop {
-                            let Some((index, source, path)) =
-                                pending.lock().expect("pending audio imports").next()
+                            let Some((index, source, path)) = pending
+                                .lock()
+                                .expect(
+                                    "UNREACHABLE: pending audio imports mutex should not be poisoned",
+                                )
+                                .next()
                             else {
                                 break;
                             };

@@ -4,7 +4,7 @@ static COMPRESSED_APO_DLL: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/voice_box_apo.dll.lz4"));
 static APO_DLL: std::sync::LazyLock<Box<[u8]>> = std::sync::LazyLock::new(|| {
     lz4_flex::block::decompress_size_prepended(COMPRESSED_APO_DLL)
-        .expect("Failed to decompress embedded APO DLL")
+        .expect("UNREACHABLE: embedded APO DLL should be valid LZ4 data")
         .into_boxed_slice()
 });
 pub fn apo_dll_bytes() -> &'static [u8] {

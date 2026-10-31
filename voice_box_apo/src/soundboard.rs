@@ -88,7 +88,7 @@ impl Resident {
             (Arc::as_ptr(&resident) as usize, size_of::<Self>()),
         ])?;
         Arc::get_mut(&mut resident)
-            .expect("unpublished soundboard state")
+            .expect("UNREACHABLE: newly created soundboard state should be uniquely owned")
             .pages = Some(pages);
         Ok(resident)
     }

@@ -385,7 +385,10 @@ impl Soundboard {
             _ => None,
         };
         if let Some(result) = removal {
-            let job = self.removal_job.take().expect("pending sound deletion");
+            let job = self
+                .removal_job
+                .take()
+                .expect("UNREACHABLE: a deletion result requires a pending deletion job");
             match result {
                 Ok(library) => {
                     self.library = library;

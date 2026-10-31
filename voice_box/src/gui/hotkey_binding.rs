@@ -222,6 +222,9 @@ impl HotkeyManager {
 
     pub fn begin_batch_capture(&mut self, target: BindingTarget, ids: &HashSet<SoundId>) {
         self.begin_capture(target);
-        self.capture.as_mut().unwrap().ids = Some(ids.clone());
+        self.capture
+            .as_mut()
+            .expect("UNREACHABLE: begin_capture should initialize capture")
+            .ids = Some(ids.clone());
     }
 }

@@ -336,7 +336,10 @@ impl Recorder {
                 .as_ref()
                 .is_some_and(|(_, when)| Instant::now() >= *when)
         {
-            let (range, _) = self.pending_preview.take().unwrap();
+            let (range, _) = self
+                .pending_preview
+                .take()
+                .expect("UNREACHABLE: pending preview should exist after checking its deadline");
             if let Some(clip) = &self.clip {
                 let audio = clip.audio.clone();
                 let samples =

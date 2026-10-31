@@ -283,7 +283,13 @@ pub fn hotkey_editor(
                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
                 |ui| {
                     if let Some(hotkey) = hotkey {
-                        hotkey_badge(ui, hotkey, badge_width.unwrap());
+                        hotkey_badge(
+                            ui,
+                            hotkey,
+                            badge_width.expect(
+                                "UNREACHABLE: badge width should exist when a hotkey is present",
+                            ),
+                        );
                         if icon_button(ui, true, ButtonIcon::ClearHotkey).clicked() {
                             *key = None;
                         }

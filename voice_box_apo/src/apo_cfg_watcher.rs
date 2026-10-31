@@ -226,7 +226,9 @@ fn watch(stop: &Event, config: &RtConfig) {
                 }
             }
         }
-        let current = watch.as_ref().expect("directory subscription exists");
+        let current = watch
+            .as_ref()
+            .expect("UNREACHABLE: directory subscription should exist");
         let events = [stop.handle(), current.0];
         // Directory notifications handle writes and atomic replacements. A slow
         // health check also recovers if the whole directory is deleted/recreated.

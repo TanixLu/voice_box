@@ -253,7 +253,10 @@ impl Drop for LockedPages {
         let mut registry = PAGES.lock().unwrap_or_else(|e| e.into_inner());
         let mut released = 0;
         for page in &self.pages {
-            let lock = registry.pages.get_mut(page).expect("owned page lease");
+            let lock = registry
+                .pages
+                .get_mut(page)
+                .expect("UNREACHABLE: leased page should exist in the registry");
             lock.references -= 1;
             if lock.references == 0 {
                 if lock.owned {

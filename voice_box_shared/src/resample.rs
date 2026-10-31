@@ -44,7 +44,7 @@ impl Resampler {
             1,
             FixedAsync::Input,
         )
-        .expect("validated sample rates and sinc parameters");
+        .expect("UNREACHABLE: validated rates and fixed parameters should create a resampler");
         // Preserve the fractional part truncated by Rubato's output_delay().
         // Its interpolation index advances before the first output sample.
         let sinc_len = parameters.sinc_len.next_multiple_of(8);
@@ -96,14 +96,14 @@ impl Resampler {
         self.pending = 0;
         self.read = 0;
         self.available = if let Some(engine) = &mut self.engine {
-            let input =
-                SequentialSlice::new(&self.input, 1, self.input.len()).expect("fixed mono input");
+            let input = SequentialSlice::new(&self.input, 1, self.input.len())
+                .expect("UNREACHABLE: mono input view should fit its backing slice");
             let output_len = self.output.len();
             let mut output = SequentialSlice::new_mut(&mut self.output, 1, output_len)
-                .expect("fixed mono output");
+                .expect("UNREACHABLE: mono output view should fit its backing slice");
             let (consumed, produced) = engine
                 .process_into_buffer(&input, &mut output, None)
-                .expect("fixed resampler buffers");
+                .expect("UNREACHABLE: preallocated buffers should satisfy resampler requirements");
             debug_assert_eq!(consumed, self.input.len());
             produced
         } else {

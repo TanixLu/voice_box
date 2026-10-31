@@ -225,13 +225,11 @@ pub fn with_audio_service_stopped(
     // Always restart the service, including when a registry or DLL write fails.
     let operation_result = operation();
 
-    let completion = pending.restart();
-    let outcome = completion.outcome().clone();
-    completion.end()?;
+    let outcome = pending.restart().end()?;
     outcome.shutdown_outcome().clone().into_result()?;
     outcome
         .restart_outcome()
-        .expect("Failed to restart audio service")
+        .expect("UNREACHABLE: restart should always provide an outcome")
         .clone()
         .into_result()?;
     info!("Audio service restarted successfully");

@@ -52,10 +52,12 @@ fn generate_icons(out: &Path) {
 }
 
 fn compress_apo_dll(out: &Path) {
-    let input = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
-        .join("../target")
-        .join(env::var_os("PROFILE").unwrap())
-        .join("voice_box_apo.dll");
+    let input = PathBuf::from(
+        env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR should be set by Cargo"),
+    )
+    .join("../target")
+    .join(env::var_os("PROFILE").expect("PROFILE should be set by Cargo"))
+    .join("voice_box_apo.dll");
     let output = out.join("voice_box_apo.dll.lz4");
     println!("cargo:rerun-if-changed={}", input.display());
 
@@ -74,11 +76,11 @@ fn main() {
     println!("cargo:rerun-if-changed=../assets/icon.svg");
     println!("cargo:rerun-if-changed=../assets/voice_box.manifest");
 
-    let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR should be set by Cargo"));
     generate_icons(&out);
     compress_apo_dll(&out);
 
-    let target = env::var("TARGET").unwrap();
+    let target = env::var("TARGET").expect("TARGET should be set by Cargo");
     if !target.contains("windows") {
         return;
     }
@@ -93,8 +95,8 @@ fn main() {
             .arg(&resource)
             .arg("voice_box.rc")
             .status()
-            .expect("Windows SDK resource compiler (rc.exe) is required");
-        assert!(status.success(), "Failed to compile the VoiceBox icon");
+            .expect("Failed to run rc.exe; ensure the Windows SDK resource compiler is installed");
+        assert!(status.success(), "Failed to compile VoiceBox resources");
         resource
     } else {
         let resource = out.join("voice_box.o");
@@ -103,8 +105,8 @@ fn main() {
             .args(["-i", "voice_box.rc", "-o"])
             .arg(&resource)
             .status()
-            .expect("MinGW resource compiler (windres) is required");
-        assert!(status.success(), "Failed to compile the VoiceBox icon");
+            .expect("Failed to run windres; ensure the MinGW resource compiler is installed");
+        assert!(status.success(), "Failed to compile VoiceBox resources");
         resource
     };
     println!("cargo:rustc-link-arg-bin=voice_box={}", resource.display());

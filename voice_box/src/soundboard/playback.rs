@@ -246,13 +246,16 @@ pub fn run(
                 }
                 // Opening a device or decoding a packet can take time. Read the
                 // current clock so the render queue does not use a stale timeline.
-                monitor.as_mut().unwrap().fill(clock.frame(), |frame| {
-                    let stereo = mapping.read(frame, generation);
-                    [
-                        stereo[0] * settings.speaker_gain_percent.as_f32_gain(),
-                        stereo[1] * settings.speaker_gain_percent.as_f32_gain(),
-                    ]
-                })
+                monitor
+                    .as_mut()
+                    .expect("UNREACHABLE: monitor should exist after successful initialization")
+                    .fill(clock.frame(), |frame| {
+                        let stereo = mapping.read(frame, generation);
+                        [
+                            stereo[0] * settings.speaker_gain_percent.as_f32_gain(),
+                            stereo[1] * settings.speaker_gain_percent.as_f32_gain(),
+                        ]
+                    })
             })();
             if let Err(error) = result {
                 if settings.microphone_gain_percent.is_zero() {

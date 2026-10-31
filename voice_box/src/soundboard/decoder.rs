@@ -89,7 +89,7 @@ impl SoundDecoder {
         while let Some(left) = self.resamplers[0].next_sample() {
             let right = self.resamplers[1]
                 .next_sample()
-                .expect("identical stereo converters");
+                .expect("UNREACHABLE: stereo resamplers should produce the same number of samples");
             if self.delay_frames_remaining > 0 {
                 self.delay_frames_remaining -= 1;
             } else {

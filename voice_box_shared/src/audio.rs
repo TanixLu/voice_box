@@ -29,10 +29,20 @@ impl SampleFormat {
         }
     }
 
+    /// # Panics
+    /// Panics if `sample.len()` does not equal `self.bytes()`.
     pub fn decode(self, sample: &[u8]) -> f64 {
         let value = match self {
-            Self::Float32 => f64::from(f32::from_le_bytes(sample.try_into().unwrap())),
-            Self::Float64 => f64::from_le_bytes(sample.try_into().unwrap()),
+            Self::Float32 => {
+                f64::from(f32::from_le_bytes(sample.try_into().expect(
+                    "UNREACHABLE: Float32 sample should contain exactly 4 bytes",
+                )))
+            }
+            Self::Float64 => f64::from_le_bytes(
+                sample
+                    .try_into()
+                    .expect("UNREACHABLE: Float64 sample should contain exactly 8 bytes"),
+            ),
             Self::Pcm { bytes, valid_bits } => {
                 let input = if bytes == 1 {
                     i32::from(sample[0]) - 128

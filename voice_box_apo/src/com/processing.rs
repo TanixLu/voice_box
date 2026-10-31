@@ -171,8 +171,10 @@ pub unsafe extern "system" fn lock_for_process(
             APOERR_APO_LOCKED,
         );
     }
-    let frame_bytes = frame_bytes(&input_format).expect("validated format has a frame size");
-    let sample_format = sample_format(&input_format).expect("validated sample format");
+    let frame_bytes =
+        frame_bytes(&input_format).expect("UNREACHABLE: validated format should have a frame size");
+    let sample_format = sample_format(&input_format)
+        .expect("UNREACHABLE: validated format should have a supported sample format");
     let max_input_frames = unsafe { (**inputs).u32MaxFrameCount };
     let max_output_frames = unsafe { (**outputs).u32MaxFrameCount };
     if max_output_frames < max_input_frames {

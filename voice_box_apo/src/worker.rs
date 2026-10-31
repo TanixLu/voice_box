@@ -101,11 +101,18 @@ pub fn spawn(name: PCWSTR, action: impl FnOnce() + Send + 'static) -> windows::c
 
 unsafe extern "system" fn entry(raw: *mut c_void) -> u32 {
     let mut start = unsafe { Box::from_raw(raw.cast::<WorkerContext>()) };
-    let action = start.action.take().expect("owned worker action");
+    let action = start
+        .action
+        .take()
+        .expect("UNREACHABLE: worker context should contain an action");
     if catch_unwind(AssertUnwindSafe(action)).is_err() {
         etw::apo_log!(etw::ERROR, etw::LIFECYCLE, "APO background worker panicked");
     }
-    let module = start.module.take().expect("owned DLL reference").into_raw();
+    let module = start
+        .module
+        .take()
+        .expect("UNREACHABLE: worker context should contain a DLL reference")
+        .into_raw();
     // All Rust values, buffers and counters are destroyed first.
     drop(start);
     // Clean up ETW too if the host already released its loader reference and

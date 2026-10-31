@@ -111,7 +111,9 @@ impl SoundSettings {
                 egui::ScrollArea::vertical()
                     .max_height((available.y - 230.0).max(80.0))
                     .show(ui, |ui| {
-                        let settings = self.draft.as_mut().unwrap();
+                        let settings = self.draft.as_mut().expect(
+                            "UNREACHABLE: settings draft should exist while rendering the dialog",
+                        );
                         playback_volume(
                             ui,
                             Text::MicrophoneOutput.text(),
@@ -223,7 +225,10 @@ impl SoundSettings {
             self.draft = None;
             Action::Closed
         } else if save {
-            let draft = self.draft.as_mut().unwrap();
+            let draft = self
+                .draft
+                .as_mut()
+                .expect("UNREACHABLE: settings draft should exist while rendering the dialog");
             draft.language_preference = current.language_preference;
             draft.theme_preference = current.theme_preference;
             draft.startup_enabled = current.startup_enabled;
