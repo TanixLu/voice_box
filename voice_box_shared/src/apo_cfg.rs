@@ -1,64 +1,62 @@
 //! Machine-wide apo.cfg shared by the GUI and APO watcher.
 
-use std::io::{self, Read};
+use std::io::{self, Read, Write as _};
 
-use crate::{error::SharedError, paths::apo_cfg_path};
+use atomic_write_file::AtomicWriteFile;
 
-pub const MIN_GAIN_MILLIDB: i32 = -60_000;
-pub const MAX_GAIN_MILLIDB: i32 = 60_000;
-const MAX_CFG_BYTES: usize = 16_384;
+use crate::{field_name, paths::apo_cfg_path};
 
-#[derive(Default, Clone, PartialEq, Eq)]
-pub struct ApoConfig {
-    pub denoising_enabled: bool,
-    pub gain_millidb: i32,
-}
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub struct GainMillidb(i32);
 
-impl ApoConfig {
-    pub fn linear_gain(&self) -> f32 {
-        if self.gain_millidb == MIN_GAIN_MILLIDB {
+impl GainMillidb {
+    pub const MIN_VALUE: i32 = -60_000;
+    pub const MAX_VALUE: i32 = 60_000;
+
+    pub fn new(value: i32) -> Self {
+        Self(value.clamp(Self::MIN_VALUE, Self::MAX_VALUE))
+    }
+
+    pub fn parse(s: &str) -> Result<Self, std::num::ParseIntError> {
+        let value = s.parse::<i32>()?;
+        Ok(Self::new(value))
+    }
+
+    pub fn as_i32(&self) -> i32 {
+        self.0
+    }
+
+    pub fn as_f32_gain(&self) -> f32 {
+        if self.0 == Self::MIN_VALUE {
             0.0
         } else {
-            10.0_f32.powf(self.gain_millidb as f32 / 20_000.0)
+            10.0_f32.powf(self.0 as f32 / 20_000.0)
         }
-    }
-
-    pub fn validate(&self) -> io::Result<()> {
-        if !(MIN_GAIN_MILLIDB..=MAX_GAIN_MILLIDB).contains(&self.gain_millidb) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                SharedError::GainOutOfRange,
-            ));
-        }
-        Ok(())
     }
 }
 
-#[derive(Default)]
-pub struct ApoCfgFile {
-    pub config: ApoConfig,
-    unknown: String,
+#[derive(Default, Clone, PartialEq, Eq)]
+pub struct ApoCfg {
+    pub denoising_enabled: bool,
+    pub gain_millidb: GainMillidb,
 }
 
-// 这里整个文件****************
-impl ApoCfgFile {
+impl ApoCfg {
+    const MAX_CFG_BYTES: usize = 16_384;
+
     pub fn read() -> io::Result<Self> {
-        // Bound allocation even if an editable configuration file is corrupted.
         let mut bytes = Vec::new();
         std::fs::File::open(apo_cfg_path()?)?
-            .take((MAX_CFG_BYTES + 1) as u64)
+            .take((Self::MAX_CFG_BYTES + 1) as u64)
             .read_to_end(&mut bytes)?;
-        Ok(Self::decode(&bytes))
-    }
-
-    fn decode(bytes: &[u8]) -> Self {
+        let bytes = &bytes[..];
         let mut cfg = Self::default();
-        let Ok(text) = std::str::from_utf8(bytes) else {
-            return cfg;
-        };
-        if bytes.len() > MAX_CFG_BYTES {
-            return cfg;
+        if bytes.len() > Self::MAX_CFG_BYTES {
+            return Ok(cfg);
         }
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            return Ok(cfg);
+        };
         for line in text.split_inclusive('\n') {
             let entry = line.trim();
             if entry.chars().any(|c| c.is_control() && c != '\t') {
@@ -67,45 +65,36 @@ impl ApoCfgFile {
             let Some((key, value)) = entry.split_once('=') else {
                 continue;
             };
-            match (key.trim(), value.trim()) {
-                ("", _) => {}
-                ("denoising_enabled", value) => {
-                    if let Ok(value) = value.parse() {
-                        cfg.config.denoising_enabled = value;
-                    }
+            let key = key.trim();
+            let value = value.trim();
+            if key == field_name!(cfg, denoising_enabled) {
+                if let Ok(v) = value.parse() {
+                    cfg.denoising_enabled = v;
                 }
-                ("gain_millidb", value) => {
-                    if let Ok(value) = value.parse()
-                        && (MIN_GAIN_MILLIDB..=MAX_GAIN_MILLIDB).contains(&value)
-                    {
-                        cfg.config.gain_millidb = value;
-                    }
+            } else if key == field_name!(cfg, gain_millidb) {
+                if let Ok(v) = GainMillidb::parse(value) {
+                    cfg.gain_millidb = v;
                 }
-                _ => cfg.unknown.push_str(line),
             }
         }
-        cfg
+        Ok(cfg)
     }
 
-    // Written by the GUI; the same schema module is read-only in the APO DLL.
-    pub fn encode(&self) -> io::Result<Vec<u8>> {
-        self.config.validate()?;
+    pub fn save(&self) -> anyhow::Result<()> {
         let bytes = format!(
-            "denoising_enabled={}\ngain_millidb={}\n{}",
-            self.config.denoising_enabled, self.config.gain_millidb, self.unknown
+            "{}={}\n{}={}\n",
+            field_name!(self, denoising_enabled),
+            self.denoising_enabled,
+            field_name!(self, gain_millidb),
+            self.gain_millidb.as_i32(),
         )
         .into_bytes();
-        check_size(bytes.len())?;
-        Ok(bytes)
+        if bytes.len() > Self::MAX_CFG_BYTES {
+            anyhow::bail!("The VoiceBox APO configuration file is too large");
+        }
+        let mut file = AtomicWriteFile::open(apo_cfg_path()?)?;
+        file.write_all(&bytes)?;
+        file.commit()?;
+        Ok(())
     }
-}
-
-fn check_size(size: usize) -> io::Result<()> {
-    if size > MAX_CFG_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            SharedError::ApoCfgTooLarge,
-        ));
-    }
-    Ok(())
 }

@@ -1,6 +1,6 @@
 use std::sync::mpsc;
 
-use voice_box_shared::apo_cfg::ApoConfig;
+use voice_box_shared::apo_cfg::ApoCfg;
 
 use crate::{
     devices::{Microphone, PluginOperationResult, Speaker},
@@ -19,7 +19,7 @@ pub enum JobResult {
     OutputDevices(anyhow::Result<(Vec<Microphone>, Vec<Speaker>)>),
     Plugin(PluginOperationResult),
     Saved {
-        config: ApoConfig,
+        config: ApoCfg,
         result: anyhow::Result<()>,
     },
 }

@@ -2,8 +2,6 @@
 
 use wasapi::{DeviceEnumerator, DeviceState, Direction};
 
-use voice_box_shared::error::SharedError;
-
 use crate::{
     setup::{self, PluginStatus},
     utils::ComGuard,
@@ -48,7 +46,7 @@ pub fn soundboard_microphone_guid(device_id: Option<&str>) -> anyhow::Result<Str
     };
     anyhow::ensure!(
         device.get_direction() == Direction::Capture,
-        SharedError::InvalidMicrophoneId
+        "Invalid microphone ID"
     );
     anyhow::ensure!(
         device.get_state()? == DeviceState::Active,
@@ -58,7 +56,7 @@ pub fn soundboard_microphone_guid(device_id: Option<&str>) -> anyhow::Result<Str
     let guid = id
         .rsplit('.')
         .next()
-        .ok_or_else(|| anyhow::anyhow!(SharedError::InvalidMicrophoneId))?;
+        .ok_or_else(|| anyhow::anyhow!("Invalid microphone ID"))?;
     anyhow::ensure!(
         setup::device_plugin_status(guid) == PluginStatus::Installed,
         crate::i18n::Text::SoundboardMicrophonePluginRequired
@@ -100,7 +98,7 @@ pub fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
         let guid = id
             .rsplit('.')
             .next()
-            .ok_or_else(|| anyhow::anyhow!(SharedError::InvalidMicrophoneId))?
+            .ok_or_else(|| anyhow::anyhow!("Invalid microphone ID"))?
             .to_owned();
         let is_default = default_id.as_deref() == Some(&id);
         if is_default {

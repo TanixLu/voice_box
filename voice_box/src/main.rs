@@ -1,6 +1,5 @@
 #![windows_subsystem = "windows"]
 
-mod apo_cfg_writer;
 mod audio;
 mod database;
 mod devices;
@@ -25,7 +24,7 @@ use crate::{
     i18n::{LanguagePreference, Message, Text, set_language},
     single::is_single_instance,
     startup::silent_start,
-    utils::{win_error_popup, win_is_admin},
+    utils::{win_is_admin, win_popup_error},
 };
 
 fn main() {
@@ -34,7 +33,7 @@ fn main() {
         Err(err) => {
             error!("Application error: {err:?}");
             if !silent_start() {
-                win_error_popup(&Message::error(err).text());
+                win_popup_error(&Message::error(err).text());
             }
             std::process::exit(1);
         }
@@ -45,6 +44,6 @@ fn run() -> anyhow::Result<()> {
     set_language(LanguagePreference::System.resolve());
     ensure!(win_is_admin(), Text::AdministratorRequired);
     ensure!(is_single_instance(), Text::AnotherInstance);
-    apo_cfg_writer::init()?; // 这里****************
+    // apo_cfg_writer::init()?; // 这里****************
     todo!()
 }

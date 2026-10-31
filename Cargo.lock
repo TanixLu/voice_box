@@ -3650,6 +3650,7 @@ name = "voice_box_shared"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "atomic-write-file",
  "rubato",
  "windows",
  "windows-core",

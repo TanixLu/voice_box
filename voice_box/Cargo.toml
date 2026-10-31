@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-atomic-write-file = "0.3.1"
+atomic-write-file.workspace = true
 eframe = { version = "0.37", default-features = false, features = [
     "accesskit",
     "clipboard",

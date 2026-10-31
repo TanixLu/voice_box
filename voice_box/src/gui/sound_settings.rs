@@ -280,32 +280,38 @@ fn output_device_picker(
 }
 
 fn playback_volume(ui: &mut egui::Ui, label: &str, gain_percent: &mut GainPercent) -> bool {
-    ui.horizontal_wrapped(|ui| {
-        ui.label(label);
-        ui.add(
-            egui::Slider::new(gain_percent.inner_mut_u16(), 0..=GainPercent::MAX_VALUE)
-                .step_by(1.0)
-                .custom_formatter(|value, _| {
-                    if value == 0.0 {
-                        Text::NoOutput.text().into()
-                    } else {
-                        format!("{:.0}%", value)
-                    }
-                })
-                .custom_parser(|text| {
-                    if Text::NoOutput.matches_input(text) {
-                        Some(0.0)
-                    } else {
-                        text.trim()
-                            .trim_end_matches('%')
-                            .trim()
-                            .parse::<f64>()
-                            .ok()
-                            .filter(|value| value.is_finite())
-                    }
-                }),
-        )
-        .changed()
-    })
-    .inner
+    let mut value = gain_percent.as_u16();
+    let changed = ui
+        .horizontal_wrapped(|ui| {
+            ui.label(label);
+            ui.add(
+                egui::Slider::new(&mut value, 0..=GainPercent::MAX_VALUE)
+                    .step_by(1.0)
+                    .custom_formatter(|value, _| {
+                        if value == 0.0 {
+                            Text::NoOutput.text().into()
+                        } else {
+                            format!("{:.0}%", value)
+                        }
+                    })
+                    .custom_parser(|text| {
+                        if Text::NoOutput.matches_input(text) {
+                            Some(0.0)
+                        } else {
+                            text.trim()
+                                .trim_end_matches('%')
+                                .trim()
+                                .parse::<f64>()
+                                .ok()
+                                .filter(|value| value.is_finite())
+                        }
+                    }),
+            )
+            .changed()
+        })
+        .inner;
+    if changed {
+        *gain_percent = GainPercent::new(value);
+    }
+    changed
 }

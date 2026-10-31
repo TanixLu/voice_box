@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+atomic-write-file.workspace = true
 rubato = { version = "5.0", default-features = false }
 windows = { workspace = true, features = [
     "Win32_Foundation",

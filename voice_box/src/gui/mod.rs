@@ -16,10 +16,9 @@ mod voice;
 mod widgets;
 
 use strum::IntoEnumIterator;
-use voice_box_shared::apo_cfg::{ApoCfgFile, ApoConfig};
+use voice_box_shared::apo_cfg::ApoCfg;
 
 use crate::{
-    apo_cfg_writer,
     gui::{
         hotkey_binding::{HotkeyManager, PlaybackAction},
         jobs::{JobResult, Jobs},
@@ -50,7 +49,7 @@ fn close_to_tray(ctx: &egui::Context, exiting: bool, tray_available: bool) {
 }
 
 pub fn run(settings: settings::Settings, start_in_tray: bool) -> anyhow::Result<()> {
-    let apo_config = ApoCfgFile::read()?.config;
+    let apo_config = ApoCfg::read()?;
     let library = Library::try_load()?;
     let icon = eframe::icon_data::from_png_bytes(ICON_PNG_DATA)?;
     let options = eframe::NativeOptions {
@@ -116,7 +115,7 @@ struct VoiceBoxApp {
 impl VoiceBoxApp {
     fn new(
         cc: &eframe::CreationContext<'_>,
-        apo_config: ApoConfig,
+        apo_config: ApoCfg,
         settings: settings::Settings,
         library: Library,
         start_in_tray: bool,
@@ -335,7 +334,7 @@ impl VoiceBoxApp {
                                 if let Some(config) = self.voice.config_ui(ui, self.jobs.busy()) {
                                     self.jobs.begin(ui.ctx(), Text::SavingApoCfg, move || {
                                         JobResult::Saved {
-                                            result: apo_cfg_writer::save(config.clone()),
+                                            result: config.save(),
                                             config,
                                         }
                                     });

@@ -23,11 +23,7 @@ use windows::{
     core::{PCWSTR, w},
 };
 
-use voice_box_shared::{
-    apo_cfg::{ApoCfgFile, ApoConfig},
-    paths::data_dir,
-    utils::wide_null,
-};
+use voice_box_shared::{apo_cfg::ApoCfg, paths::data_dir, utils::wide_null};
 
 use crate::{etw, worker};
 
@@ -47,8 +43,8 @@ impl Default for RtConfig {
     }
 }
 impl RtConfig {
-    pub fn store(&self, apo_config: ApoConfig) {
-        let gain = apo_config.linear_gain();
+    pub fn store(&self, apo_config: ApoCfg) {
+        let gain = apo_config.gain_millidb.as_f32_gain();
         let bits = if apo_config.denoising_enabled {
             ENABLED_BIT
         } else {
@@ -128,7 +124,7 @@ pub struct ApoCfgWatcher {
 }
 impl ApoCfgWatcher {
     pub fn start(config: Arc<RtConfig>) -> windows::core::Result<Self> {
-        config.store(ApoCfgFile::read().unwrap_or_default().config);
+        config.store(ApoCfg::read().unwrap_or_default());
         let stop = Arc::new(Event(unsafe { CreateEventW(None, true, false, None)? }));
         let worker_stop = Arc::clone(&stop);
         worker::spawn(w!("VoiceBoxApoCfg"), move || watch(&worker_stop, &config))?;
@@ -188,9 +184,9 @@ fn report_fault(faulted: &mut bool, error: &anyhow::Error) {
 }
 
 fn reload(config: &RtConfig, faulted: &mut bool) {
-    match ApoCfgFile::read() {
+    match ApoCfg::read() {
         Ok(cfg) => {
-            config.store(cfg.config);
+            config.store(cfg);
             if *faulted {
                 etw::apo_log!(
                     etw::INFO,

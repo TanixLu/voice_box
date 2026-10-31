@@ -14,7 +14,7 @@ use winreg::{
     types::FromRegValue,
 };
 
-use voice_box_shared::{apo_cfg::ApoCfgFile, paths::apo_dll_path, plugin};
+use voice_box_shared::{apo_cfg::ApoCfg, paths::apo_dll_path, plugin};
 
 use crate::{
     i18n::{Message, Text, UserContext},
@@ -132,7 +132,7 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     {
         return PluginStatus::NotInstalled;
     }
-    if !ApoCfgFile::read().is_ok() {
+    if !ApoCfg::read().is_ok() {
         return PluginStatus::NeedsUpdate;
     }
     // Check whether the DLL needs to be updated.

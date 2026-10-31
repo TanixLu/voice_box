@@ -1,4 +1,4 @@
-use voice_box_shared::apo_cfg::{ApoConfig, MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB};
+use voice_box_shared::apo_cfg::{ApoCfg, GainMillidb};
 
 use crate::{
     audio::session::{Activity, AudioSession},
@@ -8,23 +8,23 @@ use crate::{
 };
 
 pub struct VoicePanel {
-    config: ApoConfig,
-    saved: ApoConfig,
+    config: ApoCfg,
+    saved: ApoCfg,
     pub session: AudioSession,
 }
 
 impl VoicePanel {
-    pub fn new(config: ApoConfig) -> Self {
+    pub fn new(config: ApoCfg) -> Self {
         Self {
             saved: config.clone(),
             config,
             session: AudioSession::default(),
         }
     }
-    pub fn mark_saved(&mut self, config: ApoConfig) {
+    pub fn mark_saved(&mut self, config: ApoCfg) {
         self.saved = config;
     }
-    pub fn config_ui(&mut self, ui: &mut egui::Ui, busy: bool) -> Option<ApoConfig> {
+    pub fn config_ui(&mut self, ui: &mut egui::Ui, busy: bool) -> Option<ApoCfg> {
         let mut save_requested = false;
         ui.strong(Text::VoiceConfig.text());
         ui.add_enabled_ui(!busy, |ui| {
@@ -32,7 +32,9 @@ impl VoicePanel {
                 &mut self.config.denoising_enabled,
                 Text::EnableDenoising.text(),
             );
-            let mut gain_db = self.config.gain_millidb as f64 / 1000.0;
+            const MIN_DB: f64 = GainMillidb::MIN_VALUE as f64 / 1000.0;
+            const MAX_DB: f64 = GainMillidb::MAX_VALUE as f64 / 1000.0;
+            let mut gain_db = self.config.gain_millidb.as_i32() as f64 / 1000.0;
             let mut changed = false;
             ui.horizontal(|ui| {
                 ui.label(Text::VolumeAdjustment.text());
@@ -40,14 +42,11 @@ impl VoicePanel {
                     changed |= ui
                         .add(
                             egui::DragValue::new(&mut gain_db)
-                                .range(
-                                    MIN_GAIN_MILLIDB as f64 / 1000.0
-                                        ..=MAX_GAIN_MILLIDB as f64 / 1000.0,
-                                )
+                                .range(MIN_DB..=MAX_DB)
                                 .speed(0.1)
                                 .fixed_decimals(1)
                                 .custom_formatter(|value, _| {
-                                    if value <= MIN_GAIN_MILLIDB as f64 / 1000.0 {
+                                    if value <= MIN_DB {
                                         Text::Mute.text().into()
                                     } else if value > 0.0 {
                                         format!("+{value:.1} dB")
@@ -57,7 +56,7 @@ impl VoicePanel {
                                 })
                                 .custom_parser(|text| {
                                     if Text::Mute.matches_input(text) {
-                                        Some(MIN_GAIN_MILLIDB as f64 / 1000.0)
+                                        Some(MIN_DB)
                                     } else {
                                         text.trim().trim_end_matches("dB").trim().parse().ok()
                                     }
@@ -78,12 +77,9 @@ impl VoicePanel {
             ui.scope(|ui| {
                 ui.spacing_mut().slider_width = ui.available_width();
                 let slider = ui.add(
-                    egui::Slider::new(
-                        &mut gain_db,
-                        MIN_GAIN_MILLIDB as f64 / 1000.0..=MAX_GAIN_MILLIDB as f64 / 1000.0,
-                    )
-                    .step_by(0.1)
-                    .show_value(false),
+                    egui::Slider::new(&mut gain_db, MIN_DB..=MAX_DB)
+                        .step_by(0.1)
+                        .show_value(false),
                 );
                 changed |= slider.changed();
                 if slider.dragged() && gain_db.abs() <= 0.5 {
@@ -96,7 +92,7 @@ impl VoicePanel {
                     .circle_filled(marker, 2.0, ui.visuals().weak_text_color());
             });
             if changed {
-                self.config.gain_millidb = (gain_db * 1000.0).round() as i32;
+                self.config.gain_millidb = GainMillidb::new((gain_db * 1000.0).round() as i32);
             }
         });
         ui.horizontal_wrapped(|ui| {
@@ -115,12 +111,12 @@ impl VoicePanel {
             }
             if trailing_button(
                 ui,
-                !busy && self.config != ApoConfig::default(),
+                !busy && self.config != ApoCfg::default(),
                 Text::RestoreDefaults.text(),
             )
             .clicked()
             {
-                self.config = ApoConfig::default();
+                self.config = ApoCfg::default();
             }
         });
         if self.config != self.saved {

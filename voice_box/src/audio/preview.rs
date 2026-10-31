@@ -14,7 +14,7 @@ use windows::{
     core::{PCSTR, PCWSTR},
 };
 
-use voice_box_shared::{apo_cfg::ApoConfig, paths::apo_dll_path, preview, utils::wide_null};
+use voice_box_shared::{apo_cfg::ApoCfg, paths::apo_dll_path, preview, utils::wide_null};
 
 use crate::{
     audio::capture::Recording,
@@ -65,8 +65,7 @@ impl Drop for PreviewDll {
     }
 }
 
-pub fn process(recording: &Recording, config: &ApoConfig) -> anyhow::Result<Vec<f32>> {
-    config.validate()?;
+pub fn process(recording: &Recording, config: &ApoCfg) -> anyhow::Result<Vec<f32>> {
     ensure!(
         recording.channels > 0
             && !recording.samples.is_empty()
@@ -84,7 +83,7 @@ pub fn process(recording: &Recording, config: &ApoConfig) -> anyhow::Result<Vec<
             recording.sample_rate,
             u32::from(recording.channels),
             u32::try_from(recording.samples.len() / recording.channels as usize)?,
-            config.gain_millidb,
+            config.gain_millidb.as_i32(),
             u32::from(config.denoising_enabled),
             recording.samples.as_ptr(),
             output.as_mut_ptr(),

@@ -117,7 +117,7 @@ pub fn win_preferred_ui_languages() -> Vec<String> {
     }
 }
 
-pub fn win_error_popup(msg: &str) {
+pub fn win_popup_error(msg: &str) {
     let message = wide_null(msg);
     unsafe {
         MessageBoxW(

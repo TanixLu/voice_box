@@ -26,16 +26,6 @@ impl Details {
                 if let Some(text) = error.downcast_ref::<Text>() {
                     return text.in_language(language).to_owned();
                 }
-                if let Some(error) = error.downcast_ref::<voice_box_shared::error::SharedError>() {
-                    return super::shared_error::render(*error, language).to_owned();
-                }
-                if let Some(error) = error
-                    .downcast_ref::<std::io::Error>()
-                    .and_then(std::io::Error::get_ref)
-                    .and_then(|error| error.downcast_ref::<voice_box_shared::error::SharedError>())
-                {
-                    return super::shared_error::render(*error, language).to_owned();
-                }
                 error.to_string()
             })
             .collect::<Vec<_>>()

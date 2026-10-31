@@ -15,8 +15,6 @@ use windows::Win32::{
 };
 use windows_core::GUID;
 
-use crate::error::SharedError;
-
 pub fn cached_path(
     cell: &'static OnceLock<PathBuf>,
     init: impl FnOnce() -> io::Result<PathBuf>,
@@ -70,8 +68,7 @@ pub fn apo_cfg_path() -> io::Result<&'static Path> {
 }
 
 pub fn transport_path(guid: &str) -> anyhow::Result<PathBuf> {
-    // Never derive an arbitrary filesystem path from endpoint or IPC input.
     let id = guid.trim_matches(['{', '}']);
-    ensure!(GUID::try_from(id).is_ok(), SharedError::InvalidMicrophoneId);
+    ensure!(GUID::try_from(id).is_ok(), "Invalid microphone ID");
     Ok(data_dir()?.join(format!("soundboard-{}.pcm", id.to_ascii_lowercase())))
 }

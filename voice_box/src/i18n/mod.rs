@@ -1,5 +1,4 @@
 mod message;
-mod shared_error;
 mod text;
 
 use std::sync::atomic::{AtomicU8, Ordering};

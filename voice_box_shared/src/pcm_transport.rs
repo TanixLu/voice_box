@@ -24,8 +24,6 @@ use windows::{
     core::PCWSTR,
 };
 
-use crate::error::SharedError;
-
 pub const SAMPLE_RATE: u32 = 48_000;
 pub const BUFFER_CAPACITY_FRAMES: usize = 32_768;
 pub const DECODE_AHEAD_FRAMES: u64 = 12_000; // 250 ms of decoded audio, bounded independently of file length.
@@ -48,10 +46,6 @@ impl GainPercent {
 
     pub fn as_u16(&self) -> u16 {
         self.0
-    }
-
-    pub fn inner_mut_u16(&mut self) -> &mut u16 {
-        &mut self.0
     }
 
     pub fn as_f32_gain(&self) -> f32 {
@@ -77,7 +71,7 @@ impl Clock {
         unsafe {
             QueryPerformanceFrequency(&mut frequency)?;
         }
-        ensure!(frequency > 0, SharedError::AudioClockUnavailable);
+        ensure!(frequency > 0, "The system audio clock is unavailable");
         Ok(Self { frequency })
     }
     pub fn frame(self) -> u64 {
@@ -163,7 +157,7 @@ impl Mapping {
         }
         ensure!(
             file.metadata()?.len() == SIZE as u64,
-            SharedError::InvalidPlaybackLayout
+            "Invalid playback buffer layout"
         );
         let handle = unsafe {
             CreateFileMappingW(
@@ -196,7 +190,7 @@ impl Mapping {
             unsafe {
                 let _ = CloseHandle(handle);
             }
-            anyhow::bail!(SharedError::MapPlaybackBuffer);
+            anyhow::bail!("Failed to map the playback buffer");
         }
         let result = Self {
             view,
@@ -210,7 +204,7 @@ impl Mapping {
         } else {
             ensure!(
                 result.header().magic.load(SeqCst) == MAGIC,
-                SharedError::InvalidPlaybackId
+                "Invalid playback buffer identifier"
             );
         }
         Ok(result)

@@ -9,7 +9,7 @@ use std::{
     time::Instant,
 };
 
-use voice_box_shared::apo_cfg::ApoConfig;
+use voice_box_shared::apo_cfg::ApoCfg;
 
 use crate::{
     audio::{
@@ -27,7 +27,7 @@ pub enum Activity {
 }
 
 struct ProcessedRecording {
-    config: ApoConfig,
+    config: ApoCfg,
     samples: Arc<Vec<f32>>,
 }
 
@@ -157,7 +157,7 @@ impl AudioSession {
         );
     }
 
-    pub fn play(&mut self, config: Option<ApoConfig>, wake: impl Fn() + Send + 'static) {
+    pub fn play(&mut self, config: Option<ApoCfg>, wake: impl Fn() + Send + 'static) {
         let Some(recording) = self.recording.clone() else {
             return;
         };
