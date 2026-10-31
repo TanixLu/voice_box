@@ -1,11 +1,12 @@
-use crate::i18n::Text;
 use std::path::PathBuf;
 
-pub(super) fn choose_files() -> anyhow::Result<Vec<PathBuf>> {
+use crate::i18n::Text;
+
+pub fn choose_files() -> anyhow::Result<Vec<PathBuf>> {
     choose_paths(false)
 }
 
-pub(super) fn choose_folder() -> anyhow::Result<Option<PathBuf>> {
+pub fn choose_folder() -> anyhow::Result<Option<PathBuf>> {
     Ok(choose_paths(true)?.into_iter().next())
 }
 

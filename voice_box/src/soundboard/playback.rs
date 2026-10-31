@@ -1,20 +1,27 @@
-use super::{decoder::SoundDecoder, sound::SoundId};
-use crate::i18n::Text;
-use crate::i18n::{Details, Message, UserContext};
-use crate::{audio::monitor::Monitor, devices, hotkeys::HeldKeys};
-use anyhow::ensure;
 use std::{
     collections::VecDeque,
     sync::mpsc,
     time::{Duration, Instant},
 };
-use voice_box_shared::pcm_transport::{
-    Clock, DECODE_AHEAD_FRAMES, Mapping, SAMPLE_RATE, transport_path,
+
+use anyhow::ensure;
+
+use voice_box_shared::{
+    paths::transport_path,
+    pcm_transport::{Clock, DECODE_AHEAD_FRAMES, Mapping, SAMPLE_RATE},
+};
+
+use crate::{
+    audio::monitor::Monitor,
+    devices,
+    hotkeys::HeldKeys,
+    i18n::{Details, Message, Text, UserContext},
+    soundboard::{decoder::SoundDecoder, sound::SoundId},
 };
 
 /// Runtime output choices only; no GUI preferences or persistence behavior.
 #[derive(Clone, Debug)]
-pub(super) struct Config {
+pub struct Config {
     pub microphone_device: Option<String>,
     pub speaker_device: Option<String>,
     pub microphone_volume: f32,
@@ -24,12 +31,12 @@ pub(super) struct Config {
     pub repeat: bool,
 }
 
-pub(super) enum Command {
+pub enum Command {
     Stop,
     Replace(SoundId, u64, Config),
     Configure(Config),
 }
-pub(super) enum Event {
+pub enum Event {
     Started {
         revision: u64,
         duration_secs: Option<f64>,
@@ -42,7 +49,7 @@ pub(super) enum Event {
     Finished(anyhow::Result<()>),
 }
 
-pub(super) struct PlaybackOutcome {
+pub struct PlaybackOutcome {
     pub sound_id: SoundId,
     pub reason: &'static str,
     /// Playback time in seconds for audio frames whose scheduled time has elapsed.
@@ -68,7 +75,7 @@ fn drain_commands(
     }
 }
 
-pub(super) fn run(
+pub fn run(
     mut id: SoundId,
     mut settings: Config,
     mut revision: u64,

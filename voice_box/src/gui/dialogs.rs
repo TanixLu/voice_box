@@ -1,6 +1,8 @@
-use super::{VoiceBoxApp, jobs::JobResult};
-use crate::i18n::Text;
-use crate::uninstall;
+use crate::{
+    gui::{VoiceBoxApp, jobs::JobResult},
+    i18n::Text,
+    uninstall,
+};
 
 const LICENSES: &str = concat!(
     "VoiceBox v",
@@ -21,7 +23,26 @@ const LICENSES: &str = concat!(
 );
 
 impl VoiceBoxApp {
-    pub(super) fn full_uninstall_ui(&mut self, ctx: &egui::Context) {
+    pub fn startup_message_ui(&mut self, ctx: &egui::Context) {
+        let Some(message) = &self.startup_message else {
+            return;
+        };
+        let available = ctx.content_rect().size();
+        let response = egui::Modal::new(egui::Id::unique("startup_message")).show(ctx, |ui| {
+            ui.set_width((available.x - 64.0).clamp(180.0, 400.0));
+            ui.heading(Text::Startup.text());
+            ui.add(egui::Label::new(message.text()).wrap());
+            ui.add_space(12.0);
+            if ui.button(Text::Ok.text()).clicked() {
+                ui.close();
+            }
+        });
+        if response.should_close() {
+            self.startup_message = None;
+        }
+    }
+
+    pub fn full_uninstall_ui(&mut self, ctx: &egui::Context) {
         if !self.confirm_full_uninstall {
             return;
         }
@@ -42,6 +63,7 @@ impl VoiceBoxApp {
                     .clicked()
                 {
                     self.confirm_full_uninstall = false;
+                    self.startup_synchronized = false;
                     self.uninstalling = self.jobs.begin(ctx, Text::PreparingUninstall, || {
                         JobResult::Uninstall(uninstall::run())
                     });
@@ -56,7 +78,7 @@ impl VoiceBoxApp {
         }
     }
 
-    pub(super) fn licenses_ui(&mut self, ctx: &egui::Context) {
+    pub fn licenses_ui(&mut self, ctx: &egui::Context) {
         if !self.show_licenses {
             return;
         }

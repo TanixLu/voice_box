@@ -1,12 +1,16 @@
 //! SQLite adaptation for settings; field definitions live in the parent module.
-use super::OutputDevice;
-use crate::i18n::LanguagePreference;
+
+use std::collections::HashMap;
+
 use rusqlite::{
     Connection, ToSql, Transaction, params,
     types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, Value, ValueRef},
 };
-use std::collections::HashMap;
 
+pub use crate::impl_storage;
+use crate::{i18n::LanguagePreference, settings::OutputDevice};
+
+#[macro_export]
 macro_rules! impl_storage {
     ($($field:ident: $ty:ty = $default:expr;)*) => {
         impl Settings {
@@ -28,12 +32,11 @@ macro_rules! impl_storage {
         }
     };
 }
-pub(super) use impl_storage;
 
 // SQL queries fail normally; only conversion of successfully read values can fall back.
-pub(super) type Values = HashMap<String, Value>;
+pub type Values = HashMap<String, Value>;
 
-pub(super) fn load_values(connection: &Connection) -> rusqlite::Result<Values> {
+pub fn load_values(connection: &Connection) -> rusqlite::Result<Values> {
     let mut query = connection.prepare_cached("SELECT key, value FROM settings")?;
     query
         .query_map([], |row| {
@@ -50,12 +53,12 @@ pub(super) fn load_values(connection: &Connection) -> rusqlite::Result<Values> {
         .collect()
 }
 
-pub(super) trait Stored: Sized {
+pub trait Stored: Sized {
     fn read(values: &Values, key: &str) -> FromSqlResult<Option<Self>>;
     fn write(&self, transaction: &Transaction<'_>, key: &str) -> rusqlite::Result<()>;
 }
 
-pub(super) fn read_setting<T: Stored>(values: &Values, key: &str, default: T) -> T {
+pub fn read_setting<T: Stored>(values: &Values, key: &str, default: T) -> T {
     match T::read(values, key) {
         Ok(Some(value)) => value,
         Ok(None) => default,
@@ -66,7 +69,7 @@ pub(super) fn read_setting<T: Stored>(values: &Values, key: &str, default: T) ->
     }
 }
 
-pub(super) fn write_setting<T: Stored>(
+pub fn write_setting<T: Stored>(
     transaction: &Transaction<'_>,
     key: &str,
     value: &T,

@@ -1,16 +1,19 @@
 //! Chunked audio byte streams. Transaction ownership stays with the caller.
-use crate::i18n::Text;
-use anyhow::ensure;
-use rusqlite::{Connection, params};
+
 use std::{
     io::{self, Read, Seek, SeekFrom, Write},
     sync::Mutex,
 };
+
+use anyhow::ensure;
+use rusqlite::{Connection, params};
 use symphonia::core::io::MediaSource;
+
+use crate::i18n::Text;
 
 const AUDIO_CHUNK_BYTES: usize = 32 * 1024;
 
-pub(crate) struct AudioSource {
+pub struct AudioSource {
     connection: Mutex<Connection>,
     id: i64,
     length: u64,
@@ -92,7 +95,7 @@ impl MediaSource for AudioSource {
     }
 }
 
-pub(crate) struct AudioWriter<'a> {
+pub struct AudioWriter<'a> {
     connection: &'a Connection,
     id: i64,
     chunk: i64,
@@ -132,7 +135,7 @@ impl Write for AudioWriter<'_> {
 }
 
 impl<'a> AudioWriter<'a> {
-    pub(crate) fn new(connection: &'a Connection, id: i64, length: u64) -> Self {
+    pub fn new(connection: &'a Connection, id: i64, length: u64) -> Self {
         Self {
             connection,
             id,
@@ -143,7 +146,7 @@ impl<'a> AudioWriter<'a> {
         }
     }
 
-    pub(crate) fn finish(mut self) -> anyhow::Result<()> {
+    pub fn finish(mut self) -> anyhow::Result<()> {
         self.flush()?;
         ensure!(self.written == self.length, Text::AudioChangedDuringImport);
         Ok(())

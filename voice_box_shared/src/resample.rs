@@ -1,9 +1,8 @@
 //! Rubato sinc conversion with fixed one-millisecond input chunks and buffers.
 
-use rubato::audioadapter_buffers::direct::SequentialSlice;
 use rubato::{
     Async, FixedAsync, Resampler as _, SincInterpolationParameters, SincInterpolationType,
-    WindowFunction,
+    WindowFunction, audioadapter_buffers::direct::SequentialSlice,
 };
 
 pub struct Resampler {

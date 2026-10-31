@@ -1,6 +1,5 @@
 //! Elevated APO removal followed by recycling from a separate system process.
-use crate::i18n::Text;
-use crate::i18n::{Message, UserContext};
+
 use std::{
     os::windows::{io::AsRawHandle, process::CommandExt},
     path::Path,
@@ -29,18 +28,26 @@ use windows::{
     core::{Owned, PCWSTR},
 };
 
-use super::setup;
-use voice_box_shared::{paths, utils::wide_null};
+use voice_box_shared::{
+    paths::{apo_dll_path, data_dir, system_dir},
+    utils::wide_null,
+};
+
+use crate::{
+    i18n::{Message, Text, UserContext},
+    setup,
+    static_data::UNINSTALL_CLEANUP_SCRIPT,
+    utils::powershell_path,
+};
 
 // The GUI is already elevated; only self-deletion needs a separate process.
 pub fn run() -> anyhow::Result<()> {
-    let directory = paths::data_dir()?;
-    let apo_dll = paths::apo_dll_path().user_context(Text::ReadApoPath)?;
-    let cleanup = start_cleanup(&directory)?;
+    crate::startup::synchronize(false)?;
+    let cleanup = start_cleanup(&data_dir()?)?;
     let _apartment = ShellApartment::new()?;
     setup::with_audio_service_stopped(|| {
         setup::unregister_all()?;
-        recycle(&apo_dll).user_context(Text::RecycleApo)
+        recycle(&apo_dll_path()?).user_context(Text::RecycleApo)
     })?;
     cleanup.finish()
 }
@@ -76,7 +83,6 @@ fn create_event(name: &str) -> anyhow::Result<Owned<HANDLE>> {
 }
 
 fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
-    let system_directory = paths::system_dir().user_context(Text::ReadSystemDirectory)?;
     let event_name = format!("Local\\VoiceBox.Cleanup.{:?}", unsafe { CoCreateGuid()? });
     let ready = create_event(&event_name)?;
     let complete_name = format!("{event_name}.complete");
@@ -87,7 +93,7 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
         committed: false,
     };
 
-    let cleanup = Command::new(system_directory.join(r"WindowsPowerShell\v1.0\powershell.exe"))
+    let cleanup = Command::new(powershell_path()?)
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -97,7 +103,7 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
             "-STA",
             "-Command",
         ])
-        .arg(include_str!("uninstall_cleanup.ps1"))
+        .arg(UNINSTALL_CLEANUP_SCRIPT)
         // Paths are data, never interpolated into PowerShell source code.
         .envs(
             cleanup_texts(crate::i18n::current_language())
@@ -116,7 +122,7 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
             "VOICEBOX_UNINSTALL_PROCESS_ID",
             std::process::id().to_string(),
         )
-        .current_dir(system_directory)
+        .current_dir(system_dir()?)
         .creation_flags(CREATE_NO_WINDOW.0)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

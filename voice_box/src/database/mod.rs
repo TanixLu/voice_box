@@ -1,23 +1,29 @@
 //! Application settings and immutable audio payloads share one transactional store.
-use super::i18n::{Text, UserContext};
-use anyhow::{Context, ensure};
-pub(super) mod audio;
+
+pub mod audio;
 mod codecs;
 
-use rusqlite::Connection;
 use std::{io, path::Path, time::Duration};
-use voice_box_shared::paths;
+
+use anyhow::{Context, ensure};
+use rusqlite::Connection;
+
+use voice_box_shared::paths::data_dir;
+
+use crate::{
+    i18n::{Text, UserContext},
+    utils::database_path,
+};
 
 const MIN_RECLAIM_BYTES: i64 = 64 * 1024 * 1024;
 const MIN_RECLAIM_RATIO: f64 = 0.25;
 
-pub(super) fn open() -> anyhow::Result<Connection> {
-    let directory = paths::data_dir()?;
-    std::fs::create_dir_all(&directory).user_context(Text::CreateDataDirectory)?;
-    open_at(&directory.join("voice_box.db")).user_context(Text::OpenDatabase)
+pub fn open() -> anyhow::Result<Connection> {
+    std::fs::create_dir_all(data_dir()?).user_context(Text::CreateDataDirectory)?;
+    open_at(database_path()?).user_context(Text::OpenDatabase)
 }
 
-pub(super) fn open_at(path: &Path) -> anyhow::Result<Connection> {
+pub fn open_at(path: &Path) -> anyhow::Result<Connection> {
     let connection = Connection::open(path)?;
     connection.busy_timeout(Duration::from_secs(5))?;
     // Mapping hot pages avoids a separate Windows read call for every database page.
@@ -48,7 +54,7 @@ pub(super) fn open_at(path: &Path) -> anyhow::Result<Connection> {
     Ok(connection)
 }
 
-pub(super) fn reclaim_space(connection: &Connection) -> anyhow::Result<()> {
+pub fn reclaim_space(connection: &Connection) -> anyhow::Result<()> {
     let free_pages: i64 =
         connection.pragma_query_value(None, "freelist_count", |row| row.get(0))?;
     if free_pages == 0 {

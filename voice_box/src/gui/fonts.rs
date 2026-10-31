@@ -4,8 +4,10 @@ use std::{
 };
 
 use anyhow::{Context as _, ensure};
-use egui::epaint::text::{Blob, FallbackRequest, FontProvider};
-use egui::{FontData, FontFamily, FontInsert, FontTweak};
+use egui::{
+    FontData, FontFamily, FontInsert, FontTweak,
+    epaint::text::{Blob, FallbackRequest, FontProvider},
+};
 use windows::{
     Win32::{
         Globalization::GetUserDefaultLocaleName,
@@ -21,7 +23,7 @@ use windows::{
     core::{Interface, OutRef, implement, w},
 };
 
-pub(super) fn install(ctx: &egui::Context) {
+pub fn install(ctx: &egui::Context) {
     match DirectWriteFonts::new() {
         Ok(provider) => ctx.add_font_provider(Arc::new(provider)),
         Err(error) => tracing::warn!("Failed to initialize DirectWrite font fallback: {error:#}"),

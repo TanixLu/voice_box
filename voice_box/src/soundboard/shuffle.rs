@@ -1,18 +1,21 @@
-use super::sound::{Sound, SoundId};
-use crate::hotkeys::Hotkey;
 use std::{
     collections::{HashMap, HashSet},
     hash::{BuildHasher, RandomState},
 };
 
+use crate::{
+    hotkeys::Hotkey,
+    soundboard::sound::{Sound, SoundId},
+};
+
 #[derive(Default)]
-pub(super) struct Shuffle {
+pub struct Shuffle {
     played: HashMap<Option<Hotkey>, HashSet<SoundId>>,
-    pub(super) last: Option<SoundId>,
+    pub last: Option<SoundId>,
 }
 
 impl Shuffle {
-    pub(super) fn choose(&mut self, sounds: &[Sound], hotkey: Option<Hotkey>) -> Option<usize> {
+    pub fn choose(&mut self, sounds: &[Sound], hotkey: Option<Hotkey>) -> Option<usize> {
         self.played
             .retain(|key, _| key.is_none() || sounds.iter().any(|sound| sound.hotkey == *key));
         let candidates: HashSet<_> = sounds

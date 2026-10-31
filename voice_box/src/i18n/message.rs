@@ -1,13 +1,17 @@
 //! Typed messages retain their arguments until presentation, including error chains.
-use super::{Language, Text, current_language};
-use crate::hotkeys::Hotkey;
+
 use std::{borrow::Cow, error::Error, fmt, sync::Arc};
 
+use crate::{
+    hotkeys::Hotkey,
+    i18n::{Language, Text, current_language},
+};
+
 #[derive(Clone, Debug)]
-pub(crate) struct Details(Arc<anyhow::Error>);
+pub struct Details(Arc<anyhow::Error>);
 
 impl Details {
-    pub(crate) fn new(error: impl Into<anyhow::Error>) -> Self {
+    pub fn new(error: impl Into<anyhow::Error>) -> Self {
         Self(Arc::new(error.into()))
     }
 
@@ -50,7 +54,7 @@ impl fmt::Display for Details {
 macro_rules! messages {
     ($($key:ident { $($field:ident: $ty:ty),* } => ($en:literal, $zh:literal);)*) => {
         #[derive(Clone, Debug, Default)]
-        pub(crate) enum Message {
+        pub enum Message {
             #[default]
             Empty,
             Text(Text),
@@ -60,7 +64,7 @@ macro_rules! messages {
         }
 
         impl Message {
-            pub(crate) fn render(&self, language: Language) -> Cow<'static, str> {
+            pub fn render(&self, language: Language) -> Cow<'static, str> {
                 match self {
                     Self::Empty => Cow::Borrowed(""),
                     Self::Text(text) => Cow::Borrowed(text.in_language(language)),
@@ -162,16 +166,16 @@ messages! {
 }
 
 impl Message {
-    pub(crate) fn text(&self) -> Cow<'static, str> {
+    pub fn text(&self) -> Cow<'static, str> {
         self.render(current_language())
     }
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         *self = Self::Empty;
     }
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         matches!(self, Self::Empty)
     }
-    pub(crate) fn error(error: impl Into<anyhow::Error>) -> Self {
+    pub fn error(error: impl Into<anyhow::Error>) -> Self {
         Self::Error(Details::new(error))
     }
 }
@@ -204,7 +208,7 @@ impl Error for ContextError {
 }
 
 /// Preserve translatable context as a concrete error node instead of formatting it early.
-pub(crate) trait UserContext: Sized {
+pub trait UserContext: Sized {
     type Output;
     fn user_context(self, message: impl Into<Message>) -> Self::Output;
     fn with_user_context(self, message: impl FnOnce() -> Message) -> Self::Output;

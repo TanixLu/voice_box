@@ -1,21 +1,23 @@
 //! List interaction state. Rendering only returns intents; it never mutates the soundboard.
+
 mod row;
+
+use std::collections::HashSet;
 
 use crate::{
     i18n::{Message, Text},
     settings::BindingTarget,
     soundboard::sound::{Sound, SoundId},
 };
-use std::collections::HashSet;
 
 #[derive(Clone, Copy)]
-pub(super) struct Status {
+pub struct Status {
     pub active_sound: Option<SoundId>,
     pub capture_target: Option<BindingTarget>,
     pub batch_capturing: bool,
 }
 
-pub(super) enum Action {
+pub enum Action {
     Play(usize),
     Stop,
     Remove(SoundId),
@@ -23,8 +25,7 @@ pub(super) enum Action {
     ClearHotkey(usize),
     Move { from: usize, to: usize },
 }
-pub(super) enum BatchAction {
-    CancelCapture,
+pub enum BatchAction {
     Export,
     Move(bool),
     Rename,
@@ -45,7 +46,7 @@ struct RowActions {
     reorder: Option<(usize, usize)>,
 }
 
-pub(super) struct SoundList {
+pub struct SoundList {
     filter: String,
     rename_editor: Option<row::RenameEditor>,
     pending_delete_index: Option<usize>,
@@ -97,60 +98,51 @@ impl SoundSelection {
 }
 
 impl SoundList {
-    pub(super) fn renaming(&self) -> bool {
+    pub fn renaming(&self) -> bool {
         self.rename_editor.is_some()
     }
-    pub(super) fn cancel_rename(&mut self) {
+    pub fn cancel_rename(&mut self) {
         self.rename_editor = None;
     }
-    pub(super) fn cancel_delete(&mut self) {
+    pub fn cancel_delete(&mut self) {
         self.pending_delete_index = None;
     }
-    pub(super) fn batch_mode(&self) -> bool {
+    pub fn batch_mode(&self) -> bool {
         self.selection.is_some()
     }
-    pub(super) fn batch_cancelable(&self) -> bool {
-        self.selection
-            .as_ref()
-            .is_some_and(|selection| !selection.confirming_delete)
-    }
-    pub(super) fn begin_batch(&mut self) {
+    pub fn begin_batch(&mut self) {
         self.cancel_delete();
         self.selection = Some(SoundSelection::default());
     }
-    pub(super) fn cancel_batch(&mut self) {
+    pub fn cancel_batch(&mut self) {
         self.selection = None;
     }
-    pub(super) fn selected(&self) -> Option<&HashSet<SoundId>> {
+    pub fn selected(&self) -> Option<&HashSet<SoundId>> {
         self.selection.as_ref().map(|s| &s.ids)
     }
-    pub(super) fn selected_mut(&mut self) -> Option<&mut HashSet<SoundId>> {
+    pub fn selected_mut(&mut self) -> Option<&mut HashSet<SoundId>> {
         self.selection.as_mut().map(|s| &mut s.ids)
     }
-    pub(super) fn clear_anchor(&mut self) {
+    pub fn clear_anchor(&mut self) {
         if let Some(selection) = &mut self.selection {
             selection.anchor = None;
         }
     }
-    pub(super) fn remove_ids(&mut self, ids: &HashSet<SoundId>) {
+    pub fn remove_ids(&mut self, ids: &HashSet<SoundId>) {
         if let Some(selection) = &mut self.selection {
             selection.ids.retain(|id| !ids.contains(id));
             selection.anchor = None;
         }
         self.cancel_delete();
     }
-    pub(super) fn rename_request(
-        &mut self,
-        keep_editing: bool,
-        playing: bool,
-    ) -> Option<(usize, String)> {
+    pub fn rename_request(&mut self, keep_editing: bool, playing: bool) -> Option<(usize, String)> {
         let edit = self.rename_editor.as_mut()?;
         if !edit.request_focus && !keep_editing {
             edit.save_requested = true;
         }
         (edit.save_requested && !playing).then(|| (edit.index, edit.name.clone()))
     }
-    pub(super) fn rename_finished(&mut self, success: bool) {
+    pub fn rename_finished(&mut self, success: bool) {
         if success {
             self.rename_editor = None;
         } else if let Some(edit) = &mut self.rename_editor {
@@ -158,14 +150,9 @@ impl SoundList {
             edit.request_focus = true;
         }
     }
-    pub(super) fn ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        sounds: &[Sound],
-        status: Status,
-    ) -> Vec<Action> {
-        let (filter, indices) = self.filter_ui(ui, sounds, status);
-        self.selection_ui(ui, sounds, &indices, status);
+    pub fn ui(&mut self, ui: &mut egui::Ui, sounds: &[Sound], status: Status) -> Vec<Action> {
+        let (filter, indices) = self.filter_ui(ui, sounds);
+        self.selection_ui(ui, sounds, &indices);
         let RowActions {
             play,
             stop,
@@ -237,15 +224,9 @@ impl SoundList {
         actions
     }
 
-    fn filter_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        sounds: &[Sound],
-        status: Status,
-    ) -> (String, Vec<usize>) {
+    fn filter_ui(&mut self, ui: &mut egui::Ui, sounds: &[Sound]) -> (String, Vec<usize>) {
         if ui
-            .add_enabled(
-                status.capture_target.is_none(),
+            .add(
                 egui::TextEdit::singleline(&mut self.filter)
                     .hint_text(Text::SearchSounds.text())
                     .desired_width(f32::INFINITY),
@@ -269,13 +250,7 @@ impl SoundList {
         (filter, indices)
     }
 
-    fn selection_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        sounds: &[Sound],
-        indices: &[usize],
-        status: Status,
-    ) {
+    fn selection_ui(&mut self, ui: &mut egui::Ui, sounds: &[Sound], indices: &[usize]) {
         if let Some(selection) = &mut self.selection {
             ui.horizontal_wrapped(|ui| {
                 let mut visible_selected = indices
@@ -285,7 +260,7 @@ impl SoundList {
                 let mut all = !indices.is_empty() && visible_selected == indices.len();
                 let select_all = ui
                     .add_enabled(
-                        !indices.is_empty() && status.capture_target.is_none(),
+                        !indices.is_empty(),
                         egui::Checkbox::new(&mut all, Text::SelectSearchResults.text())
                             .indeterminate(
                                 visible_selected > 0 && visible_selected < indices.len(),
@@ -293,7 +268,6 @@ impl SoundList {
                     )
                     .clicked();
                 let shortcut = ui.is_enabled()
-                    && status.capture_target.is_none()
                     && !selection.confirming_delete
                     && ui.ctx().memory(|memory| memory.top_modal_layer().is_none())
                     && !ui.ctx().text_edit_focused()
@@ -334,13 +308,8 @@ impl SoundList {
     ) -> RowActions {
         let mut result = RowActions::default();
         let renaming = self.rename_editor.is_some();
-        let capture_target = status.capture_target;
-        let capturing = capture_target.is_some();
-        let can_reorder = ui.is_enabled()
-            && self.selection.is_none()
-            && filter.is_empty()
-            && !renaming
-            && !capturing;
+        let can_reorder =
+            ui.is_enabled() && self.selection.is_none() && filter.is_empty() && !renaming;
         if !can_reorder {
             egui::DragAndDrop::clear_payload(ui.ctx());
         }
@@ -351,9 +320,6 @@ impl SoundList {
         };
         let height = (ui.available_height() - footer_height).max(50.0);
         ui.scope(|ui| {
-            if status.batch_capturing {
-                ui.disable();
-            }
             // Keep the scroll bar outside the rows and leave a clear gap
             // between its hit area and the destructive action.
             ui.spacing_mut().scroll.floating = false;
@@ -477,13 +443,12 @@ impl SoundList {
         result
     }
 
-    pub(super) fn batch_ui(
+    pub fn batch_ui(
         &mut self,
         ui: &mut egui::Ui,
         sounds: &[Sound],
         status: Status,
     ) -> Vec<BatchAction> {
-        let mut cancel_capture = false;
         let mut bind_selected = false;
         let mut clear_selected = false;
         let mut move_selected = None;
@@ -493,7 +458,7 @@ impl SoundList {
             let actions = ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
-                        !selection.ids.is_empty() && !status.batch_capturing,
+                        !selection.ids.is_empty(),
                         egui::Button::new(Text::ClearSelection.text()),
                     )
                     .clicked()
@@ -505,7 +470,7 @@ impl SoundList {
                     |ui| {
                         if ui
                             .add_enabled(
-                                !selection.ids.is_empty() && !status.batch_capturing,
+                                !selection.ids.is_empty(),
                                 egui::Button::new(
                                     Message::DeleteSelectedSounds {
                                         count: selection.ids.len(),
@@ -518,13 +483,8 @@ impl SoundList {
                             selection.confirming_delete = true;
                         }
                         if status.batch_capturing {
-                            if ui
-                                .button(Text::PressKey.text())
-                                .on_hover_text(Text::CaptureHotkeyHint.text())
-                                .clicked()
-                            {
-                                cancel_capture = true;
-                            }
+                            ui.button(Text::PressKey.text())
+                                .show_tooltip_text(Text::CaptureHotkeyHint.text());
                         } else {
                             ui.add_enabled(!selection.ids.is_empty(), |ui: &mut egui::Ui| {
                                 ui.menu_button(Text::Hotkeys.text(), |ui| {
@@ -553,7 +513,7 @@ impl SoundList {
                                 .response
                             });
                         }
-                        let enabled = !selection.ids.is_empty() && !status.batch_capturing;
+                        let enabled = !selection.ids.is_empty();
                         rename_selected = ui
                             .add_enabled(enabled, egui::Button::new(Text::BatchRename.text()))
                             .clicked();
@@ -583,9 +543,6 @@ impl SoundList {
             }
         }
         let mut actions = Vec::new();
-        if cancel_capture {
-            actions.push(BatchAction::CancelCapture);
-        }
         if export_selected {
             actions.push(BatchAction::Export);
         }
@@ -604,7 +561,7 @@ impl SoundList {
         actions
     }
 
-    pub(super) fn delete_ui(
+    pub fn delete_ui(
         &mut self,
         ctx: &egui::Context,
         sounds: &[Sound],

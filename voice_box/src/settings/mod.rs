@@ -1,17 +1,19 @@
-//! Typed application settings in voice_box.db's key/value table.
+//! Typed application settings in database's key/value table.
 
-use super::{
+mod storage;
+
+use anyhow::ensure;
+
+use voice_box_shared::pcm_transport::MAX_VOLUME;
+
+use crate::{
     database,
     hotkeys::Hotkey,
     i18n::{LanguagePreference, Message, Text, UserContext},
 };
-mod storage;
-
-use anyhow::ensure;
-use voice_box_shared::pcm_transport::MAX_VOLUME;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum BindingTarget {
+pub enum BindingTarget {
     Sound(usize),
     Hold,
     Stop,
@@ -19,7 +21,7 @@ pub(super) enum BindingTarget {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct OutputDevice {
+pub struct OutputDevice {
     pub id: String,
     pub name: String,
 }
@@ -27,7 +29,7 @@ pub(super) struct OutputDevice {
 macro_rules! define_settings {
     ($($field:ident: $ty:ty = $default:expr;)*) => {
         #[derive(Clone, Debug, PartialEq)]
-        pub(super) struct Settings {
+        pub struct Settings {
             $(pub $field: $ty,)*
         }
 
@@ -44,6 +46,7 @@ macro_rules! define_settings {
 define_settings! {
     language: LanguagePreference = LanguagePreference::System;
     theme: egui::ThemePreference = egui::ThemePreference::System;
+    startup_enabled: bool = false;
     playback_microphone_output_device: Option<OutputDevice> = None;
     playback_speaker_output_device: Option<OutputDevice> = None;
     playback_speaker_output_volume: f32 = 1.0;
@@ -57,18 +60,18 @@ define_settings! {
 }
 
 impl Settings {
-    pub(super) fn load() -> anyhow::Result<Self> {
+    pub fn load() -> anyhow::Result<Self> {
         let mut connection = database::open()?;
         let transaction = connection.transaction()?;
         Self::read_from(&transaction)
     }
 
-    pub(super) fn save(&self) -> anyhow::Result<()> {
+    pub fn save(&self) -> anyhow::Result<()> {
         self.save_to(&mut database::open()?)
             .user_context(Text::SaveAppSettingsFailed)
     }
 
-    pub(super) fn validate_binding(
+    pub fn validate_binding(
         &self,
         sound_hotkeys: impl Iterator<Item = Hotkey> + Clone,
         target: BindingTarget,
@@ -109,7 +112,7 @@ impl Settings {
         Ok(())
     }
 
-    pub(super) fn validate(
+    pub fn validate(
         &self,
         sound_hotkeys: impl Iterator<Item = Hotkey> + Clone,
     ) -> anyhow::Result<()> {
@@ -134,7 +137,7 @@ impl Settings {
         Ok(())
     }
 
-    pub(super) fn sanitize(&mut self) {
+    pub fn sanitize(&mut self) {
         for (key, volume) in [
             (
                 "playback_speaker_output_volume",

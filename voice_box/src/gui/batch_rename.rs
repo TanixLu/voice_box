@@ -1,3 +1,5 @@
+use std::{collections::HashSet, ops::Range};
+
 use crate::{
     i18n::{Message, Text},
     soundboard::{
@@ -6,15 +8,14 @@ use crate::{
         sound::SoundId,
     },
 };
-use std::{collections::HashSet, ops::Range};
 
 #[derive(Clone, Copy)]
-pub(super) struct Status {
+pub struct Status {
     pub available: bool,
     pub busy: bool,
     pub playing: bool,
 }
-pub(super) enum Action {
+pub enum Action {
     None,
     Closed,
     Apply(RenamePlan),
@@ -27,7 +28,7 @@ struct Footer {
     stop: bool,
 }
 
-pub(super) struct BatchRename {
+pub struct BatchRename {
     selected: HashSet<SoundId>,
     rule: RenameRule,
     plan: RenamePlan,
@@ -76,13 +77,13 @@ impl BatchRename {
         messages.join("；")
     }
 
-    pub(super) fn applying(&self) -> bool {
+    pub fn applying(&self) -> bool {
         self.applying
     }
-    pub(super) fn selected(&self) -> &HashSet<SoundId> {
+    pub fn selected(&self) -> &HashSet<SoundId> {
         &self.selected
     }
-    pub(super) fn complete(&mut self, library: &Library, result: anyhow::Result<()>) -> bool {
+    pub fn complete(&mut self, library: &Library, result: anyhow::Result<()>) -> bool {
         self.applying = false;
         self.selected = self
             .plan
@@ -101,14 +102,14 @@ impl BatchRename {
             }
         }
     }
-    pub(super) fn apply_result(&mut self, result: anyhow::Result<()>) {
+    pub fn apply_result(&mut self, result: anyhow::Result<()>) {
         match result {
             Ok(()) => self.applying = true,
             Err(error) => self.error = Message::error(error),
         }
     }
 
-    pub(super) fn ui(&mut self, ctx: &egui::Context, library: &Library, status: Status) -> Action {
+    pub fn ui(&mut self, ctx: &egui::Context, library: &Library, status: Status) -> Action {
         let mut apply = false;
         let mut close = false;
         let mut stop = false;

@@ -1,11 +1,11 @@
-use crate::i18n::Text;
-use crate::i18n::{Details, Message};
+use std::collections::HashSet;
+
 use crate::{
     hotkeys::{self, Hotkey, Hotkeys},
+    i18n::{Details, Message, Text},
     settings::BindingTarget,
     soundboard::sound::SoundId,
 };
-use std::collections::HashSet;
 
 struct KeyCapture {
     target: BindingTarget,
@@ -13,30 +13,30 @@ struct KeyCapture {
     armed: bool,
     modifier: Option<Hotkey>,
 }
-pub(super) struct CapturedBinding {
+pub struct CapturedBinding {
     pub target: BindingTarget,
     pub ids: Option<HashSet<SoundId>>,
     pub key: Hotkey,
 }
 
-pub(super) enum PlaybackAction {
+pub enum PlaybackAction {
     Stop,
     Random(Option<Hotkey>),
 }
 
 #[derive(Default)]
-pub(super) struct HotkeyManager {
+pub struct HotkeyManager {
     listener: Option<Hotkeys>,
     bindings: Vec<Option<Hotkey>>,
     attempted_bindings: Vec<Option<Hotkey>>,
     revision: u64,
     capture: Option<KeyCapture>,
     registration_error: Message,
-    pub(super) message: Message,
-    pub(super) settings_message: Message,
+    pub message: Message,
+    pub settings_message: Message,
 }
 impl HotkeyManager {
-    pub(super) fn new(ctx: &egui::Context) -> Self {
+    pub fn new(ctx: &egui::Context) -> Self {
         let (listener, message) = match Hotkeys::new(super::wake_ui(ctx.clone())) {
             Ok(listener) => (Some(listener), Message::default()),
             Err(error) => (
@@ -57,35 +57,38 @@ impl HotkeyManager {
             settings_message: Message::default(),
         }
     }
-    pub(super) fn target(&self) -> Option<BindingTarget> {
+    pub fn target(&self) -> Option<BindingTarget> {
         self.capture.as_ref().map(|capture| capture.target)
     }
-    pub(super) fn batch_capturing(&self) -> bool {
+    pub fn is_capturing(&self) -> bool {
+        self.target().is_some()
+    }
+    pub fn batch_capturing(&self) -> bool {
         self.capture
             .as_ref()
             .is_some_and(|capture| capture.ids.is_some())
     }
-    pub(super) fn error(&self) -> &Message {
+    pub fn error(&self) -> &Message {
         if self.message.is_empty() {
             &self.registration_error
         } else {
             &self.message
         }
     }
-    pub(super) fn clear_error(&mut self) {
+    pub fn clear_error(&mut self) {
         self.message.clear();
         self.registration_error.clear();
     }
-    pub(super) fn cancel_capture(&mut self) {
+    pub fn cancel_capture(&mut self) {
         self.capture = None;
     }
-    pub(super) fn validate(&self, key: Hotkey) -> anyhow::Result<()> {
+    pub fn validate(&self, key: Hotkey) -> anyhow::Result<()> {
         self.listener
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!(Text::HotkeyServiceUnavailable))?
             .validate(key)
     }
-    pub(super) fn poll(
+    pub fn poll(
         &mut self,
         enabled: bool,
         bindings: impl IntoIterator<Item = Option<Hotkey>>,
@@ -145,7 +148,7 @@ impl HotkeyManager {
         }
     }
 
-    pub(super) fn poll_capture(&mut self, ctx: &egui::Context) -> Option<CapturedBinding> {
+    pub fn poll_capture(&mut self, ctx: &egui::Context) -> Option<CapturedBinding> {
         let Some(capture) = &mut self.capture else {
             return None;
         };
@@ -188,7 +191,7 @@ impl HotkeyManager {
         Some(CapturedBinding { target, ids, key })
     }
 
-    pub(super) fn capture_result(&mut self, target: BindingTarget, result: anyhow::Result<()>) {
+    pub fn capture_result(&mut self, target: BindingTarget, result: anyhow::Result<()>) {
         let message = if matches!(target, BindingTarget::Sound(_)) {
             &mut self.message
         } else {
@@ -203,7 +206,7 @@ impl HotkeyManager {
         }
     }
 
-    pub(super) fn begin_capture(&mut self, target: BindingTarget) {
+    pub fn begin_capture(&mut self, target: BindingTarget) {
         self.capture = Some(KeyCapture {
             target,
             ids: None,
@@ -217,7 +220,7 @@ impl HotkeyManager {
         }
     }
 
-    pub(super) fn begin_batch_capture(&mut self, target: BindingTarget, ids: &HashSet<SoundId>) {
+    pub fn begin_batch_capture(&mut self, target: BindingTarget, ids: &HashSet<SoundId>) {
         self.begin_capture(target);
         self.capture.as_mut().unwrap().ids = Some(ids.clone());
     }

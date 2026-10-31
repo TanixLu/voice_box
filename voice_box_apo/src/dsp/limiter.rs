@@ -6,7 +6,7 @@ const RELEASE_SECONDS: f64 = 0.050;
 const CEILING: f32 = 0.891_250_9;
 const TINY: f32 = 1.0e-20;
 
-pub(super) struct Limiter {
+pub struct Limiter {
     channels: usize,
     delay_frames: usize,
     delay: Vec<f32>,
@@ -22,7 +22,7 @@ pub(super) struct Limiter {
 
 impl Limiter {
     /// Formats and resource bounds have already been validated by prepare.
-    pub(super) fn new(sample_rate: f64, channels: usize) -> Self {
+    pub fn new(sample_rate: f64, channels: usize) -> Self {
         debug_assert!(sample_rate.is_finite() && sample_rate > 0.0 && channels > 0);
         let delay_frames = (sample_rate * LOOKAHEAD_SECONDS).ceil() as usize;
         let window_frames = delay_frames + 1;
@@ -44,7 +44,7 @@ impl Limiter {
         limiter
     }
 
-    pub(super) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.delay.fill(0.0);
         self.delay_position = 0;
         self.window_position = 0;
@@ -57,11 +57,11 @@ impl Limiter {
         self.gain = 1.0;
     }
 
-    pub(super) fn latency_frames(&self) -> usize {
+    pub fn latency_frames(&self) -> usize {
         self.delay_frames
     }
 
-    pub(super) fn process_frame(&mut self, frame: &mut [f32]) {
+    pub fn process_frame(&mut self, frame: &mut [f32]) {
         debug_assert_eq!(frame.len(), self.channels);
         let mut peak = 0.0f32;
         for sample in frame.iter_mut() {

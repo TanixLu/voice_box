@@ -1,23 +1,11 @@
 //! COM object identity, ownership and interface tables.
 
 mod effects;
-pub(super) mod factory;
+pub mod factory;
 mod formats;
 mod processing;
 
-use super::{
-    dsp::AudioProcessor,
-    etw::{self, apo_log},
-};
 use core::{cell::UnsafeCell, ffi::c_void, ptr};
-use effects::{
-    get_controllable_effects_list, get_effects_list, get_registration_properties, initialize,
-    set_effect_state,
-};
-use formats::{get_input_channel_count, is_input_format_supported, is_output_format_supported};
-use processing::{
-    get_latency, identity_frames, lock_for_process, process, reset, unlock_for_process,
-};
 use std::{
     boxed::Box,
     sync::{
@@ -25,6 +13,7 @@ use std::{
         atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering, fence},
     },
 };
+
 use windows::Win32::{
     Foundation::{E_NOINTERFACE, E_OUTOFMEMORY, E_POINTER, S_OK},
     Media::{
@@ -39,6 +28,21 @@ use windows::Win32::{
     },
 };
 use windows_core::{GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface};
+
+use crate::{
+    com::{
+        effects::{
+            get_controllable_effects_list, get_effects_list, get_registration_properties,
+            initialize, set_effect_state,
+        },
+        formats::{get_input_channel_count, is_input_format_supported, is_output_format_supported},
+        processing::{
+            get_latency, identity_frames, lock_for_process, process, reset, unlock_for_process,
+        },
+    },
+    dsp::AudioProcessor,
+    etw::{self, apo_log},
+};
 
 const EFFECT_ID_DENOISE: GUID = AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION;
 

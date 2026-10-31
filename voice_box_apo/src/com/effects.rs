@@ -1,8 +1,6 @@
-use super::{EFFECT_ID_DENOISE, object_from};
-use crate::etw::{self, apo_log};
 use core::{ffi::c_void, ptr};
 use std::sync::{Arc, atomic::Ordering};
-use voice_box_shared::plugin;
+
 use windows::Win32::{
     Foundation::{E_INVALIDARG, E_NOTIMPL, E_OUTOFMEMORY, E_POINTER, HANDLE, S_OK},
     Media::{
@@ -22,7 +20,14 @@ use windows::Win32::{
 };
 use windows_core::{BOOL, GUID, HRESULT};
 
-pub(super) unsafe extern "system" fn get_registration_properties(
+use voice_box_shared::{paths::transport_path, plugin};
+
+use crate::{
+    com::{EFFECT_ID_DENOISE, object_from},
+    etw::{self, apo_log},
+};
+
+pub unsafe extern "system" fn get_registration_properties(
     _: *mut c_void,
     output: *mut *mut APO_REG_PROPERTIES,
 ) -> HRESULT {
@@ -45,11 +50,7 @@ pub(super) unsafe extern "system" fn get_registration_properties(
     S_OK
 }
 
-pub(super) unsafe extern "system" fn initialize(
-    this: *mut c_void,
-    size: u32,
-    data: *const u8,
-) -> HRESULT {
+pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *const u8) -> HRESULT {
     let object = unsafe { object_from(this) };
     let _control =
         unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -140,7 +141,7 @@ fn soundboard_path(
     unsafe {
         CoTaskMemFree(Some(text.0.cast()));
     }
-    voice_box_shared::pcm_transport::transport_path(&guid.ok()?).ok()
+    transport_path(&guid.ok()?).ok()
 }
 
 fn processing_mode_name(mode: &GUID) -> &'static str {
@@ -165,7 +166,7 @@ fn processing_mode_name(mode: &GUID) -> &'static str {
     }
 }
 
-pub(super) unsafe extern "system" fn get_effects_list(
+pub unsafe extern "system" fn get_effects_list(
     this: *mut c_void,
     effects: *mut *mut GUID,
     count: *mut u32,
@@ -215,7 +216,7 @@ pub(super) unsafe extern "system" fn get_effects_list(
     S_OK
 }
 
-pub(super) unsafe extern "system" fn get_controllable_effects_list(
+pub unsafe extern "system" fn get_controllable_effects_list(
     this: *mut c_void,
     effects: *mut *mut AUDIO_SYSTEMEFFECT,
     count: *mut u32,
@@ -270,7 +271,7 @@ pub(super) unsafe extern "system" fn get_controllable_effects_list(
     S_OK
 }
 
-pub(super) unsafe extern "system" fn set_effect_state(
+pub unsafe extern "system" fn set_effect_state(
     this: *mut c_void,
     effect: GUID,
     state: windows::Win32::Media::Audio::Apo::AUDIO_SYSTEMEFFECT_STATE,

@@ -1,10 +1,8 @@
 //! Machine-wide apo.cfg shared by the GUI and APO watcher.
-use super::paths;
-use crate::error::SharedError;
-use std::{
-    io::{self, Read},
-    path::Path,
-};
+
+use std::io::{self, Read};
+
+use crate::{error::SharedError, paths::apo_cfg_path};
 
 pub const MIN_GAIN_MILLIDB: i32 = -60_000;
 pub const MAX_GAIN_MILLIDB: i32 = 60_000;
@@ -43,10 +41,10 @@ pub struct ApoCfgFile {
 }
 
 impl ApoCfgFile {
-    pub fn read(path: &Path) -> io::Result<Self> {
+    pub fn read() -> io::Result<Self> {
         // Bound allocation even if an editable configuration file is corrupted.
         let mut bytes = Vec::new();
-        std::fs::File::open(path)?
+        std::fs::File::open(apo_cfg_path()?)?
             .take((MAX_CFG_BYTES + 1) as u64)
             .read_to_end(&mut bytes)?;
         Ok(Self::decode(&bytes))
@@ -98,10 +96,6 @@ impl ApoCfgFile {
         .into_bytes();
         check_size(bytes.len())?;
         Ok(bytes)
-    }
-
-    pub fn try_load() -> io::Result<Self> {
-        Self::read(&paths::data_dir()?.join(paths::APO_CFG_FILE))
     }
 }
 

@@ -1,29 +1,25 @@
 //! Management-only initialization and atomic writes to apo.cfg.
-use crate::i18n::Text;
-use crate::i18n::UserContext;
-use voice_box_shared::{
-    apo_cfg::{ApoCfgFile, ApoConfig},
-    paths,
-};
 
-use atomic_write_file::AtomicWriteFile;
 use std::{
     io::{self, Write},
     path::Path,
 };
 
-pub fn is_readable() -> bool {
-    ApoCfgFile::try_load().is_ok()
-}
+use atomic_write_file::AtomicWriteFile;
+
+use voice_box_shared::{
+    apo_cfg::{ApoCfgFile, ApoConfig},
+    paths::{apo_cfg_path, data_dir},
+};
+
+use crate::i18n::{Text, UserContext};
 
 pub fn initialize() -> anyhow::Result<()> {
-    let directory = paths::data_dir()?;
-    std::fs::create_dir_all(&directory).user_context(Text::CreateDataDirectory)?;
-    let path = directory.join(paths::APO_CFG_FILE);
-    match ApoCfgFile::read(&path) {
+    std::fs::create_dir_all(data_dir()?).user_context(Text::CreateDataDirectory)?;
+    match ApoCfgFile::read() {
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            save_to(&path, &ApoConfig::default())?;
+            save_to(apo_cfg_path()?, &ApoConfig::default())?;
         }
         Err(error) => return Err(error).user_context(Text::ReadApoCfgPreserved),
     }
@@ -31,8 +27,7 @@ pub fn initialize() -> anyhow::Result<()> {
 }
 
 pub fn save(config: ApoConfig) -> anyhow::Result<()> {
-    save_to(&paths::data_dir()?.join(paths::APO_CFG_FILE), &config)
-        .user_context(Text::SaveApoCfgFailed)?;
+    save_to(apo_cfg_path()?, &config).user_context(Text::SaveApoCfgFailed)?;
     tracing::info!(
         denoising_enabled = config.denoising_enabled,
         gain_millidb = config.gain_millidb,
@@ -42,7 +37,7 @@ pub fn save(config: ApoConfig) -> anyhow::Result<()> {
 }
 
 fn save_to(path: &Path, config: &ApoConfig) -> anyhow::Result<()> {
-    let mut cfg = match ApoCfgFile::read(path) {
+    let mut cfg = match ApoCfgFile::read() {
         Ok(cfg) => cfg,
         Err(error) if error.kind() == io::ErrorKind::NotFound => ApoCfgFile::default(),
         Err(error) => return Err(error).user_context(Text::ReadApoCfgPreserved),

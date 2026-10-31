@@ -1,20 +1,23 @@
 //! Bounded packet decoding and stereo sinc conversion; never runs on an APO thread.
-use crate::i18n::Text;
-use crate::i18n::UserContext;
-use anyhow::ensure;
+
 use std::collections::VecDeque;
+
+use anyhow::ensure;
 use symphonia::core::{
     codecs::audio::{AudioDecoder, AudioDecoderOptions},
     formats::{FormatReader, TrackType, probe::Hint},
     io::{MediaSource, MediaSourceStream},
 };
+
 use voice_box_shared::{
     audio::{MAX_SAMPLE_RATE, MIN_SAMPLE_RATE},
     pcm_transport::{SAMPLE_RATE, sanitize_sample},
     resample::Resampler,
 };
 
-pub(super) struct SoundDecoder {
+use crate::i18n::{Text, UserContext};
+
+pub struct SoundDecoder {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
     track_id: u32,
@@ -157,7 +160,7 @@ impl SoundDecoder {
     }
 }
 
-pub(super) fn open_format(source: Box<dyn MediaSource>) -> anyhow::Result<Box<dyn FormatReader>> {
+pub fn open_format(source: Box<dyn MediaSource>) -> anyhow::Result<Box<dyn FormatReader>> {
     symphonia::default::get_probe()
         .probe(
             &Hint::new(),

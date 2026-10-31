@@ -1,14 +1,17 @@
 //! A row renders sound data and emits gestures; it owns no library or playback state.
-use super::super::widgets::{ButtonIcon, format_duration, hotkey_badge, icon_button, play_button};
-use super::Status;
+
 use crate::{
+    gui::{
+        sound_list::Status,
+        widgets::{ButtonIcon, format_duration, hotkey_badge, icon_button, play_button},
+    },
     i18n::{Message, Text},
     settings::BindingTarget,
     soundboard::sound::Sound,
 };
 
 #[derive(Clone, Copy)]
-pub(super) struct Row<'a> {
+pub struct Row<'a> {
     pub sound: &'a Sound,
     pub index: usize,
     pub last_index: usize,
@@ -20,7 +23,7 @@ pub(super) struct Row<'a> {
     pub status: Status,
 }
 
-pub(super) enum Action {
+pub enum Action {
     TogglePlayback,
     Delete,
     ClearHotkey,
@@ -29,16 +32,16 @@ pub(super) enum Action {
     MoveTo(usize),
 }
 #[derive(Default)]
-pub(super) struct Response {
+pub struct Response {
     pub actions: Vec<Action>,
     pub toggle_selection: bool,
 }
 
-pub(super) struct RenameEditor {
-    pub(super) index: usize,
-    pub(super) name: String,
-    pub(super) request_focus: bool,
-    pub(super) save_requested: bool,
+pub struct RenameEditor {
+    pub index: usize,
+    pub name: String,
+    pub request_focus: bool,
+    pub save_requested: bool,
 }
 
 impl RenameEditor {
@@ -63,14 +66,13 @@ impl RenameEditor {
     }
 }
 
-pub(super) fn show(ui: &mut egui::Ui, row: Row<'_>, edit: Option<&mut RenameEditor>) -> Response {
+pub fn show(ui: &mut egui::Ui, row: Row<'_>, edit: Option<&mut RenameEditor>) -> Response {
     let sound = row.sound;
     let index = row.index;
     let can_reorder = row.can_reorder;
     let renaming = row.renaming;
     let active = row.status.active_sound == Some(sound.id);
     let capture_target = row.status.capture_target;
-    let capturing = capture_target.is_some();
     let mut response = Response::default();
     ui.push_id(sound.id, |ui| {
         ui.horizontal(|ui| {
@@ -115,7 +117,7 @@ pub(super) fn show(ui: &mut egui::Ui, row: Row<'_>, edit: Option<&mut RenameEdit
                     });
                 }
             }
-            if play_button(ui, !capturing && !renaming, active)
+            if play_button(ui, !renaming, active)
                 .on_hover_text(if active {
                     Text::StopPlayback.text()
                 } else {
@@ -133,7 +135,7 @@ pub(super) fn show(ui: &mut egui::Ui, row: Row<'_>, edit: Option<&mut RenameEdit
                     } else {
                         ButtonIcon::Delete
                     };
-                    if icon_button(ui, !capturing && !renaming, icon).clicked() {
+                    if icon_button(ui, !renaming, icon).clicked() {
                         ui.ctx().request_repaint();
                         response.actions.push(Action::Delete);
                     }
@@ -145,8 +147,7 @@ pub(super) fn show(ui: &mut egui::Ui, row: Row<'_>, edit: Option<&mut RenameEdit
                 .on_hover_text(Text::AudioLength.text());
                 if let Some(key) = sound.hotkey {
                     if row.selected.is_none()
-                        && icon_button(ui, !capturing && !renaming, ButtonIcon::ClearHotkey)
-                            .clicked()
+                        && icon_button(ui, !renaming, ButtonIcon::ClearHotkey).clicked()
                     {
                         response.actions.push(Action::ClearHotkey);
                     }
@@ -160,18 +161,16 @@ pub(super) fn show(ui: &mut egui::Ui, row: Row<'_>, edit: Option<&mut RenameEdit
                     } else {
                         Text::BindHotkey.text()
                     };
-                    if ui
-                        .add_enabled_ui((!capturing || binding) && !renaming, |ui| {
+                    let button_response = ui
+                        .add_enabled_ui(!renaming, |ui| {
                             ui.add_sized([width, 30.0], egui::Button::new(label).truncate())
                         })
                         .inner
-                        .on_hover_text(if binding {
-                            Text::CaptureHotkeyHint.text()
-                        } else {
-                            Text::BindHotkey.text()
-                        })
-                        .clicked()
-                    {
+                        .on_hover_text(Text::BindHotkey.text());
+                    if binding {
+                        button_response.show_tooltip_text(Text::CaptureHotkeyHint.text());
+                    }
+                    if button_response.clicked() {
                         response.actions.push(Action::Capture);
                     }
                 }
@@ -188,17 +187,14 @@ pub(super) fn show(ui: &mut egui::Ui, row: Row<'_>, edit: Option<&mut RenameEdit
                         sound.name.clone()
                     };
                     let name_response = ui
-                        .add_enabled_ui(!capturing, |ui| {
-                            ui.add_sized(
-                                [ui.available_width().max(16.0), 30.0],
-                                egui::Button::new(())
-                                    .left_text(name)
-                                    .frame_when_inactive(false)
-                                    .selected(row.selected.unwrap_or(false))
-                                    .truncate(),
-                            )
-                        })
-                        .inner
+                        .add_sized(
+                            [ui.available_width().max(16.0), 30.0],
+                            egui::Button::new(())
+                                .left_text(name)
+                                .frame_when_inactive(false)
+                                .selected(row.selected.unwrap_or(false))
+                                .truncate(),
+                        )
                         .on_hover_text(if row.selected.is_some() {
                             format!("{}\n{}", sound.name, Text::SelectSoundHint.text())
                         } else {
@@ -211,11 +207,7 @@ pub(super) fn show(ui: &mut egui::Ui, row: Row<'_>, edit: Option<&mut RenameEdit
                     if row.selected.is_some() && name_response.clicked() {
                         response.toggle_selection = true;
                     }
-                    if name_response.double_clicked()
-                        && !capturing
-                        && !renaming
-                        && row.selected.is_none()
-                    {
+                    if name_response.double_clicked() && !renaming && row.selected.is_none() {
                         response.actions.push(Action::Rename);
                     }
                 }

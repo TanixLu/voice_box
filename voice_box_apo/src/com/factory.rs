@@ -1,8 +1,6 @@
-use super::{LIVE_OBJECTS, create_apo, inner_query_interface, inner_release};
-use crate::etw::{self, apo_log};
 use core::{ffi::c_void, ptr};
 use std::sync::atomic::{AtomicU32, Ordering};
-use voice_box_shared::plugin;
+
 use windows::Win32::{
     Foundation::{
         CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_NOINTERFACE, E_POINTER, S_FALSE, S_OK,
@@ -10,6 +8,13 @@ use windows::Win32::{
     System::Com::{IClassFactory, IClassFactory_Vtbl},
 };
 use windows_core::{BOOL, GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface};
+
+use voice_box_shared::plugin;
+
+use crate::{
+    com::{LIVE_OBJECTS, create_apo, inner_query_interface, inner_release},
+    etw::{self, apo_log},
+};
 
 static SERVER_LOCKS: AtomicU32 = AtomicU32::new(0);
 static FACTORY_REFS: AtomicU32 = AtomicU32::new(1);

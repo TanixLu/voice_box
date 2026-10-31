@@ -1,22 +1,23 @@
 //! Central bilingual catalog. Every entry requires both languages.
-use super::Language;
+
+use crate::i18n::Language;
 
 macro_rules! catalog {
     ($($key:ident => ($en:literal, $zh:literal);)*) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(crate) enum Text { $($key,)* }
+        pub enum Text { $($key,)* }
 
         impl Text {
-            pub(crate) fn in_language(self, language: Language) -> &'static str {
+            pub fn in_language(self, language: Language) -> &'static str {
                 match (self, language) {
                     $((Self::$key, Language::English) => $en,
                       (Self::$key, Language::SimplifiedChinese) => $zh,)*
                 }
             }
-            pub(crate) fn text(self) -> &'static str {
+            pub fn text(self) -> &'static str {
                 self.in_language(super::current_language())
             }
-            pub(crate) fn matches_input(self, input: &str) -> bool {
+            pub fn matches_input(self, input: &str) -> bool {
                 [Language::English, Language::SimplifiedChinese].into_iter()
                     .any(|language| input.trim().eq_ignore_ascii_case(self.in_language(language)))
             }
@@ -25,7 +26,7 @@ macro_rules! catalog {
 }
 
 catalog! {
-    OpenDatabase => ("Cannot open voice_box.db", "无法打开 voice_box.db");
+    OpenDatabase => ("Cannot open database", "无法打开数据库");
     AudioChangedDuringImport => ("The audio file changed during import. Try again", "导入过程中音频文件已变化，请重试");
     OpeningMicrophone => ("Opening microphone…", "正在打开麦克风…");
     PreparingProcessedAudio => ("Preparing processed audio…", "正在准备处理后的声音…");
@@ -33,7 +34,6 @@ catalog! {
     PreviewIncomplete => ("Preview did not complete. Please try again.", "试听操作未完成，请重试。");
     Recording => ("Recording…", "正在录音…");
     Playing => ("Playing…", "正在播放…");
-    ReadPreviewPath => ("Failed to locate the preview component", "读取试听组件路径失败");
     ReadPreviewComponent => ("Cannot read the preview component. Install or update the plugin first", "无法读取试听组件，请先安装或更新插件");
     PreviewComponentOutdated => ("The installed preview component does not match this application. Update the plugin first", "已安装的试听组件与当前程序不一致，请先更新插件");
     LoadPreviewComponent => ("Failed to load the preview component. Install or update the plugin first", "加载试听组件失败，请先安装或更新插件");
@@ -42,10 +42,8 @@ catalog! {
     ProcessPreview => ("Failed to process the preview recording", "处理试听录音失败");
     OpenPlaybackDevice => ("Failed to open the playback device", "开启播放设备失败");
     PlaybackDeviceUnresponsive => ("The playback device is not responding. Check its connection", "播放设备没有响应，请检查设备连接");
-    ReadApoPath => ("Failed to locate the APO DLL", "读取 APO DLL 路径失败");
     RecycleApo => ("Failed to move the APO DLL to the Recycle Bin", "回收 APO DLL 失败");
     SignalCleanup => ("Failed to notify the cleanup process that uninstallation is complete", "通知清理进程卸载完成失败");
-    ReadSystemDirectory => ("Failed to locate the Windows system directory", "读取 Windows 系统目录失败");
     StartCleanup => ("Failed to start the Recycle Bin cleanup process", "启动回收站清理进程失败");
     CleanupInitializationFailed => ("The cleanup process could not initialize. Check the error message and try again", "回收站清理进程初始化失败，请查看错误提示后重试");
     DefaultSpeakerMissing => ("No default speaker was found. Check Windows sound output settings", "找不到默认扬声器，请检查 Windows 声音输出设置");
@@ -101,7 +99,7 @@ catalog! {
     HotkeyServiceUnavailable => ("The global hotkey service is unavailable", "全局快捷键服务不可用");
     PressKey => ("Press a key…", "请按键…");
     BindHotkey => ("Bind hotkey", "绑定快捷键");
-    CaptureHotkeyHint => ("Press a shortcut. Press Esc or click again to cancel", "请按下快捷键，按 Esc 或再次点击取消");
+    CaptureHotkeyHint => ("Press a shortcut. Press Esc to cancel", "请按下快捷键，按 Esc 取消");
     SoundNotFound => ("The sound does not exist", "音效不存在");
     InvalidSoundName => ("The name must not be empty or contain control characters", "音效名称不能为空，也不能包含控制字符");
     RenameSoundFailed => ("Failed to rename the sound", "重命名音效失败");
@@ -268,6 +266,18 @@ catalog! {
     Exit => ("Exit", "退出");
     CreateTray => ("Failed to create the tray icon", "创建托盘图标失败");
     FullUninstall => ("Uninstall VoiceBox", "完全卸载");
+    Startup => ("Start with Windows", "开机自启");
+    StartupLabel => ("Startup", "自启");
+    StartupOn => ("Start with Windows", "开机自启");
+    StartupOff => ("Off", "关闭");
+    StartupNotSynced => ("Startup setting not synchronized", "自启设置未同步");
+    RetryStartup => ("Retry", "重试");
+    SyncStartup => ("Updating startup task…", "正在同步开机自启任务…");
+    SyncStartupFailed => ("Failed to update the startup task", "同步开机自启任务失败");
+    StartupVerificationFailed => ("The registered startup task did not pass verification", "开机自启任务注册后校验失败");
+    StartupRedirectedPath => ("Startup does not support symbolic links or redirected paths. Move the application to a regular local folder", "开机自启不支持符号链接或重定向路径，请将应用移至普通本地文件夹");
+    StartupRegistered => ("Startup enabled successfully! If you move or rename the application, restart it to restore startup.", "开机自启设置成功！若移动或重命名应用程序，需重新启动应用以恢复开机自启。");
+    StartupReRegistered => ("Startup re-registered! If you move or rename the application, restart it to restore startup.", "开机自启已重新注册！若移动或重命名应用程序，需重新启动应用以恢复开机自启。");
     SavingApoCfg => ("Saving settings…", "正在保存设置…");
     RecorderExited => ("The recording tool exited unexpectedly. Please try again", "录音工具意外退出，请重试");
     InvalidSelection => ("Invalid selection range", "截取范围无效");

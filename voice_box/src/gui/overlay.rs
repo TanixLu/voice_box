@@ -1,7 +1,3 @@
-use super::widgets::format_duration;
-use crate::i18n::Text;
-use crate::i18n::UserContext;
-use crate::soundboard::Soundboard;
 use anyhow::ensure;
 use egui::{Color32, FontId, Rect, Vec2, pos2, vec2};
 use windows::{
@@ -21,17 +17,23 @@ use windows::{
     core::PCWSTR,
 };
 
+use crate::{
+    gui::widgets::format_duration,
+    i18n::{Text, UserContext},
+    soundboard::Soundboard,
+};
+
 const SIZE: Vec2 = vec2(360.0, 72.0);
 // This undecorated tool window uses an invariant internal title for native lookup.
 const NATIVE_TITLE: &str = "VoiceBox Playback Overlay";
 
 #[derive(Default)]
-pub(super) struct Overlay {
+pub struct Overlay {
     builder: Option<egui::ViewportBuilder>,
 }
 
 impl Overlay {
-    pub(super) fn show(
+    pub fn show(
         &mut self,
         ctx: &egui::Context,
         model: &Soundboard,

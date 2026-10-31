@@ -1,20 +1,19 @@
-use super::jobs::{JobResult, Jobs};
-use crate::i18n::Message;
-use crate::i18n::Text;
 use crate::{
     devices::{self, Microphone, PluginAction},
+    gui::jobs::{JobResult, Jobs},
+    i18n::{Message, Text},
     setup::PluginStatus,
 };
 
 #[derive(Default)]
-pub(super) struct MicrophonePanel {
+pub struct MicrophonePanel {
     devices: Vec<Microphone>,
     selected: usize,
     preferred_guid: Option<String>,
     confirm_uninstall: bool,
 }
 
-pub(super) fn display_name(microphone: &Microphone) -> String {
+pub fn display_name(microphone: &Microphone) -> String {
     let status = match microphone.plugin_status {
         PluginStatus::Installed => Text::PluginInstalled.text(),
         PluginStatus::NotInstalled => Text::PluginNotInstalled.text(),
@@ -33,22 +32,19 @@ pub(super) fn display_name(microphone: &Microphone) -> String {
 }
 
 impl MicrophonePanel {
-    pub(super) fn new(preferred_guid: Option<String>) -> Self {
+    pub fn new(preferred_guid: Option<String>) -> Self {
         Self {
             preferred_guid,
             ..Self::default()
         }
     }
-    pub(super) fn selected(&self) -> Option<&Microphone> {
+    pub fn selected(&self) -> Option<&Microphone> {
         self.devices.get(self.selected)
     }
-    pub(super) fn preferred_guid(&self) -> Option<String> {
-        self.preferred_guid.clone()
-    }
-    pub(super) fn cancel_uninstall(&mut self) {
+    pub fn cancel_uninstall(&mut self) {
         self.confirm_uninstall = false;
     }
-    pub(super) fn replace_devices(&mut self, devices: Vec<Microphone>, selected: usize) {
+    pub fn replace_devices(&mut self, devices: Vec<Microphone>, selected: usize) {
         let selected = self
             .preferred_guid
             .as_ref()
@@ -64,7 +60,7 @@ impl MicrophonePanel {
             self.preferred_guid = self.devices.get(selected).map(|mic| mic.guid.clone());
         }
     }
-    pub(super) fn apply_statuses(&mut self, statuses: Vec<(String, PluginStatus)>) {
+    pub fn apply_statuses(&mut self, statuses: Vec<(String, PluginStatus)>) {
         for (guid, status) in statuses {
             if let Some(mic) = self.devices.iter_mut().find(|mic| mic.guid == guid) {
                 mic.plugin_status = status;
@@ -72,19 +68,14 @@ impl MicrophonePanel {
         }
     }
 
-    pub(super) fn refresh(&mut self, ctx: &egui::Context, jobs: &mut Jobs) {
+    pub fn refresh(&mut self, ctx: &egui::Context, jobs: &mut Jobs) {
         self.confirm_uninstall = false;
         jobs.begin(ctx, Text::ReadingMicrophones, || {
             JobResult::Microphones(devices::enumerate_microphones())
         });
     }
 
-    pub(super) fn ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        other_busy: bool,
-        jobs: &mut Jobs,
-    ) -> egui::Response {
+    pub fn ui(&mut self, ui: &mut egui::Ui, other_busy: bool, jobs: &mut Jobs) -> egui::Response {
         ui.horizontal(|ui| {
             ui.strong(Text::Microphone.text());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -143,7 +134,7 @@ impl MicrophonePanel {
         response
     }
 
-    pub(super) fn status_ui(&self, ui: &mut egui::Ui, jobs: &Jobs) {
+    pub fn status_ui(&self, ui: &mut egui::Ui, jobs: &Jobs) {
         let status = if jobs.busy() {
             Some(egui::RichText::new(jobs.status.text()))
         } else if jobs.failed {

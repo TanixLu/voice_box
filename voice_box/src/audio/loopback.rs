@@ -1,13 +1,12 @@
 //! Default-speaker loopback, including time spent with no render packets.
-use super::{Apartment, Stream, capture::Recording, enumerator};
-use crate::i18n::Text;
-use crate::i18n::UserContext;
-use anyhow::ensure;
+
 use std::{
     ptr, slice,
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
+
+use anyhow::ensure;
 use wasapi::{SampleType, WaveFormat};
 use windows::Win32::{
     Media::Audio::{
@@ -20,7 +19,12 @@ use windows::Win32::{
     },
 };
 
-pub(crate) const MAX_RECORD_SECONDS: u32 = 600;
+use crate::{
+    audio::{Apartment, Stream, capture::Recording, enumerator},
+    i18n::{Text, UserContext},
+};
+
+pub const MAX_RECORD_SECONDS: u32 = 600;
 const RATE: u32 = 48_000;
 const CHANNELS: usize = 2;
 
@@ -53,7 +57,7 @@ fn place_packet(samples: &mut Vec<f32>, start: usize, frames: usize, data: Optio
     }
 }
 
-pub(crate) fn capture(stop: &AtomicBool, started: &dyn Fn()) -> anyhow::Result<Recording> {
+pub fn capture(stop: &AtomicBool, started: &dyn Fn()) -> anyhow::Result<Recording> {
     let _apartment = Apartment::new()?;
     let device = unsafe { enumerator()?.GetDefaultAudioEndpoint(eRender, eConsole) }
         .user_context(Text::DefaultSpeakerMissing)?;

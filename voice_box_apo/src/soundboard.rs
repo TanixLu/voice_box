@@ -1,9 +1,5 @@
 //! Background IPC reader plus resident, bounded-work post-denoise mixing.
-use super::{
-    etw::{self, apo_log},
-    memory::LockedPages,
-    worker,
-};
+
 use std::{
     f64::consts::PI,
     mem::size_of,
@@ -18,15 +14,23 @@ use std::{
     },
     time::Duration,
 };
-use voice_box_shared::{
-    audio::{MAX_CHANNELS, SampleFormat},
-    pcm_transport::{Clock, Mapping, SAMPLE_RATE, Slot},
-};
+
 use windows::{
     Win32::System::Memory::{
         MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
     },
     core::w,
+};
+
+use voice_box_shared::{
+    audio::{MAX_CHANNELS, SampleFormat},
+    pcm_transport::{Clock, Mapping, SAMPLE_RATE, Slot},
+};
+
+use crate::{
+    etw::{self, apo_log},
+    memory::LockedPages,
+    worker,
 };
 
 const FRAMES: usize = 4096;
@@ -141,7 +145,7 @@ fn kernels(rate: f64) -> Box<[[f32; TAPS]]> {
         .collect()
 }
 
-pub(super) struct Injection {
+pub struct Injection {
     state: Arc<Resident>,
     clock: Clock,
     position: f64,

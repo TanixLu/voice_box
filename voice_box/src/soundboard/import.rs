@@ -1,15 +1,5 @@
 //! File validation and batch import; the caller owns the live library.
-use super::{
-    decoder::SoundDecoder,
-    sound::{Sound, is_valid_name},
-    storage::write_sound,
-};
-use crate::{
-    database,
-    i18n::{Details, Message, Text, UserContext},
-};
-use anyhow::ensure;
-use rusqlite::{Connection, TransactionBehavior};
+
 use std::{
     collections::HashSet,
     fs::File,
@@ -18,14 +8,28 @@ use std::{
     sync::{Mutex, mpsc},
     thread,
 };
+
+use anyhow::ensure;
+use rusqlite::{Connection, TransactionBehavior};
+
 use voice_box_shared::pcm_transport::SAMPLE_RATE;
 
-pub(super) struct ImportedSounds {
-    pub(super) sounds: Vec<Sound>,
-    pub(super) errors: Vec<Message>,
+use crate::{
+    database,
+    i18n::{Details, Message, Text, UserContext},
+    soundboard::{
+        decoder::SoundDecoder,
+        sound::{Sound, is_valid_name},
+        storage::write_sound,
+    },
+};
+
+pub struct ImportedSounds {
+    pub sounds: Vec<Sound>,
+    pub errors: Vec<Message>,
 }
 
-pub(super) fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSounds> {
+pub fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSounds> {
     let (files, mut imported) = validate_files(sources)?;
     if !files.is_empty() {
         let result = database::open().and_then(|mut connection| {

@@ -1,19 +1,22 @@
-use super::{Apartment, Stream, capture::Recording, enumerator};
-use crate::i18n::Text;
-use crate::i18n::UserContext;
-use anyhow::ensure;
 use std::{
     ptr,
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
+
+use anyhow::ensure;
 use wasapi::{SampleType, WaveFormat};
 use windows::Win32::{
     Media::Audio::{IAudioClient, IAudioRenderClient, eConsole, eRender},
     System::Com::CLSCTX_ALL,
 };
 
-pub(crate) fn playback(
+use crate::{
+    audio::{Apartment, Stream, capture::Recording, enumerator},
+    i18n::{Text, UserContext},
+};
+
+pub fn playback(
     recording: &Recording,
     samples: &[f32],
     stop: &AtomicBool,

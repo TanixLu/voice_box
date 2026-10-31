@@ -1,13 +1,12 @@
 //! WASAPI capture and playback, offline preview and session coordination.
 
-pub(super) mod capture;
-pub(super) mod loopback;
-pub(super) mod monitor;
-pub(super) mod playback;
+pub mod capture;
+pub mod loopback;
+pub mod monitor;
+pub mod playback;
 mod preview;
-pub(super) mod session;
+pub mod session;
 
-use crate::i18n::Message;
 use anyhow::bail;
 use wasapi::WaveFormat;
 use windows::Win32::{
@@ -24,9 +23,11 @@ use windows::Win32::{
     },
 };
 
-pub(super) struct Apartment;
+use crate::i18n::Message;
+
+pub struct Apartment;
 impl Apartment {
-    pub(super) fn new() -> anyhow::Result<Self> {
+    pub fn new() -> anyhow::Result<Self> {
         wasapi::initialize_mta().ok()?;
         Ok(Self)
     }

@@ -1,15 +1,17 @@
 //! Offline entry point into the same processor used by the real-time APO.
+
 use std::{mem::size_of, ptr, slice};
 
 use windows::Win32::Foundation::{E_INVALIDARG, E_POINTER, S_OK};
 use windows_core::HRESULT;
 
-use super::dsp::AudioProcessor;
 use voice_box_shared::{
     apo_cfg::ApoConfig,
     audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
     preview,
 };
+
+use crate::dsp::AudioProcessor;
 
 #[unsafe(no_mangle)]
 /// Process and align a complete recording with a fresh DSP state.

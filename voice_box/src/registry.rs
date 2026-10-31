@@ -1,4 +1,3 @@
-use crate::i18n::Message;
 use winreg::{
     RegKey,
     enums::{
@@ -7,6 +6,9 @@ use winreg::{
     },
     types::{FromRegValue, ToRegValue},
 };
+
+use crate::i18n::Message;
+
 fn split_registry_key_path(full_path: &str) -> anyhow::Result<(RegKey, &str)> {
     let error_fn = || {
         anyhow::anyhow!(Message::InvalidRegistryPath {

@@ -1,7 +1,6 @@
-use crate::i18n::Text;
-use egui_winit::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::{cell::Cell, sync::mpsc};
-use voice_box_shared::utils::wide_null;
+
+use egui_winit::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::{
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, WPARAM},
@@ -13,30 +12,34 @@ use windows::{
                 NOTIFYICONDATAW, RemoveWindowSubclass, SetWindowSubclass, Shell_NotifyIconW,
             },
             WindowsAndMessaging::{
-                AppendMenuW, ChangeWindowMessageFilterEx, CreatePopupMenu, DestroyMenu,
+                AppendMenuW, ChangeWindowMessageFilterEx, CreatePopupMenu, DestroyMenu, GWL_STYLE,
                 GetCursorPos, GetSystemMetrics, HICON, IMAGE_ICON, LR_SHARED, LoadImageW,
                 MF_GRAYED, MF_STRING, MSGFLT_ALLOW, PostMessageW, RegisterWindowMessageW,
-                SM_CXSMICON, SM_CYSMICON, SetForegroundWindow, TPM_BOTTOMALIGN, TPM_RETURNCMD,
-                TPM_RIGHTBUTTON, TrackPopupMenu, WM_APP, WM_CONTEXTMENU, WM_NCDESTROY, WM_NULL,
+                SM_CXSMICON, SM_CYSMICON, STYLESTRUCT, SWP_SHOWWINDOW, SetForegroundWindow,
+                TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WINDOWPOS, WM_APP,
+                WM_CONTEXTMENU, WM_NCDESTROY, WM_NULL, WM_STYLECHANGING, WM_WINDOWPOSCHANGING,
+                WS_VISIBLE,
             },
         },
     },
     core::{PCWSTR, w},
 };
 
+use voice_box_shared::utils::wide_null;
+
+use crate::i18n::Text;
+
 const CALLBACK: u32 = WM_APP + 20;
-const SHOW: usize = 1;
-const EXIT: usize = 2;
 const NIN_KEYSELECT: u32 = NIN_SELECT | NINF_KEY;
 
-pub(super) enum Action {
-    Show,
+pub enum Action {
+    Show = 1,
     Exit,
 }
 
-pub(super) struct Tray {
+pub struct Tray {
     data: Box<Data>,
-    pub(super) receiver: mpsc::Receiver<Action>,
+    pub receiver: mpsc::Receiver<Action>,
 }
 
 struct Data {
@@ -44,16 +47,19 @@ struct Data {
     taskbar_created: u32,
     exit_enabled: Cell<bool>,
     available: Cell<bool>,
+    startup_hidden: Cell<bool>,
     ctx: egui::Context,
     sender: mpsc::Sender<Action>,
 }
 
 impl Tray {
-    pub(super) fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
+    pub fn new(cc: &eframe::CreationContext<'_>, start_in_tray: bool) -> anyhow::Result<Self> {
+        // get the HWND of the main window
         let RawWindowHandle::Win32(handle) = cc.window_handle()?.as_raw() else {
             anyhow::bail!("Expected a Win32 window");
         };
         let window = HWND(handle.hwnd.get() as _);
+
         let (sender, receiver) = mpsc::channel();
         unsafe {
             // LR_SHARED leaves the embedded icon owned by the executable module.
@@ -78,6 +84,7 @@ impl Tray {
                 taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),
                 exit_enabled: Cell::new(false),
                 available: Cell::new(false),
+                startup_hidden: Cell::new(start_in_tray),
                 ctx: cc.egui_ctx.clone(),
                 sender,
             });
@@ -98,11 +105,11 @@ impl Tray {
         }
     }
 
-    pub(super) fn set_exit_enabled(&self, enabled: bool) {
+    pub fn set_exit_enabled(&self, enabled: bool) {
         self.data.exit_enabled.set(enabled);
     }
 
-    pub(super) fn available(&self) -> bool {
+    pub fn available(&self) -> bool {
         self.data.available.get()
     }
 }
@@ -123,6 +130,9 @@ impl Data {
     }
 
     fn send(&self, action: Action) {
+        if matches!(action, Action::Show) {
+            self.startup_hidden.set(false);
+        }
         let _ = self.sender.send(action);
         self.ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
@@ -133,7 +143,12 @@ impl Data {
             let result = (|| {
                 let show = wide_null(Text::ShowMainWindow.text());
                 let exit = wide_null(Text::Exit.text());
-                AppendMenuW(menu, MF_STRING, SHOW, PCWSTR(show.as_ptr()))?;
+                AppendMenuW(
+                    menu,
+                    MF_STRING,
+                    Action::Show as usize,
+                    PCWSTR(show.as_ptr()),
+                )?;
                 AppendMenuW(
                     menu,
                     if self.exit_enabled.get() {
@@ -141,7 +156,7 @@ impl Data {
                     } else {
                         MF_STRING | MF_GRAYED
                     },
-                    EXIT,
+                    Action::Exit as usize,
                     PCWSTR(exit.as_ptr()),
                 )?;
                 let mut point = Default::default();
@@ -158,9 +173,9 @@ impl Data {
                 )
                 .0 as usize;
                 PostMessageW(Some(self.icon.hWnd), WM_NULL, WPARAM(0), LPARAM(0))?;
-                if selected == SHOW {
+                if selected == Action::Show as usize {
                     self.send(Action::Show);
-                } else if selected == EXIT && self.exit_enabled.get() {
+                } else if selected == Action::Exit as usize && self.exit_enabled.get() {
                     self.send(Action::Exit);
                 } else {
                     let _ = Shell_NotifyIconW(NIM_SETFOCUS, &self.icon);
@@ -192,7 +207,17 @@ unsafe extern "system" fn window_proc(
 ) -> LRESULT {
     // The boxed data stays alive until the subclass is removed on this UI thread.
     let data = unsafe { &*(data as *const Data) };
-    if message == data.taskbar_created {
+    if message == WM_WINDOWPOSCHANGING && data.startup_hidden.get() {
+        // eframe 0.37 unconditionally shows the root window after its first paint.
+        let position = unsafe { &mut *(lparam.0 as *mut WINDOWPOS) };
+        position.flags &= !SWP_SHOWWINDOW;
+    } else if message == WM_STYLECHANGING
+        && wparam.0 as i32 == GWL_STYLE.0
+        && data.startup_hidden.get()
+    {
+        let style = unsafe { &mut *(lparam.0 as *mut STYLESTRUCT) };
+        style.styleNew &= !WS_VISIBLE.0;
+    } else if message == data.taskbar_created {
         data.available.set(false);
         if let Err(error) = data.add_icon() {
             tracing::warn!("Failed to restore tray icon: {error}");

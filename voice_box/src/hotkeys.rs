@@ -1,8 +1,7 @@
 //! Registered global shortcuts run on a message thread; simulated keys use RAII.
-use crate::i18n::Text;
-use crate::i18n::{Details, Message, UserContext};
 
 use std::{mem::size_of, sync::mpsc, thread::JoinHandle};
+
 use windows::Win32::{
     Foundation::{LPARAM, WPARAM},
     System::Threading::GetCurrentThreadId,
@@ -15,10 +14,12 @@ use windows::Win32::{
     },
 };
 
+use crate::i18n::{Details, Message, Text, UserContext};
+
 const SIMULATED_INPUT_TAG: usize = 0x5642_4b59;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub(super) struct Hotkey {
+pub struct Hotkey {
     pub virtual_key_code: u16,
     pub modifiers: u32,
 }
@@ -206,11 +207,11 @@ enum Command {
     Validate(Hotkey, mpsc::Sender<anyhow::Result<()>>),
 }
 
-pub(super) enum Event {
+pub enum Event {
     Trigger { index: usize, revision: u64 },
     Error(Message),
 }
-pub(super) struct Hotkeys {
+pub struct Hotkeys {
     sender: mpsc::Sender<Command>,
     pub receiver: mpsc::Receiver<Event>,
     thread_id: u32,
@@ -313,7 +314,7 @@ impl Drop for Hotkeys {
 }
 
 #[derive(Default)]
-pub(super) struct HeldKeys(Vec<u16>);
+pub struct HeldKeys(Vec<u16>);
 impl HeldKeys {
     pub fn press(key: Hotkey) -> anyhow::Result<Self> {
         anyhow::ensure!(key.is_valid_for_hold(), Text::InvalidHoldKey);

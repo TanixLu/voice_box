@@ -1,11 +1,12 @@
 //! Detached native workers with an owned DLL reference through their final exit.
 //! No APO control callback waits for a APO configuration worker to exit.
-use super::etw;
+
 use std::{
     ffi::c_void,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::atomic::{AtomicU32, Ordering},
 };
+
 use windows::{
     Win32::{
         Foundation::{CloseHandle, FreeLibrary, HMODULE},
@@ -20,8 +21,10 @@ use windows::{
     core::PCWSTR,
 };
 
+use crate::etw;
+
 static ACTIVE_WORKERS: AtomicU32 = AtomicU32::new(0);
-pub(super) fn active_count() -> u32 {
+pub fn active_count() -> u32 {
     ACTIVE_WORKERS.load(Ordering::Acquire)
 }
 
@@ -62,10 +65,7 @@ impl Drop for WorkerContext {
     }
 }
 
-pub(super) fn spawn(
-    name: PCWSTR,
-    action: impl FnOnce() + Send + 'static,
-) -> windows::core::Result<()> {
+pub fn spawn(name: PCWSTR, action: impl FnOnce() + Send + 'static) -> windows::core::Result<()> {
     let module = ModuleRef::acquire()?;
     let action = Box::new(action);
     ACTIVE_WORKERS.fetch_add(1, Ordering::AcqRel);

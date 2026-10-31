@@ -1,22 +1,22 @@
-use super::{
-    batch_rename::{self, BatchRename},
-    hotkey_binding::HotkeyManager,
-    jobs::{JobResult, Jobs},
-    recording_import::RecordingImport,
-    sound_list::{self, SoundList},
-    sound_settings::{self, SoundSettings},
-    widgets::format_duration,
-};
-use crate::i18n::Text;
-use crate::i18n::{Details, Message};
+use std::collections::HashSet;
+
 use crate::{
+    gui::{
+        batch_rename::{self, BatchRename},
+        hotkey_binding::HotkeyManager,
+        jobs::{JobResult, Jobs},
+        recording_import::RecordingImport,
+        sound_list::{self, SoundList},
+        sound_settings::{self, SoundSettings},
+        widgets::format_duration,
+    },
+    i18n::{Details, Message, Text},
     settings::{BindingTarget, Settings},
     soundboard::{Soundboard, library::Library},
 };
-use std::collections::HashSet;
 
-pub(super) struct SoundboardPanel {
-    pub(super) model: Soundboard,
+pub struct SoundboardPanel {
+    pub model: Soundboard,
     settings: SoundSettings,
     list: SoundList,
     batch_rename: Option<BatchRename>,
@@ -24,7 +24,7 @@ pub(super) struct SoundboardPanel {
 }
 
 impl SoundboardPanel {
-    pub(super) fn new(settings: Settings, library: Library) -> Self {
+    pub fn new(settings: Settings, library: Library) -> Self {
         Self {
             model: Soundboard::new(settings, library),
             settings: SoundSettings::default(),
@@ -33,38 +33,38 @@ impl SoundboardPanel {
             recording_import: None,
         }
     }
-    pub(super) fn renaming(&self) -> bool {
+    pub fn renaming(&self) -> bool {
         self.list.renaming() || self.batch_rename.is_some()
     }
-    pub(super) fn cancel_rename(&mut self) {
+    pub fn cancel_rename(&mut self) {
         self.list.cancel_rename();
     }
-    pub(super) fn cancel_delete(&mut self) {
+    pub fn cancel_delete(&mut self) {
         self.list.cancel_delete();
     }
-    pub(super) fn cancel_batch(&mut self) {
+    pub fn cancel_batch(&mut self) {
         if self.model.batch_renaming() || self.model.deleting() {
             return;
         }
         self.list.cancel_batch();
         self.batch_rename = None;
     }
-    pub(super) fn recording_open(&self) -> bool {
+    pub fn recording_open(&self) -> bool {
         self.recording_import.is_some()
     }
-    pub(super) fn recording_saving(&self) -> bool {
+    pub fn recording_saving(&self) -> bool {
         self.recording_import
             .as_ref()
             .is_some_and(|tool| tool.saving())
     }
-    pub(super) fn interaction_blocked(&self, jobs: &Jobs) -> bool {
+    pub fn interaction_blocked(&self, jobs: &Jobs) -> bool {
         jobs.busy()
             || self.model.importing()
             || self.model.deleting()
             || self.model.batch_renaming()
             || self.recording_saving()
     }
-    pub(super) fn poll_recording(&mut self, ctx: &egui::Context) {
+    pub fn poll_recording(&mut self, ctx: &egui::Context) {
         if let Some(tool) = &mut self.recording_import
             && let Some(sound) = tool.poll(ctx)
         {
@@ -72,7 +72,7 @@ impl SoundboardPanel {
             self.recording_import = None;
         }
     }
-    pub(super) fn recording_ui(&mut self, ctx: &egui::Context) {
+    pub fn recording_ui(&mut self, ctx: &egui::Context) {
         if let Some(tool) = &mut self.recording_import
             && tool.ui(ctx)
         {
@@ -109,17 +109,12 @@ impl SoundboardPanel {
         }
     }
 
-    pub(super) fn play_sound(
-        &mut self,
-        ctx: &egui::Context,
-        index: usize,
-        hotkeys: &mut HotkeyManager,
-    ) {
+    pub fn play_sound(&mut self, ctx: &egui::Context, index: usize, hotkeys: &mut HotkeyManager) {
         hotkeys.clear_error();
         self.model.play(index, super::wake_ui(ctx.clone()));
     }
 
-    pub(super) fn play_random_sound(
+    pub fn play_random_sound(
         &mut self,
         ctx: &egui::Context,
         hotkey: Option<crate::hotkeys::Hotkey>,
@@ -130,7 +125,7 @@ impl SoundboardPanel {
         }
     }
 
-    pub(super) fn ui(
+    pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
         jobs: &mut Jobs,
@@ -142,20 +137,6 @@ impl SoundboardPanel {
             && !self.settings.is_open()
             && !self.recording_open();
         ui.add_enabled_ui(available, |ui| {
-            if hotkeys.batch_capturing()
-                && ui.is_enabled()
-                && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-            {
-                hotkeys.cancel_capture();
-            }
-            if self.list.batch_cancelable()
-                && ui.is_enabled()
-                && ui.ctx().memory(|memory| memory.top_modal_layer().is_none())
-                && !ui.ctx().any_popup_open()
-                && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-            {
-                self.cancel_batch();
-            }
             self.toolbar_ui(ui, jobs, hotkeys);
             // The toolbar can start an operation during this same frame.
             if self.interaction_blocked(jobs) || self.recording_open() {
@@ -235,9 +216,6 @@ impl SoundboardPanel {
 
     fn toolbar_ui(&mut self, ui: &mut egui::Ui, jobs: &mut Jobs, hotkeys: &mut HotkeyManager) {
         ui.horizontal(|ui| {
-            if hotkeys.target().is_some() {
-                ui.disable();
-            }
             ui.strong(
                 Message::SoundCount {
                     count: self.model.library().sounds.len(),
@@ -308,12 +286,8 @@ impl SoundboardPanel {
                 .model
                 .remove(&HashSet::from([id]), super::wake_ui(ctx.clone())),
             Action::Capture(target) => {
-                if hotkeys.target() == Some(target) {
-                    hotkeys.cancel_capture();
-                } else {
-                    self.model.stop();
-                    hotkeys.begin_capture(target);
-                }
+                self.model.stop();
+                hotkeys.begin_capture(target);
             }
             Action::ClearHotkey(index) => {
                 if let Err(error) = self
@@ -342,10 +316,7 @@ impl SoundboardPanel {
                 .map(|key| Message::StopPlaybackHotkey { key }.text().into_owned())
                 .unwrap_or_else(|| Text::StopPlayback.text().into());
             if ui
-                .add_enabled(
-                    self.model.playing() && hotkeys.target().is_none(),
-                    egui::Button::new(key),
-                )
+                .add_enabled(self.model.playing(), egui::Button::new(key))
                 .clicked()
             {
                 self.model.stop();
@@ -400,15 +371,10 @@ impl SoundboardPanel {
         action: sound_list::BatchAction,
     ) {
         use sound_list::BatchAction;
-        if matches!(action, BatchAction::CancelCapture) {
-            hotkeys.cancel_capture();
-            return;
-        }
         let Some(ids) = self.list.selected().cloned() else {
             return;
         };
         match action {
-            BatchAction::CancelCapture => unreachable!(),
             BatchAction::Export => {
                 self.model.stop();
                 let sounds: Vec<_> = self
@@ -468,7 +434,7 @@ impl SoundboardPanel {
         }
     }
 
-    pub(super) fn file_error_ui(&mut self, ctx: &egui::Context) {
+    pub fn file_error_ui(&mut self, ctx: &egui::Context) {
         let Some((title, error)) = &self.model.file_error else {
             return;
         };
@@ -497,7 +463,7 @@ impl SoundboardPanel {
         }
     }
 
-    pub(super) fn settings_ui(
+    pub fn settings_ui(
         &mut self,
         ctx: &egui::Context,
         jobs: &mut Jobs,
@@ -508,7 +474,7 @@ impl SoundboardPanel {
             ctx,
             &self.model.settings,
             Status {
-                busy: jobs.busy(),
+                busy: jobs.busy() || hotkeys.is_capturing(),
                 capture_target: hotkeys.target(),
                 capture_message: &hotkeys.settings_message,
                 error: jobs.failed.then_some(&jobs.status),
@@ -522,18 +488,14 @@ impl SoundboardPanel {
             Action::ClearMessage => hotkeys.settings_message.clear(),
             Action::Save(settings) => self.save_soundboard_settings(settings, jobs, hotkeys),
             Action::Capture(target) => {
-                if hotkeys.target() == Some(target) {
-                    hotkeys.cancel_capture();
-                } else {
-                    self.model.stop();
-                    hotkeys.begin_capture(target);
-                }
+                self.model.stop();
+                hotkeys.begin_capture(target);
                 ctx.request_repaint();
             }
         }
     }
 
-    pub(super) fn set_output_devices(
+    pub fn set_output_devices(
         &mut self,
         microphones: Vec<crate::devices::Microphone>,
         speakers: Vec<crate::devices::Speaker>,
@@ -541,7 +503,7 @@ impl SoundboardPanel {
         self.settings.set_devices(microphones, speakers);
     }
 
-    pub(super) fn poll_capture(&mut self, ctx: &egui::Context, hotkeys: &mut HotkeyManager) {
+    pub fn poll_capture(&mut self, ctx: &egui::Context, hotkeys: &mut HotkeyManager) {
         if let Some(capture) = hotkeys.poll_capture(ctx) {
             let result = if let Some(ids) = capture.ids {
                 self.model.bind_sound_hotkeys(&ids, Some(capture.key))
@@ -553,7 +515,7 @@ impl SoundboardPanel {
         }
     }
 
-    pub(super) fn finish_rename(&mut self, soundboard_tab_selected: bool) {
+    pub fn finish_rename(&mut self, soundboard_tab_selected: bool) {
         let keep_editing = soundboard_tab_selected && !self.settings.is_open();
         if let Some((index, name)) = self.list.rename_request(keep_editing, self.model.playing()) {
             let result = self.model.rename(index, &name);
@@ -567,7 +529,7 @@ impl SoundboardPanel {
             }
         }
     }
-    pub(super) fn finish_delete(&mut self) {
+    pub fn finish_delete(&mut self) {
         if let Some(removed) = self.model.take_removed_sounds() {
             self.list.remove_ids(&removed);
         }

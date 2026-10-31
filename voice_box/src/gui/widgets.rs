@@ -1,10 +1,10 @@
-use crate::i18n::Text;
-use crate::{hotkeys::Hotkey, settings::BindingTarget};
-pub(super) const ICON_BUTTON_SIZE: f32 = 30.0;
+use crate::{hotkeys::Hotkey, i18n::Text, settings::BindingTarget};
+
+pub const ICON_BUTTON_SIZE: f32 = 30.0;
 
 /// Right-align a trailing button when it fits, otherwise let the row wrap it.
 /// Call inside `Ui::horizontal_wrapped`.
-pub(super) fn trailing_button(ui: &mut egui::Ui, enabled: bool, label: &str) -> egui::Response {
+pub fn trailing_button(ui: &mut egui::Ui, enabled: bool, label: &str) -> egui::Response {
     let button_width = ui
         .painter()
         .layout_no_wrap(
@@ -24,7 +24,7 @@ pub(super) fn trailing_button(ui: &mut egui::Ui, enabled: bool, label: &str) -> 
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum ButtonIcon {
+pub enum ButtonIcon {
     Close,
     ClearHotkey,
     Delete,
@@ -32,7 +32,7 @@ pub(super) enum ButtonIcon {
     Reorder,
 }
 
-pub(super) fn icon_button(ui: &mut egui::Ui, enabled: bool, icon: ButtonIcon) -> egui::Response {
+pub fn icon_button(ui: &mut egui::Ui, enabled: bool, icon: ButtonIcon) -> egui::Response {
     let mut button = egui::Button::new("").min_size(egui::Vec2::splat(ICON_BUTTON_SIZE));
     if matches!(icon, ButtonIcon::Close) {
         button = button.frame_when_inactive(false);
@@ -117,7 +117,7 @@ pub(super) fn icon_button(ui: &mut egui::Ui, enabled: bool, icon: ButtonIcon) ->
     response.on_hover_text(tooltip)
 }
 
-pub(super) fn play_button(ui: &mut egui::Ui, enabled: bool, active: bool) -> egui::Response {
+pub fn play_button(ui: &mut egui::Ui, enabled: bool, active: bool) -> egui::Response {
     let response = ui.add_enabled(
         enabled,
         egui::Button::new("").min_size(egui::vec2(34.0, 30.0)),
@@ -155,7 +155,7 @@ pub(super) fn play_button(ui: &mut egui::Ui, enabled: bool, active: bool) -> egu
     response
 }
 
-pub(super) fn section(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
+pub fn section(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::group(ui.style())
         .inner_margin(12)
         .corner_radius(8)
@@ -165,11 +165,11 @@ pub(super) fn section(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
         });
 }
 
-pub(super) fn hint(ui: &mut egui::Ui, text: &str) {
+pub fn hint(ui: &mut egui::Ui, text: &str) {
     ui.add(egui::Label::new(egui::RichText::new(text).small().weak()).wrap());
 }
 
-pub(super) fn warning(ui: &mut egui::Ui, text: &str) {
+pub fn warning(ui: &mut egui::Ui, text: &str) {
     ui.add(
         egui::Label::new(
             egui::RichText::new(text)
@@ -180,7 +180,7 @@ pub(super) fn warning(ui: &mut egui::Ui, text: &str) {
     );
 }
 
-pub(super) fn format_duration(seconds: f64) -> String {
+pub fn format_duration(seconds: f64) -> String {
     let total_seconds = seconds.max(0.0) as u64;
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
@@ -206,7 +206,7 @@ fn hotkey_badge_size(ui: &egui::Ui, key: Hotkey, max_width: f32) -> egui::Vec2 {
     )
 }
 
-pub(super) fn hotkey_badge(ui: &mut egui::Ui, key: Hotkey, max_width: f32) {
+pub fn hotkey_badge(ui: &mut egui::Ui, key: Hotkey, max_width: f32) {
     let text = key.label();
     let font = egui::TextStyle::Body.resolve(ui.style());
     let size = hotkey_badge_size(ui, key, max_width);
@@ -229,7 +229,7 @@ pub(super) fn hotkey_badge(ui: &mut egui::Ui, key: Hotkey, max_width: f32) {
     response.on_hover_text(text);
 }
 
-pub(super) fn hotkey_editor(
+pub fn hotkey_editor(
     ui: &mut egui::Ui,
     label: &str,
     key: &mut Option<Hotkey>,
@@ -237,7 +237,6 @@ pub(super) fn hotkey_editor(
     capture_target: Option<BindingTarget>,
 ) -> bool {
     let binding = capture_target == Some(target);
-    let enabled = capture_target.is_none() || binding;
     ui.push_id(label, |ui| {
         ui.horizontal(|ui| {
             ui.label(label);
@@ -285,18 +284,17 @@ pub(super) fn hotkey_editor(
                 |ui| {
                     if let Some(hotkey) = hotkey {
                         hotkey_badge(ui, hotkey, badge_width.unwrap());
-                        if icon_button(ui, enabled, ButtonIcon::ClearHotkey).clicked() {
+                        if icon_button(ui, true, ButtonIcon::ClearHotkey).clicked() {
                             *key = None;
                         }
                     } else {
-                        capture = ui
-                            .add_enabled(enabled, egui::Button::new(button_text).truncate())
-                            .on_hover_text(if binding {
-                                Text::CaptureHotkeyHint.text()
-                            } else {
-                                Text::BindHotkey.text()
-                            })
-                            .clicked();
+                        let button_response = ui
+                            .add(egui::Button::new(button_text).truncate())
+                            .on_hover_text(Text::BindHotkey.text());
+                        if binding {
+                            button_response.show_tooltip_text(Text::CaptureHotkeyHint.text());
+                        }
+                        capture = button_response.clicked();
                     }
                 },
             );

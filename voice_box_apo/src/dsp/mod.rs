@@ -3,13 +3,16 @@
 mod high_pass;
 mod limiter;
 
-use super::memory::Resident;
-use high_pass::HighPass;
-use limiter::Limiter;
 use ul_unas_rs::{ALGORITHM_DELAY, Denoiser, FRAME_SIZE, SAMPLE_RATE};
+
 use voice_box_shared::{
     audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
     resample::Resampler,
+};
+
+use crate::{
+    dsp::{high_pass::HighPass, limiter::Limiter},
+    memory::Resident,
 };
 
 struct Channel {

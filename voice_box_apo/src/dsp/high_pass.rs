@@ -5,7 +5,7 @@ use std::f64::consts::{PI, SQRT_2};
 const CUTOFF_HZ: f64 = 60.0;
 const STATE_FLOOR: f64 = 1e-20;
 
-pub(super) struct HighPass {
+pub struct HighPass {
     b0: f64,
     b1: f64,
     b2: f64,
@@ -16,7 +16,7 @@ pub(super) struct HighPass {
 }
 
 impl HighPass {
-    pub(super) fn new(sample_rate: f64) -> Self {
+    pub fn new(sample_rate: f64) -> Self {
         // Bilinear transform of the second-order Butterworth high-pass.
         // Keep coefficients and DF2T state in f64 at this low cutoff.
         let k = (PI * CUTOFF_HZ / sample_rate).tan();
@@ -32,12 +32,12 @@ impl HighPass {
         }
     }
 
-    pub(super) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.z1 = 0.0;
         self.z2 = 0.0;
     }
 
-    pub(super) fn process_sample(&mut self, sample: f32) -> f32 {
+    pub fn process_sample(&mut self, sample: f32) -> f32 {
         if !sample.is_finite() {
             self.reset();
             return 0.0;

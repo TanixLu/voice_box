@@ -1,14 +1,6 @@
-use super::{
-    ApoCom, DspAccess,
-    formats::{
-        formats_match, frame_bytes, is_supported_format, log_connection_format, read_format,
-        sample_format,
-    },
-    object_from,
-};
-use crate::etw::{self, apo_log};
 use core::{ffi::c_void, ptr};
 use std::sync::atomic::Ordering;
+
 use windows::Win32::{
     Foundation::{E_INVALIDARG, E_POINTER, S_OK},
     Media::Audio::Apo::{
@@ -20,13 +12,25 @@ use windows::Win32::{
 };
 use windows_core::{HRESULT, Interface};
 
-pub(super) unsafe extern "system" fn reset(this: *mut c_void) -> HRESULT {
+use crate::{
+    com::{
+        ApoCom, DspAccess,
+        formats::{
+            formats_match, frame_bytes, is_supported_format, log_connection_format, read_format,
+            sample_format,
+        },
+        object_from,
+    },
+    etw::{self, apo_log},
+};
+
+pub unsafe extern "system" fn reset(this: *mut c_void) -> HRESULT {
     let object = unsafe { object_from(this) };
     unsafe { (*object).reset_requested.store(true, Ordering::Release) };
     S_OK
 }
 
-pub(super) unsafe extern "system" fn get_latency(this: *mut c_void, latency: *mut i64) -> HRESULT {
+pub unsafe extern "system" fn get_latency(this: *mut c_void, latency: *mut i64) -> HRESULT {
     if latency.is_null() {
         return E_POINTER;
     }
@@ -51,7 +55,7 @@ fn log_lock_failure(
     result
 }
 
-pub(super) unsafe extern "system" fn lock_for_process(
+pub unsafe extern "system" fn lock_for_process(
     this: *mut c_void,
     input_count: u32,
     inputs: *const *const APO_CONNECTION_DESCRIPTOR,
@@ -300,7 +304,7 @@ pub(super) unsafe extern "system" fn lock_for_process(
     S_OK
 }
 
-pub(super) unsafe extern "system" fn unlock_for_process(this: *mut c_void) -> HRESULT {
+pub unsafe extern "system" fn unlock_for_process(this: *mut c_void) -> HRESULT {
     let object = unsafe { object_from(this) };
     let _control =
         unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -326,7 +330,7 @@ pub(super) unsafe extern "system" fn unlock_for_process(this: *mut c_void) -> HR
 }
 
 // Real-time boundary: no logging, allocation, waits, COM calls, or syscalls.
-pub(super) unsafe extern "system" fn process(
+pub unsafe extern "system" fn process(
     this: *mut c_void,
     input_count: u32,
     inputs: *const *const APO_CONNECTION_PROPERTY,
@@ -412,6 +416,6 @@ pub(super) unsafe extern "system" fn process(
     }
 }
 
-pub(super) unsafe extern "system" fn identity_frames(_: *mut c_void, frames: u32) -> u32 {
+pub unsafe extern "system" fn identity_frames(_: *mut c_void, frames: u32) -> u32 {
     frames
 }

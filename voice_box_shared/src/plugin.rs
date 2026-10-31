@@ -1,4 +1,5 @@
 //! Registration identity and properties shared by the APO and setup checks.
+
 use windows::Win32::Media::Audio::Apo::{
     APO_FLAG, APO_FLAG_BITSPERSAMPLE_MUST_MATCH, APO_FLAG_FRAMESPERSECOND_MUST_MATCH,
     APO_FLAG_INPLACE, APO_FLAG_SAMPLESPERFRAME_MUST_MATCH, APO_REG_PROPERTIES,

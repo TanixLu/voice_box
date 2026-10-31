@@ -1,28 +1,35 @@
 //! APO configuration file notifications and effect events stay off the real-time thread.
-use super::{etw, worker};
+
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
 };
+
+use windows::{
+    Win32::{
+        Foundation::{
+            CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE, WAIT_OBJECT_0,
+            WAIT_TIMEOUT,
+        },
+        Storage::FileSystem::{
+            FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE,
+            FILE_NOTIFY_CHANGE_SECURITY, FILE_NOTIFY_CHANGE_SIZE, FindCloseChangeNotification,
+            FindFirstChangeNotificationW, FindNextChangeNotification,
+        },
+        System::Threading::{
+            CreateEventW, GetCurrentProcess, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
+        },
+    },
+    core::{PCWSTR, w},
+};
+
 use voice_box_shared::{
     apo_cfg::{ApoCfgFile, ApoConfig},
-    paths,
+    paths::data_dir,
     utils::wide_null,
 };
-use windows::Win32::{
-    Foundation::{
-        CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
-    },
-    Storage::FileSystem::{
-        FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE, FILE_NOTIFY_CHANGE_SECURITY,
-        FILE_NOTIFY_CHANGE_SIZE, FindCloseChangeNotification, FindFirstChangeNotificationW,
-        FindNextChangeNotification,
-    },
-    System::Threading::{
-        CreateEventW, GetCurrentProcess, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
-    },
-};
-use windows::core::{PCWSTR, w};
+
+use crate::{etw, worker};
 
 const ENABLED_BIT: u64 = 1 << 32;
 
@@ -40,7 +47,7 @@ impl Default for RtConfig {
     }
 }
 impl RtConfig {
-    pub(crate) fn store(&self, apo_config: ApoConfig) {
+    pub fn store(&self, apo_config: ApoConfig) {
         let gain = apo_config.linear_gain();
         let bits = if apo_config.denoising_enabled {
             ENABLED_BIT
@@ -121,7 +128,7 @@ pub struct ApoCfgWatcher {
 }
 impl ApoCfgWatcher {
     pub fn start(config: Arc<RtConfig>) -> windows::core::Result<Self> {
-        config.store(ApoCfgFile::try_load().unwrap_or_default().config);
+        config.store(ApoCfgFile::read().unwrap_or_default().config);
         let stop = Arc::new(Event(unsafe { CreateEventW(None, true, false, None)? }));
         let worker_stop = Arc::clone(&stop);
         worker::spawn(w!("VoiceBoxApoCfg"), move || watch(&worker_stop, &config))?;
@@ -141,7 +148,7 @@ impl Drop for ApoCfgWatcher {
 struct DirectoryWatch(HANDLE);
 impl DirectoryWatch {
     fn open() -> anyhow::Result<Self> {
-        let path = wide_null(paths::data_dir()?);
+        let path = wide_null(data_dir()?);
         let handle = unsafe {
             FindFirstChangeNotificationW(
                 PCWSTR(path.as_ptr()),
@@ -181,7 +188,7 @@ fn report_fault(faulted: &mut bool, error: &anyhow::Error) {
 }
 
 fn reload(config: &RtConfig, faulted: &mut bool) {
-    match ApoCfgFile::try_load() {
+    match ApoCfgFile::read() {
         Ok(cfg) => {
             config.store(cfg.config);
             if *faulted {

@@ -1,18 +1,21 @@
 //! Microphone discovery and plugin operations, independent of the GUI.
-use super::{
+
+use wasapi::{DeviceEnumerator, DeviceState, Direction};
+
+use voice_box_shared::error::SharedError;
+
+use crate::{
     audio::Apartment,
     setup::{self, PluginStatus},
 };
-use voice_box_shared::error::SharedError;
-use wasapi::{DeviceEnumerator, DeviceState, Direction};
 
-pub(super) struct Speaker {
+pub struct Speaker {
     pub name: String,
     pub device_id: String,
     pub is_default: bool,
 }
 
-pub(super) fn enumerate_soundboard_devices() -> anyhow::Result<(Vec<Microphone>, Vec<Speaker>)> {
+pub fn enumerate_soundboard_devices() -> anyhow::Result<(Vec<Microphone>, Vec<Speaker>)> {
     let (microphones, _) = enumerate_microphones()?;
     let _apartment = Apartment::new()?;
     let enumerator = DeviceEnumerator::new()?;
@@ -36,7 +39,7 @@ pub(super) fn enumerate_soundboard_devices() -> anyhow::Result<(Vec<Microphone>,
     Ok((microphones, speakers))
 }
 
-pub(super) fn soundboard_microphone_guid(device_id: Option<&str>) -> anyhow::Result<String> {
+pub fn soundboard_microphone_guid(device_id: Option<&str>) -> anyhow::Result<String> {
     let _apartment = Apartment::new()?;
     let enumerator = DeviceEnumerator::new()?;
     let device = match device_id {
@@ -63,7 +66,7 @@ pub(super) fn soundboard_microphone_guid(device_id: Option<&str>) -> anyhow::Res
     Ok(guid.to_owned())
 }
 
-pub(super) struct Microphone {
+pub struct Microphone {
     pub name: String,
     pub is_default: bool,
     pub device_id: String,
@@ -72,17 +75,17 @@ pub(super) struct Microphone {
 }
 
 #[derive(Debug)]
-pub(super) enum PluginAction {
+pub enum PluginAction {
     Install,
     Uninstall,
 }
 
-pub(super) struct PluginOperationResult {
+pub struct PluginOperationResult {
     pub result: anyhow::Result<()>,
     pub statuses: Vec<(String, PluginStatus)>,
 }
 
-pub(super) fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
+pub fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
     let _apartment = Apartment::new()?;
     let enumerator = DeviceEnumerator::new()?;
     let default_id = enumerator
@@ -120,7 +123,7 @@ pub(super) fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)
     Ok((microphones, selected))
 }
 
-pub(super) fn execute_plugin_action(
+pub fn execute_plugin_action(
     guid: String,
     guids: Vec<String>,
     action: PluginAction,

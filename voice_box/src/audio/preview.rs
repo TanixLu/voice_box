@@ -1,6 +1,5 @@
 //! Use the installed APO DLL for offline preview, unloading after processing.
-use crate::i18n::Text;
-use crate::i18n::UserContext;
+
 use std::fs;
 
 use anyhow::{anyhow, ensure};
@@ -15,24 +14,28 @@ use windows::{
     core::{PCSTR, PCWSTR},
 };
 
-use super::capture::Recording;
-use crate::apo_dll_bytes;
-use voice_box_shared::{apo_cfg::ApoConfig, paths, preview, utils::wide_null};
+use voice_box_shared::{apo_cfg::ApoConfig, paths::apo_dll_path, preview, utils::wide_null};
+
+use crate::{
+    audio::capture::Recording,
+    i18n::{Text, UserContext},
+    static_data::apo_dll_bytes,
+};
 
 struct PreviewDll(HMODULE);
 
 impl PreviewDll {
     fn load() -> anyhow::Result<Self> {
-        let apo_dll = paths::apo_dll_path().user_context(Text::ReadPreviewPath)?;
+        let apo_dll_path = apo_dll_path()?;
         // The unversioned ABI requires the installed DLL to match this EXE.
         ensure!(
-            fs::read(&apo_dll)
+            fs::read(&apo_dll_path)
                 .user_context(Text::ReadPreviewComponent)?
                 .as_slice()
                 == apo_dll_bytes(),
             Text::PreviewComponentOutdated
         );
-        let path = wide_null(&apo_dll);
+        let path = wide_null(&apo_dll_path);
         let module = unsafe {
             LoadLibraryExW(
                 PCWSTR(path.as_ptr()),
@@ -62,7 +65,7 @@ impl Drop for PreviewDll {
     }
 }
 
-pub(super) fn process(recording: &Recording, config: &ApoConfig) -> anyhow::Result<Vec<f32>> {
+pub fn process(recording: &Recording, config: &ApoConfig) -> anyhow::Result<Vec<f32>> {
     config.validate()?;
     ensure!(
         recording.channels > 0

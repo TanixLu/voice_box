@@ -1,14 +1,15 @@
 //! Single-writer / multiple-reader PCM broadcast. Only background
 //! workers access the file mapping; the APO copies into its own locked memory.
-use crate::error::SharedError;
-use anyhow::ensure;
+
 use std::{
     fs::{File, OpenOptions},
     mem::size_of,
     os::windows::io::AsRawHandle,
-    path::{Path, PathBuf},
+    path::Path,
     sync::atomic::{AtomicU64, Ordering::SeqCst},
 };
+
+use anyhow::ensure;
 use windows::{
     Win32::{
         Foundation::{CloseHandle, HANDLE},
@@ -20,8 +21,10 @@ use windows::{
             Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
         },
     },
-    core::{GUID, PCWSTR},
+    core::PCWSTR,
 };
+
+use crate::error::SharedError;
 
 pub const SAMPLE_RATE: u32 = 48_000;
 pub const MAX_VOLUME: f32 = 2.0;
@@ -99,13 +102,6 @@ struct Header {
     end: AtomicU64,
     gain: AtomicU64,
     mute_microphone: AtomicU64,
-}
-
-pub fn transport_path(guid: &str) -> anyhow::Result<PathBuf> {
-    // Never derive an arbitrary filesystem path from endpoint or IPC input.
-    let id = guid.trim_matches(['{', '}']);
-    ensure!(GUID::try_from(id).is_ok(), SharedError::InvalidMicrophoneId);
-    Ok(super::paths::data_dir()?.join(format!("soundboard-{}.pcm", id.to_ascii_lowercase())))
 }
 
 pub struct Mapping {

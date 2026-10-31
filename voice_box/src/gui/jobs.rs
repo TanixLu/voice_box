@@ -1,13 +1,20 @@
-use super::VoiceBoxApp;
-use crate::devices::{Microphone, PluginOperationResult, Speaker};
-use crate::i18n::Text;
-use crate::i18n::{Details, Message};
 use std::sync::mpsc;
+
 use voice_box_shared::apo_cfg::ApoConfig;
 
-pub(super) enum JobResult {
+use crate::{
+    devices::{Microphone, PluginOperationResult, Speaker},
+    gui::VoiceBoxApp,
+    i18n::{Details, Message, Text},
+};
+
+pub enum JobResult {
     Exported(anyhow::Result<()>),
     Uninstall(anyhow::Result<()>),
+    Startup {
+        result: anyhow::Result<bool>,
+        notice: Option<Text>,
+    },
     Microphones(anyhow::Result<(Vec<Microphone>, usize)>),
     OutputDevices(anyhow::Result<(Vec<Microphone>, Vec<Speaker>)>),
     Plugin(PluginOperationResult),
@@ -18,20 +25,20 @@ pub(super) enum JobResult {
 }
 
 #[derive(Default)]
-pub(super) struct Jobs {
+pub struct Jobs {
     receiver: Option<mpsc::Receiver<JobResult>>,
-    pub(super) status: Message,
-    pub(super) failed: bool,
+    pub status: Message,
+    pub failed: bool,
 }
 
 impl Jobs {
-    pub(super) fn busy(&self) -> bool {
+    pub fn busy(&self) -> bool {
         self.receiver.is_some()
     }
-    pub(super) fn exporting(&self) -> bool {
+    pub fn exporting(&self) -> bool {
         self.busy() && matches!(self.status, Message::Text(Text::ExportSounds))
     }
-    pub(super) fn begin(
+    pub fn begin(
         &mut self,
         ctx: &egui::Context,
         status: Text,
@@ -55,6 +62,9 @@ impl Jobs {
                 let result = operation();
                 match &result {
                     JobResult::Uninstall(Err(error))
+                    | JobResult::Startup {
+                        result: Err(error), ..
+                    }
                     | JobResult::Exported(Err(error))
                     | JobResult::Microphones(Err(error))
                     | JobResult::OutputDevices(Err(error))
@@ -96,7 +106,7 @@ impl Jobs {
 }
 
 impl VoiceBoxApp {
-    pub(super) fn poll_job(&mut self) {
+    pub fn poll_job(&mut self, ctx: &egui::Context) {
         let Some(receiver) = &self.jobs.receiver else {
             return;
         };
@@ -126,6 +136,21 @@ impl VoiceBoxApp {
         };
         self.jobs.receiver = None;
         match result {
+            JobResult::Startup { result, notice } => {
+                self.jobs.status.clear();
+                self.startup_synchronized = result.is_ok();
+                self.startup_message = match result {
+                    Ok(changed) if changed || notice.is_some() => {
+                        Some(notice.unwrap_or(Text::StartupReRegistered).into())
+                    }
+                    Ok(_) => None,
+                    Err(error) => Some(Message::error(error)),
+                };
+                if self.startup_message.is_some() && !self.start_in_tray {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                }
+            }
             JobResult::Exported(result) => {
                 self.jobs.status.clear();
                 if let Err(error) = result {

@@ -1,28 +1,33 @@
 //! Sound library operations and background playback coordination.
 
 mod decoder;
-pub(super) mod export;
+pub mod export;
 mod import;
-pub(super) mod library;
+pub mod library;
 mod playback;
 mod player;
-pub(super) mod recording;
-pub(super) mod rename;
+pub mod recording;
+pub mod rename;
 mod shuffle;
-pub(super) mod sound;
+pub mod sound;
 mod storage;
 
-use crate::hotkeys::Hotkey;
-use crate::i18n::Text;
-use crate::i18n::{Details, Message, UserContext};
-use crate::settings::{BindingTarget, Settings};
-use anyhow::ensure;
-use import::{ImportedSounds, import_files};
-use library::Library;
-pub(crate) use player::PlaybackStatus;
-use player::Player;
-use sound::SoundId;
 use std::{collections::HashSet, path::PathBuf, sync::mpsc};
+
+use anyhow::ensure;
+
+pub use crate::soundboard::player::PlaybackStatus;
+use crate::{
+    hotkeys::Hotkey,
+    i18n::{Details, Message, Text, UserContext},
+    settings::{BindingTarget, Settings},
+    soundboard::{
+        import::{ImportedSounds, import_files},
+        library::Library,
+        player::Player,
+        sound::SoundId,
+    },
+};
 
 struct RemovalJob {
     ids: HashSet<SoundId>,
@@ -30,7 +35,7 @@ struct RemovalJob {
 }
 
 #[derive(Default)]
-pub(super) struct Soundboard {
+pub struct Soundboard {
     library: Library,
     pub settings: Settings,
     pub message: Message,

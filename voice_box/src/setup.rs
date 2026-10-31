@@ -1,11 +1,7 @@
-use crate::i18n::Text;
-use crate::i18n::{Message, UserContext};
-use voice_box_shared::{paths, plugin};
+use std::{io::Write, path::Path};
 
 use atomic_write_file::AtomicWriteFile;
 use restart_manager::{RestartSession, ShutdownOptions};
-use std::io::Write;
-use std::path::Path;
 use tracing::info;
 use windows::Win32::Media::KernelStreaming::{
     AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS, AUDIO_SIGNALPROCESSINGMODE_DEFAULT,
@@ -18,9 +14,12 @@ use winreg::{
     types::FromRegValue,
 };
 
-use super::{
-    apo_cfg_writer, apo_dll_bytes,
+use voice_box_shared::{apo_cfg::ApoCfgFile, paths::apo_dll_path, plugin};
+
+use crate::{
+    i18n::{Message, Text, UserContext},
     registry::{read_registry_value, write_registry_value},
+    static_data::apo_dll_bytes,
 };
 
 const DISABLE_PROTECTED_AUDIO_DG_REG_PATH: &str =
@@ -133,11 +132,11 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     {
         return PluginStatus::NotInstalled;
     }
-    if !apo_cfg_writer::is_readable() {
+    if !ApoCfgFile::read().is_ok() {
         return PluginStatus::NeedsUpdate;
     }
     // Check whether the DLL needs to be updated.
-    let Ok(apo_dll) = paths::apo_dll_path() else {
+    let Ok(apo_dll) = apo_dll_path() else {
         return PluginStatus::NeedsUpdate;
     };
     if std::fs::read(&apo_dll).ok().as_deref() != Some(apo_dll_bytes()) {
@@ -206,7 +205,7 @@ fn device_default_effects_enabled(fx: &RegKey, properties: &RegKey) -> bool {
         })
 }
 
-pub(super) fn with_audio_service_stopped(
+pub fn with_audio_service_stopped(
     operation: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let mut session = RestartSession::new()?;
@@ -241,14 +240,14 @@ pub(super) fn with_audio_service_stopped(
 }
 
 fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
-    let apo_dll = paths::apo_dll_path().user_context(Text::ReadApoPath)?;
-    let string_values = string_registration_values(&apo_dll)?;
+    let apo_dll_path = apo_dll_path()?;
+    let string_values = string_registration_values(&apo_dll_path)?;
     // Update the DLL.
-    if std::fs::read(&apo_dll).ok().as_deref() != Some(apo_dll_bytes()) {
-        let mut file = AtomicWriteFile::open(&apo_dll)?;
+    if std::fs::read(&apo_dll_path).ok().as_deref() != Some(apo_dll_bytes()) {
+        let mut file = AtomicWriteFile::open(&apo_dll_path)?;
         file.write_all(apo_dll_bytes())?;
         file.commit()?;
-        info!("Updated APO DLL at {}", apo_dll.display());
+        info!("Updated APO DLL at {}", apo_dll_path.display());
     }
 
     // Update the registry.
@@ -357,7 +356,7 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn unregister_all() -> anyhow::Result<()> {
+pub fn unregister_all() -> anyhow::Result<()> {
     let transaction = Transaction::new().user_context(Text::CreateUninstallTransaction)?;
     let root = RegKey::predef(HKEY_LOCAL_MACHINE);
     let capture = match root.open_subkey_transacted_with_flags(

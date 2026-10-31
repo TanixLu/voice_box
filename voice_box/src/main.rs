@@ -14,51 +14,35 @@ mod registry;
 mod settings;
 mod setup;
 mod soundboard;
+mod startup;
+mod static_data;
 mod uninstall;
+mod utils;
+
+use tracing::error;
+use windows::{
+    Win32::UI::{
+        Shell::IsUserAnAdmin,
+        WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW},
+    },
+    core::{PCWSTR, w},
+};
+
+use voice_box_shared::utils::wide_null;
 
 use crate::i18n::Text;
-use tracing::error;
-use voice_box_shared::utils::wide_null;
-use windows::Win32::UI::{
-    Shell::IsUserAnAdmin,
-    WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW},
-};
-use windows::core::{PCWSTR, w};
 
-const UI_STATE_FILE: &str = "ui.ron";
 const SINGLE_INSTANCE_MUTEX: &str = r"Global\VoiceBoxSingleInstance";
-static COMPRESSED_APO_DLL: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/voice_box_apo.dll.lz4"));
-static APO_DLL: std::sync::LazyLock<Box<[u8]>> = std::sync::LazyLock::new(|| {
-    lz4_flex::block::decompress_size_prepended(COMPRESSED_APO_DLL)
-        .expect("Failed to decompress embedded APO DLL")
-        .into_boxed_slice()
-});
 
-fn apo_dll_bytes() -> &'static [u8] {
-    APO_DLL.as_ref()
-}
-
-pub fn run() {
-    i18n::set_language(i18n::LanguagePreference::System.resolve());
-    if let Err(error) = run_inner() {
-        error!("Application error: {error:?}");
-        let message = wide_null(i18n::Message::error(error).text().as_ref());
-        unsafe {
-            MessageBoxW(
-                None,
-                PCWSTR(message.as_ptr()),
-                w!("VoiceBox"),
-                MB_OK | MB_ICONERROR,
-            );
-        }
-        std::process::exit(1);
+fn startup_mode(arguments: &[std::ffi::OsString]) -> anyhow::Result<bool> {
+    match arguments {
+        [] => Ok(false),
+        [argument] if argument == startup::STARTUP_ARGUMENT => Ok(true),
+        _ => anyhow::bail!(Text::UnsupportedArguments),
     }
-    tracing::info!("VoiceBox exited");
 }
 
-fn run_inner() -> anyhow::Result<()> {
-    anyhow::ensure!(std::env::args_os().len() == 1, Text::UnsupportedArguments);
+fn run(start_in_tray: bool) -> anyhow::Result<()> {
     anyhow::ensure!(
         unsafe { IsUserAnAdmin() }.as_bool(),
         Text::AdministratorRequired
@@ -69,9 +53,28 @@ fn run_inner() -> anyhow::Result<()> {
     logging::init()?;
     let settings = settings::Settings::load()?;
     i18n::set_language(settings.language.resolve());
-    gui::run(settings)
+    gui::run(settings, start_in_tray)
 }
 
 fn main() {
-    run();
+    i18n::set_language(i18n::LanguagePreference::System.resolve());
+    let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    let mode = startup_mode(&arguments);
+    let start_in_tray = matches!(&mode, Ok(true));
+    if let Err(error) = mode.and_then(run) {
+        error!("Application error: {error:?}");
+        if !start_in_tray {
+            let message = wide_null(i18n::Message::error(error).text().as_ref());
+            unsafe {
+                MessageBoxW(
+                    None,
+                    PCWSTR(message.as_ptr()),
+                    w!("VoiceBox"),
+                    MB_OK | MB_ICONERROR,
+                );
+            }
+        }
+        std::process::exit(1);
+    }
+    tracing::info!("VoiceBox exited");
 }

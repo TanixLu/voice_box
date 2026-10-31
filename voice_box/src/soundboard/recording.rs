@@ -1,12 +1,5 @@
 //! Recording/import tool jobs; preview ranges always refer to complete frames.
-use super::{
-    sound::{Sound, is_valid_name},
-    storage::insert_sound,
-};
-use crate::audio::{capture::Recording, loopback, playback::playback};
-use crate::i18n::Text;
-use crate::i18n::{Details, Message, UserContext};
-use anyhow::ensure;
+
 use std::{
     io::Write,
     ops::Range,
@@ -18,14 +11,25 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::ensure;
+
+use crate::{
+    audio::{capture::Recording, loopback, playback::playback},
+    i18n::{Details, Message, Text, UserContext},
+    soundboard::{
+        sound::{Sound, is_valid_name},
+        storage::insert_sound,
+    },
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Edge {
+pub enum Edge {
     Left,
     Right,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Selection {
+pub struct Selection {
     pub start: usize,
     pub end: usize,
 }
@@ -59,7 +63,7 @@ impl Selection {
     }
 }
 
-pub(crate) struct Clip {
+pub struct Clip {
     pub audio: Arc<Recording>,
     pub peaks: Vec<f32>,
 }
@@ -84,7 +88,7 @@ impl Clip {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Activity {
+pub enum Activity {
     Recording,
     Preview,
     Saving,
@@ -107,7 +111,7 @@ struct Job {
 }
 
 #[derive(Default)]
-pub(crate) struct Recorder {
+pub struct Recorder {
     job: Option<Job>,
     pending_preview: Option<(Range<usize>, Instant)>,
     pending_save: Option<(Selection, String)>,

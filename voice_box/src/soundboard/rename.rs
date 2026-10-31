@@ -1,13 +1,17 @@
-use super::{
-    library::Library,
-    sound::{SoundId, is_valid_name},
-};
-use crate::i18n::{Language, Text, UserContext, current_language};
-use anyhow::ensure;
 use std::{collections::HashSet, ops::Range};
 
+use anyhow::ensure;
+
+use crate::{
+    i18n::{Language, Text, UserContext, current_language},
+    soundboard::{
+        library::Library,
+        sound::{SoundId, is_valid_name},
+    },
+};
+
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RenameLocation {
+pub enum RenameLocation {
     Start,
     End,
     Entire,
@@ -39,7 +43,7 @@ impl RenameLocation {
     }
 }
 
-pub(crate) struct RenameRule {
+pub struct RenameRule {
     pub location: RenameLocation,
     pub find: String,
     pub content: String,
@@ -55,7 +59,7 @@ impl Default for RenameRule {
     }
 }
 
-pub(crate) struct RenameEntry {
+pub struct RenameEntry {
     pub index: usize,
     pub id: SoundId,
     pub original: String,
@@ -71,7 +75,7 @@ impl RenameEntry {
     }
 }
 
-pub(crate) struct RenamePlan {
+pub struct RenamePlan {
     pub entries: Vec<RenameEntry>,
 }
 
@@ -151,7 +155,7 @@ impl RenamePlan {
 }
 
 impl Library {
-    pub(super) fn rename_batch(
+    pub fn rename_batch(
         &mut self,
         mut plan: RenamePlan,
         save: impl FnOnce(&Self) -> anyhow::Result<()>,

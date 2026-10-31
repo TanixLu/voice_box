@@ -1,8 +1,6 @@
-use super::{ApoCom, object_from, unknown_vtable};
-use crate::etw::{self, apo_log};
 use core::ffi::c_void;
 use std::sync::atomic::Ordering;
-use voice_box_shared::audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat};
+
 use windows::Win32::{
     Foundation::{E_POINTER, S_FALSE, S_OK},
     Media::{
@@ -15,6 +13,13 @@ use windows::Win32::{
     },
 };
 use windows_core::{HRESULT, Interface};
+
+use voice_box_shared::audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat};
+
+use crate::{
+    com::{ApoCom, object_from, unknown_vtable},
+    etw::{self, apo_log},
+};
 
 unsafe fn negotiate_format(
     object: *mut ApoCom,
@@ -64,7 +69,7 @@ unsafe fn negotiate_format(
     result
 }
 
-pub(super) unsafe fn read_format(raw: *mut c_void) -> Result<UNCOMPRESSEDAUDIOFORMAT, HRESULT> {
+pub unsafe fn read_format(raw: *mut c_void) -> Result<UNCOMPRESSEDAUDIOFORMAT, HRESULT> {
     let Some(media_type) = (unsafe { IAudioMediaType::from_raw_borrowed(&raw) }) else {
         return Err(E_POINTER);
     };
@@ -74,7 +79,7 @@ pub(super) unsafe fn read_format(raw: *mut c_void) -> Result<UNCOMPRESSEDAUDIOFO
         .map_err(|error| error.code())
 }
 
-pub(super) fn is_supported_format(format: &UNCOMPRESSEDAUDIOFORMAT) -> bool {
+pub fn is_supported_format(format: &UNCOMPRESSEDAUDIOFORMAT) -> bool {
     (1..=MAX_CHANNELS as u32).contains(&format.dwSamplesPerFrame)
         && sample_format(format).is_some()
         && format.fFramesPerSecond.is_finite()
@@ -82,10 +87,7 @@ pub(super) fn is_supported_format(format: &UNCOMPRESSEDAUDIOFORMAT) -> bool {
         && frame_bytes(format).is_some()
 }
 
-pub(super) fn formats_match(
-    left: &UNCOMPRESSEDAUDIOFORMAT,
-    right: &UNCOMPRESSEDAUDIOFORMAT,
-) -> bool {
+pub fn formats_match(left: &UNCOMPRESSEDAUDIOFORMAT, right: &UNCOMPRESSEDAUDIOFORMAT) -> bool {
     left.guidFormatType == right.guidFormatType
         && left.dwSamplesPerFrame == right.dwSamplesPerFrame
         && left.dwBytesPerSampleContainer == right.dwBytesPerSampleContainer
@@ -94,11 +96,11 @@ pub(super) fn formats_match(
         && left.dwChannelMask == right.dwChannelMask
 }
 
-pub(super) fn frame_bytes(format: &UNCOMPRESSEDAUDIOFORMAT) -> Option<usize> {
+pub fn frame_bytes(format: &UNCOMPRESSEDAUDIOFORMAT) -> Option<usize> {
     (format.dwSamplesPerFrame as usize).checked_mul(format.dwBytesPerSampleContainer as usize)
 }
 
-pub(super) fn sample_format(format: &UNCOMPRESSEDAUDIOFORMAT) -> Option<SampleFormat> {
+pub fn sample_format(format: &UNCOMPRESSEDAUDIOFORMAT) -> Option<SampleFormat> {
     if format.guidFormatType == KSDATAFORMAT_SUBTYPE_PCM {
         SampleFormat::pcm(
             format.dwBytesPerSampleContainer,
@@ -118,7 +120,7 @@ pub(super) fn sample_format(format: &UNCOMPRESSEDAUDIOFORMAT) -> Option<SampleFo
     }
 }
 
-pub(super) fn log_connection_format(label: &str, format: &UNCOMPRESSEDAUDIOFORMAT) {
+pub fn log_connection_format(label: &str, format: &UNCOMPRESSEDAUDIOFORMAT) {
     apo_log!(
         etw::INFO,
         etw::FORMAT,
@@ -141,7 +143,7 @@ unsafe fn log_media_format(label: &str, raw: *mut c_void) {
     }
 }
 
-pub(super) unsafe extern "system" fn is_input_format_supported(
+pub unsafe extern "system" fn is_input_format_supported(
     this: *mut c_void,
     opposite: *mut c_void,
     requested: *mut c_void,
@@ -162,7 +164,7 @@ pub(super) unsafe extern "system" fn is_input_format_supported(
     result
 }
 
-pub(super) unsafe extern "system" fn is_output_format_supported(
+pub unsafe extern "system" fn is_output_format_supported(
     this: *mut c_void,
     opposite: *mut c_void,
     requested: *mut c_void,
@@ -187,7 +189,7 @@ pub(super) unsafe extern "system" fn is_output_format_supported(
     result
 }
 
-pub(super) unsafe extern "system" fn get_input_channel_count(
+pub unsafe extern "system" fn get_input_channel_count(
     this: *mut c_void,
     count: *mut u32,
 ) -> HRESULT {

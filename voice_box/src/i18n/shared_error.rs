@@ -1,6 +1,8 @@
-use super::Language;
 use voice_box_shared::error::SharedError;
-pub(super) fn render(error: SharedError, language: Language) -> &'static str {
+
+use crate::i18n::Language;
+
+pub fn render(error: SharedError, language: Language) -> &'static str {
     match (error, language) {
         (SharedError::GainOutOfRange, Language::English) => "Gain must be between -60 and +60 dB",
         (SharedError::GainOutOfRange, Language::SimplifiedChinese) => {

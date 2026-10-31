@@ -1,8 +1,3 @@
-use super::{decoder::open_format, sound::Sound};
-use crate::{
-    database::audio::AudioSource,
-    i18n::{Message, Text, UserContext},
-};
 use std::{
     collections::HashMap,
     fs::File,
@@ -10,9 +5,15 @@ use std::{
     path::Path,
 };
 
+use crate::{
+    database::audio::AudioSource,
+    i18n::{Message, Text, UserContext},
+    soundboard::{decoder::open_format, sound::Sound},
+};
+
 const MAX_FILENAME_ATTEMPTS: usize = 10_000;
 
-pub(crate) fn export_sounds(sounds: &[Sound], folder: &Path) -> anyhow::Result<()> {
+pub fn export_sounds(sounds: &[Sound], folder: &Path) -> anyhow::Result<()> {
     export_sounds_with(sounds, folder, |sound| AudioSource::open(sound.id))
 }
 

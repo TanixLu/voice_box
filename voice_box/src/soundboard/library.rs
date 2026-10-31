@@ -1,27 +1,29 @@
-use super::sound::{Sound, SoundId, is_valid_name};
-use crate::{
-    database,
-    hotkeys::Hotkey,
-    i18n::{Text, UserContext},
-};
+use std::collections::HashSet;
+
 use anyhow::ensure;
 use rusqlite::{
     Connection, params,
     types::{FromSql, FromSqlError, FromSqlResult, ValueRef},
 };
-use std::collections::HashSet;
+
+use crate::{
+    database,
+    hotkeys::Hotkey,
+    i18n::{Text, UserContext},
+    soundboard::sound::{Sound, SoundId, is_valid_name},
+};
 
 #[derive(Clone, Default)]
-pub(crate) struct Library {
+pub struct Library {
     pub sounds: Vec<Sound>,
 }
 
 impl Library {
-    pub(crate) fn try_load() -> anyhow::Result<Self> {
+    pub fn try_load() -> anyhow::Result<Self> {
         Self::load(&database::open()?)
     }
 
-    pub(super) fn save(&self) -> anyhow::Result<()> {
+    pub fn save(&self) -> anyhow::Result<()> {
         self.save_to(&mut database::open()?)
             .user_context(Text::SaveSoundLibrary)
     }
@@ -45,7 +47,7 @@ impl Library {
         Ok(())
     }
 
-    pub(super) fn move_sounds(
+    pub fn move_sounds(
         &mut self,
         ids: &HashSet<SoundId>,
         to_top: bool,
@@ -71,7 +73,7 @@ impl Library {
         Ok(())
     }
 
-    pub(super) fn move_sound(
+    pub fn move_sound(
         &mut self,
         from: usize,
         to: usize,
@@ -94,7 +96,7 @@ impl Library {
         Ok(())
     }
 
-    pub(super) fn set_hotkeys(
+    pub fn set_hotkeys(
         &mut self,
         ids: &HashSet<SoundId>,
         key: Option<Hotkey>,
@@ -124,7 +126,7 @@ impl Library {
         Ok(())
     }
 
-    pub(super) fn rename(
+    pub fn rename(
         &mut self,
         index: usize,
         name: &str,
@@ -144,7 +146,7 @@ impl Library {
         Ok(())
     }
 
-    pub(super) fn remove(
+    pub fn remove(
         &mut self,
         connection: &mut Connection,
         ids: &HashSet<SoundId>,
@@ -170,7 +172,7 @@ impl Library {
         Ok(())
     }
 
-    pub(crate) fn load(connection: &Connection) -> anyhow::Result<Self> {
+    pub fn load(connection: &Connection) -> anyhow::Result<Self> {
         let mut query = connection
             .prepare("SELECT id, name, duration_secs, hotkey FROM sounds ORDER BY position, id")?;
         let rows = query.query_map([], |row| {

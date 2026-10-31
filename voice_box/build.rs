@@ -1,4 +1,8 @@
-use std::{env, fs, path::Path, path::PathBuf, process::Command};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use image::codecs::ico::{IcoEncoder, IcoFrame};
 use resvg::{tiny_skia, usvg};

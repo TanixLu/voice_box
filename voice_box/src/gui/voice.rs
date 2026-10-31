@@ -1,30 +1,30 @@
-use super::widgets::{hint, trailing_button, warning};
-use crate::i18n::Message;
-use crate::i18n::Text;
+use voice_box_shared::apo_cfg::{ApoConfig, MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB};
+
 use crate::{
     audio::session::{Activity, AudioSession},
     devices::Microphone,
+    gui::widgets::{hint, trailing_button, warning},
+    i18n::{Message, Text},
 };
-use voice_box_shared::apo_cfg::{ApoConfig, MAX_GAIN_MILLIDB, MIN_GAIN_MILLIDB};
 
-pub(super) struct VoicePanel {
+pub struct VoicePanel {
     config: ApoConfig,
     saved: ApoConfig,
-    pub(super) session: AudioSession,
+    pub session: AudioSession,
 }
 
 impl VoicePanel {
-    pub(super) fn new(config: ApoConfig) -> Self {
+    pub fn new(config: ApoConfig) -> Self {
         Self {
             saved: config.clone(),
             config,
             session: AudioSession::default(),
         }
     }
-    pub(super) fn mark_saved(&mut self, config: ApoConfig) {
+    pub fn mark_saved(&mut self, config: ApoConfig) {
         self.saved = config;
     }
-    pub(super) fn config_ui(&mut self, ui: &mut egui::Ui, busy: bool) -> Option<ApoConfig> {
+    pub fn config_ui(&mut self, ui: &mut egui::Ui, busy: bool) -> Option<ApoConfig> {
         let mut save_requested = false;
         ui.strong(Text::VoiceConfig.text());
         ui.add_enabled_ui(!busy, |ui| {
@@ -131,12 +131,7 @@ impl VoicePanel {
         save_requested.then(|| self.config.clone())
     }
 
-    pub(super) fn recording_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        busy: bool,
-        microphone: Option<&Microphone>,
-    ) {
+    pub fn recording_ui(&mut self, ui: &mut egui::Ui, busy: bool, microphone: Option<&Microphone>) {
         ui.strong(Text::RecordingPreview.text());
         let activity = self.session.activity();
         let idle = !busy && !self.session.busy();

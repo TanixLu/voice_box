@@ -1,9 +1,11 @@
 //! SQL representation shared by settings and sound metadata.
-use crate::hotkeys::Hotkey;
+
 use rusqlite::{
     ToSql,
     types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, Value, ValueRef},
 };
+
+use crate::hotkeys::Hotkey;
 
 fn invalid(message: &str) -> FromSqlError {
     FromSqlError::Other(message.into())

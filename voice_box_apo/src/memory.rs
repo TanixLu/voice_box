@@ -3,6 +3,7 @@
 //! Capturing construction through the DLL's allocator also covers private
 //! allocations inside Denoiser and Rubato, without relying on their layouts.
 //! Captured objects must keep their allocations fixed until they are dropped.
+
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     cell::Cell,
@@ -12,6 +13,7 @@ use std::{
     ptr,
     sync::{LazyLock, Mutex},
 };
+
 use windows::Win32::System::{
     Memory::{
         MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
@@ -87,13 +89,13 @@ fn capture<T>(create: impl FnOnce() -> T) -> (T, Capture) {
 
 /// Any page leases drop before the value, while all its allocations still exist.
 /// Only constructed and destroyed on non-real-time control threads.
-pub(super) struct Resident<T> {
+pub struct Resident<T> {
     _pages: Option<LockedPages>,
     value: Box<T>,
 }
 
 impl<T> Resident<T> {
-    pub(super) fn new(create: impl FnOnce() -> T, lock_pages: bool) -> windows::core::Result<Self> {
+    pub fn new(create: impl FnOnce() -> T, lock_pages: bool) -> windows::core::Result<Self> {
         let (value, pages) = if lock_pages {
             let (value, allocations) = capture(|| Box::new(create()));
             (value, Some(LockedPages::new(allocations)?))
@@ -170,14 +172,12 @@ impl PageRegistry {
 
 /// Heap allocations can share pages across APO instances. VirtualLock itself
 /// does not count references; only the final lease may unlock a page we locked.
-pub(super) struct LockedPages {
+pub struct LockedPages {
     pages: Vec<usize>,
 }
 
 impl LockedPages {
-    pub(super) fn new(
-        ranges: impl IntoIterator<Item = (usize, usize)>,
-    ) -> windows::core::Result<Self> {
+    pub fn new(ranges: impl IntoIterator<Item = (usize, usize)>) -> windows::core::Result<Self> {
         let page_size = *PAGE_SIZE;
         let mut requested = BTreeMap::new();
         for (start, bytes) in ranges {
@@ -271,7 +271,7 @@ impl Drop for LockedPages {
 
 /// Include the loaded image's readable code/data, notably the denoiser's static
 /// weights and Rubato's vtables. These aren't visible to allocation capture.
-pub(super) fn image_ranges() -> Vec<(usize, usize)> {
+pub fn image_ranges() -> Vec<(usize, usize)> {
     let mut info = MEMORY_BASIC_INFORMATION::default();
     unsafe {
         VirtualQuery(

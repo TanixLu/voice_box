@@ -2,11 +2,15 @@
 
 use core::fmt;
 use std::sync::atomic::{AtomicI64, Ordering};
-use voice_box_shared::utils::wide_null;
+
 use windows::Win32::System::Diagnostics::Etw::{
     EventProviderEnabled, EventRegister, EventUnregister, EventWriteString, REGHANDLE,
 };
 use windows_core::{GUID, PCWSTR};
+
+use voice_box_shared::utils::wide_null;
+
+pub use crate::apo_log;
 
 pub const ERROR: u8 = 2;
 pub const WARNING: u8 = 3;
@@ -55,10 +59,9 @@ pub fn log(level: u8, keyword: u64, arguments: fmt::Arguments<'_>) {
     unsafe { EventWriteString(handle, level, keyword, PCWSTR(message.as_ptr())) };
 }
 
+#[macro_export]
 macro_rules! apo_log {
     ($level:expr, $keyword:expr, $($arg:tt)*) => {
         $crate::etw::log($level, $keyword, format_args!($($arg)*))
     };
 }
-
-pub(crate) use apo_log;

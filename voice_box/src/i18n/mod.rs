@@ -1,20 +1,24 @@
 //! Application language and presentation. Audio code never reads this state.
+
 mod message;
 mod shared_error;
 mod text;
 
-pub(crate) use message::{Details, Message, UserContext};
 use std::sync::atomic::{AtomicU8, Ordering};
-pub(crate) use text::Text;
+
+pub use crate::i18n::{
+    message::{Details, Message, UserContext},
+    text::Text,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Language {
+pub enum Language {
     English,
     SimplifiedChinese,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum LanguagePreference {
+pub enum LanguagePreference {
     #[default]
     System,
     English,
@@ -23,14 +27,14 @@ pub(crate) enum LanguagePreference {
 
 static LANGUAGE: AtomicU8 = AtomicU8::new(0);
 
-pub(crate) fn current_language() -> Language {
+pub fn current_language() -> Language {
     match LANGUAGE.load(Ordering::Relaxed) {
         1 => Language::SimplifiedChinese,
         _ => Language::English,
     }
 }
 
-pub(crate) fn set_language(language: Language) {
+pub fn set_language(language: Language) {
     LANGUAGE.store(
         match language {
             Language::English => 0,
@@ -41,7 +45,7 @@ pub(crate) fn set_language(language: Language) {
 }
 
 impl LanguagePreference {
-    pub(crate) fn resolve(self) -> Language {
+    pub fn resolve(self) -> Language {
         match self {
             Self::System => system_language(),
             Self::English => Language::English,
@@ -49,7 +53,7 @@ impl LanguagePreference {
         }
     }
 
-    pub(crate) fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Self::System => Text::FollowSystem.text(),
             Self::English => "English",

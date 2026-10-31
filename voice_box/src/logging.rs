@@ -1,12 +1,16 @@
 //! Bounded application logs; APO diagnostics remain ETW-only.
-use crate::i18n::{Details, Message};
+
 use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
+
 use tracing_subscriber::fmt::MakeWriter;
+use voice_box_shared::paths::data_dir;
+
+use crate::i18n::{Details, Message};
 
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_EVENT_BYTES: usize = 64 * 1024;
@@ -81,7 +85,7 @@ impl<'a> MakeWriter<'a> for RollingLog {
 
 pub fn init() -> anyhow::Result<()> {
     let log = RollingLog {
-        directory: voice_box_shared::paths::data_dir()?,
+        directory: data_dir()?.to_path_buf(),
         mutex: Arc::new(Mutex::new(())),
     };
     // Detect inability to open the destination before installing the subscriber.

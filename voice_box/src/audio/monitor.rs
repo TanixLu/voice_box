@@ -1,18 +1,25 @@
-use super::{Apartment, Stream, enumerator};
-use crate::i18n::Text;
-use anyhow::ensure;
 use std::time::{Duration, Instant};
-use voice_box_shared::utils::wide_null;
+
+use anyhow::ensure;
 use wasapi::{SampleType, WaveFormat};
-use windows::Win32::{
-    Media::Audio::{IAudioClient, IAudioClock, IAudioRenderClient, eConsole, eRender},
-    System::Com::{CLSCTX_ALL, CoTaskMemFree},
+use windows::{
+    Win32::{
+        Media::Audio::{IAudioClient, IAudioClock, IAudioRenderClient, eConsole, eRender},
+        System::Com::{CLSCTX_ALL, CoTaskMemFree},
+    },
+    core::PCWSTR,
 };
-use windows::core::PCWSTR;
+
+use voice_box_shared::utils::wide_null;
+
+use crate::{
+    audio::{Apartment, Stream, enumerator},
+    i18n::Text,
+};
 
 /// The soundboard reuses the same WASAPI/COM lifetime and format negotiation as
 /// preview playback, with a shorter queue so route and volume changes feel quick.
-pub(crate) struct Monitor {
+pub struct Monitor {
     // Service interfaces must be released before the client and its event handle;
     // COM must remain initialized until all of them have been released.
     render: IAudioRenderClient,

@@ -1,10 +1,5 @@
 //! Cancellable background recording, DLL preview and playback.
-use super::{
-    capture::{Recording, capture},
-    playback::playback,
-};
-use crate::i18n::Text;
-use crate::i18n::{Details, Message};
+
 use std::{
     sync::{
         Arc,
@@ -13,10 +8,19 @@ use std::{
     },
     time::Instant,
 };
+
 use voice_box_shared::apo_cfg::ApoConfig;
 
+use crate::{
+    audio::{
+        capture::{Recording, capture},
+        playback::playback,
+    },
+    i18n::{Details, Message, Text},
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Activity {
+pub enum Activity {
     Recording,
     PlayingOriginal,
     PlayingProcessed,
@@ -45,7 +49,7 @@ struct Job {
 }
 
 #[derive(Default)]
-pub(crate) struct AudioSession {
+pub struct AudioSession {
     job: Option<Job>,
     recording: Option<Arc<Recording>>,
     processed: Option<ProcessedRecording>,

@@ -1,11 +1,17 @@
 //! Transactional creation of sound metadata and immutable audio payloads.
-use super::sound::{Sound, is_valid_name};
-use crate::{database::audio::AudioWriter, i18n::Text};
-use anyhow::ensure;
-use rusqlite::{Connection, TransactionBehavior, params};
+
 use std::io::Write;
 
-pub(super) fn insert_sound(
+use anyhow::ensure;
+use rusqlite::{Connection, TransactionBehavior, params};
+
+use crate::{
+    database::audio::AudioWriter,
+    i18n::Text,
+    soundboard::sound::{Sound, is_valid_name},
+};
+
+pub fn insert_sound(
     connection: &mut Connection,
     name: &str,
     duration_secs: f64,
@@ -18,7 +24,7 @@ pub(super) fn insert_sound(
     Ok(sound)
 }
 
-pub(super) fn write_sound(
+pub fn write_sound(
     connection: &Connection,
     name: &str,
     duration_secs: f64,

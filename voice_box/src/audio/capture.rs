@@ -1,17 +1,10 @@
-use super::{Apartment, Stream, enumerator};
-use crate::i18n::Text;
-use crate::i18n::UserContext;
-use anyhow::{bail, ensure};
 use std::{
     ptr, slice,
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
-use voice_box_shared::{
-    audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
-    preview::{MAX_RECORD_SECONDS, MAX_SAMPLES},
-    utils::wide_null,
-};
+
+use anyhow::{bail, ensure};
 use wasapi::{SampleType, WaveFormat};
 use windows::{
     Win32::{
@@ -24,7 +17,18 @@ use windows::{
     core::{Interface, PCWSTR},
 };
 
-pub(crate) struct Recording {
+use voice_box_shared::{
+    audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
+    preview::{MAX_RECORD_SECONDS, MAX_SAMPLES},
+    utils::wide_null,
+};
+
+use crate::{
+    audio::{Apartment, Stream, enumerator},
+    i18n::{Text, UserContext},
+};
+
+pub struct Recording {
     pub sample_rate: u32,
     pub channels: u16,
     pub channel_mask: u32,
@@ -32,12 +36,12 @@ pub(crate) struct Recording {
 }
 
 impl Recording {
-    pub(crate) fn duration_secs(&self) -> f64 {
+    pub fn duration_secs(&self) -> f64 {
         self.samples.len() as f64 / f64::from(self.channels) / f64::from(self.sample_rate)
     }
 }
 
-pub(crate) fn capture(
+pub fn capture(
     device_id: &str,
     stop: &AtomicBool,
     started: &dyn Fn(),

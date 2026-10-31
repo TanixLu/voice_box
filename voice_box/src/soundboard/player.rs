@@ -1,19 +1,23 @@
 //! Playback lifecycle and acknowledgements, addressed by stable sound IDs.
-use super::{
-    playback::{self, Command, Config, Event},
-    sound::SoundId,
-};
-use crate::i18n::{Details, Message, Text};
+
 use std::{sync::mpsc, thread::JoinHandle};
 
-pub(super) enum Update {
+use crate::{
+    i18n::{Details, Message, Text},
+    soundboard::{
+        playback::{self, Command, Config, Event},
+        sound::SoundId,
+    },
+};
+
+pub enum Update {
     Started,
     Restarted,
     Error(Message),
 }
 
 #[derive(Clone, Copy, Default)]
-pub(crate) struct PlaybackStatus {
+pub struct PlaybackStatus {
     pub sound_id: Option<SoundId>,
     pub elapsed_secs: f64,
     pub duration_secs: Option<f64>,
@@ -32,16 +36,16 @@ struct Job {
 }
 
 /// May be waited on by a background deletion job, never by the UI thread.
-pub(super) struct Completion(JoinHandle<()>);
+pub struct Completion(JoinHandle<()>);
 
 impl Completion {
-    pub(super) fn wait(self) {
+    pub fn wait(self) {
         let _ = self.0.join();
     }
 }
 
 #[derive(Default)]
-pub(super) struct Player {
+pub struct Player {
     job: Option<Job>,
     revision: u64,
     queued: Option<Request>,
@@ -49,15 +53,15 @@ pub(super) struct Player {
 }
 
 impl Player {
-    pub(super) fn status(&self) -> PlaybackStatus {
+    pub fn status(&self) -> PlaybackStatus {
         self.status
     }
 
-    pub(super) fn playing(&self) -> bool {
+    pub fn playing(&self) -> bool {
         self.job.is_some()
     }
 
-    pub(super) fn play(
+    pub fn play(
         &mut self,
         id: SoundId,
         duration_secs: f64,
@@ -92,24 +96,24 @@ impl Player {
         Ok(())
     }
 
-    pub(super) fn stop(&mut self) {
+    pub fn stop(&mut self) {
         self.queued = None;
         if let Some(job) = &self.job {
             let _ = job.sender.send(Command::Stop);
         }
     }
 
-    pub(super) fn stop_and_release(&mut self) -> Option<Completion> {
+    pub fn stop_and_release(&mut self) -> Option<Completion> {
         self.stop();
         self.status.sound_id = None;
         self.job.take().map(|job| Completion(job.thread))
     }
 
-    pub(super) fn cancel_queued(&mut self) {
+    pub fn cancel_queued(&mut self) {
         self.queued = None;
     }
 
-    pub(super) fn configure(&mut self, config: Config) {
+    pub fn configure(&mut self, config: Config) {
         if let Some(request) = &mut self.queued {
             request.config = config.clone();
         }
@@ -118,7 +122,7 @@ impl Player {
         }
     }
 
-    pub(super) fn poll(&mut self, wake: impl Fn() + Send + 'static) -> Vec<Update> {
+    pub fn poll(&mut self, wake: impl Fn() + Send + 'static) -> Vec<Update> {
         let mut updates = Vec::new();
         while let Some(job) = &self.job {
             match job.receiver.try_recv() {

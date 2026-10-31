@@ -1,8 +1,7 @@
-use super::widgets::{ButtonIcon, hint, icon_button, warning};
-use crate::i18n::Message;
-use crate::i18n::Text;
 use crate::{
     audio::loopback::MAX_RECORD_SECONDS,
+    gui::widgets::{ButtonIcon, hint, icon_button, warning},
+    i18n::{Message, Text},
     soundboard::{
         recording::{Activity, Edge, Recorder, Selection},
         sound::{Sound, is_valid_name},
@@ -10,7 +9,7 @@ use crate::{
 };
 
 #[derive(Default)]
-pub(super) struct RecordingImport {
+pub struct RecordingImport {
     recorder: Recorder,
     selection: Option<Selection>,
     name: String,
@@ -79,7 +78,7 @@ impl RecordingImport {
                     });
                 ui.add_space(12.0);
             });
-        !self.saving() && (close || ctx.input(|input| input.key_pressed(egui::Key::Escape)))
+        !self.saving() && close
     }
 
     fn record_ui(&mut self, ui: &mut egui::Ui) {
