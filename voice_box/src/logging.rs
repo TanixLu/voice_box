@@ -1,14 +1,17 @@
 //! Bounded application logs; APO diagnostics remain ETW-only.
 
 use std::{
-    fs::{self, OpenOptions},
+    fs,
     io::{self, Write},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 use tracing_subscriber::fmt::MakeWriter;
-use voice_box_shared::paths::data_dir;
+use voice_box_shared::{
+    paths::data_dir,
+    utils::{WriteMode, write_file_with_parents},
+};
 
 use crate::i18n::{Details, Message};
 
@@ -42,9 +45,7 @@ impl RollingLog {
                 fs::rename(&path, backup)?;
             }
         }
-        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-        file.write_all(bytes)?;
-        Ok(())
+        write_file_with_parents(path, WriteMode::Append, |file| file.write_all(bytes))
     }
 }
 

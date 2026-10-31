@@ -19,7 +19,6 @@ const MIN_RECLAIM_BYTES: i64 = 64 * 1024 * 1024;
 const MIN_RECLAIM_RATIO: f64 = 0.25;
 
 pub fn open() -> anyhow::Result<Connection> {
-    std::fs::create_dir_all(data_dir()?).user_context(Text::CreateDataDirectory)?;
     open_at(database_path()?).user_context(Text::OpenDatabase)
 }
 

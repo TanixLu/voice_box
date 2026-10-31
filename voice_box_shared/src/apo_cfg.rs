@@ -1,10 +1,12 @@
 //! Machine-wide apo.cfg shared by the GUI and APO watcher.
 
-use std::io::{self, Read, Write as _};
+use std::io::{self, Read};
 
-use atomic_write_file::AtomicWriteFile;
-
-use crate::{field_name, paths::apo_cfg_path};
+use crate::{
+    field_name,
+    paths::apo_cfg_path,
+    utils::{WriteMode, write_file_with_parents},
+};
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub struct GainMillidb(i32);
@@ -92,9 +94,9 @@ impl ApoCfg {
         if bytes.len() > Self::MAX_CFG_BYTES {
             anyhow::bail!("The VoiceBox APO configuration file is too large");
         }
-        let mut file = AtomicWriteFile::open(apo_cfg_path()?)?;
-        file.write_all(&bytes)?;
-        file.commit()?;
+        write_file_with_parents(apo_cfg_path()?, WriteMode::AtomicReplace, |file| {
+            file.write_all(&bytes)
+        })?;
         Ok(())
     }
 }

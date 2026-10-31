@@ -3610,7 +3610,6 @@ name = "voice_box"
 version = "1.0.0"
 dependencies = [
  "anyhow",
- "atomic-write-file",
  "eframe",
  "egui",
  "egui-winit",

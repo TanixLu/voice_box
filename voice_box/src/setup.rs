@@ -1,6 +1,5 @@
-use std::{io::Write, path::Path};
+use std::path::Path;
 
-use atomic_write_file::AtomicWriteFile;
 use restart_manager::{RestartSession, ShutdownOptions};
 use tracing::info;
 use windows::Win32::Media::KernelStreaming::{
@@ -14,7 +13,12 @@ use winreg::{
     types::FromRegValue,
 };
 
-use voice_box_shared::{apo_cfg::ApoCfg, paths::apo_dll_path, plugin};
+use voice_box_shared::{
+    apo_cfg::ApoCfg,
+    paths::apo_dll_path,
+    plugin,
+    utils::{WriteMode, write_file_with_parents},
+};
 
 use crate::{
     i18n::{Message, Text, UserContext},
@@ -242,9 +246,9 @@ fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     let string_values = string_registration_values(&apo_dll_path)?;
     // Update the DLL.
     if std::fs::read(&apo_dll_path).ok().as_deref() != Some(apo_dll_bytes()) {
-        let mut file = AtomicWriteFile::open(&apo_dll_path)?;
-        file.write_all(apo_dll_bytes())?;
-        file.commit()?;
+        write_file_with_parents(apo_dll_path, WriteMode::AtomicReplace, |file| {
+            file.write_all(apo_dll_bytes())
+        })?;
         info!("Updated APO DLL at {}", apo_dll_path.display());
     }
 
