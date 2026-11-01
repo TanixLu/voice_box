@@ -1,4 +1,4 @@
-use voice_box_shared::apo_cfg::{ApoCfg, GainMillidb};
+use voice_box_shared::apo_cfg::{ApoCfg, GainDb};
 
 use crate::{
     audio::session::{Activity, AudioSession},
@@ -32,9 +32,9 @@ impl VoicePanel {
                 &mut self.config.denoising_enabled,
                 Text::EnableDenoising.text(),
             );
-            const MIN_DB: f64 = GainMillidb::MIN_VALUE as f64 / 1000.0;
-            const MAX_DB: f64 = GainMillidb::MAX_VALUE as f64 / 1000.0;
-            let mut gain_db = self.config.gain_millidb.as_i32() as f64 / 1000.0;
+            const MIN_DB: f64 = GainDb::MIN_VALUE as f64;
+            const MAX_DB: f64 = GainDb::MAX_VALUE as f64;
+            let mut gain_db = self.config.gain_db.as_i8();
             let mut changed = false;
             ui.horizontal(|ui| {
                 ui.label(Text::VolumeAdjustment.text());
@@ -43,15 +43,15 @@ impl VoicePanel {
                         .add(
                             egui::DragValue::new(&mut gain_db)
                                 .range(MIN_DB..=MAX_DB)
-                                .speed(0.1)
-                                .fixed_decimals(1)
+                                .speed(1.0)
+                                .fixed_decimals(0)
                                 .custom_formatter(|value, _| {
                                     if value <= MIN_DB {
                                         Text::Mute.text().into()
                                     } else if value > 0.0 {
-                                        format!("+{value:.1} dB")
+                                        format!("+{value:.0} dB")
                                     } else {
-                                        format!("{value:.1} dB")
+                                        format!("{value:.0} dB")
                                     }
                                 })
                                 .custom_parser(|text| {
@@ -65,11 +65,11 @@ impl VoicePanel {
                         .on_hover_text(Text::AdjustVolumeHint.text())
                         .changed();
                     if ui
-                        .add_enabled(gain_db != 0.0, egui::Button::new(Text::ResetGain.text()))
+                        .add_enabled(gain_db != 0, egui::Button::new(Text::ResetGain.text()))
                         .on_hover_text(Text::ResetGainHint.text())
                         .clicked()
                     {
-                        gain_db = 0.0;
+                        gain_db = 0;
                         changed = true;
                     }
                 });
@@ -77,22 +77,18 @@ impl VoicePanel {
             ui.scope(|ui| {
                 ui.spacing_mut().slider_width = ui.available_width();
                 let slider = ui.add(
-                    egui::Slider::new(&mut gain_db, MIN_DB..=MAX_DB)
-                        .step_by(0.1)
+                    egui::Slider::new(&mut gain_db, GainDb::MIN_VALUE..=GainDb::MAX_VALUE)
+                        .step_by(1.0)
                         .show_value(false),
                 );
                 changed |= slider.changed();
-                if slider.dragged() && gain_db.abs() <= 0.5 {
-                    gain_db = 0.0;
-                    changed = true;
-                }
                 // Zero lies at the midpoint of this symmetric, linear range.
                 let marker = slider.rect.center_bottom() + egui::vec2(0.0, 2.0);
                 ui.painter()
                     .circle_filled(marker, 2.0, ui.visuals().weak_text_color());
             });
             if changed {
-                self.config.gain_millidb = GainMillidb::new((gain_db * 1000.0).round() as i32);
+                self.config.gain_db = GainDb::new(gain_db);
             }
         });
         ui.horizontal_wrapped(|ui| {

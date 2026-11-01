@@ -12,7 +12,7 @@ pub type Process = unsafe extern "system" fn(
     sample_rate: u32,
     channels: u32,
     frames: u32,
-    gain_millidb: i32,
+    gain_db: i8,
     denoising: u32,
     input: *const f32,
     output: *mut f32,

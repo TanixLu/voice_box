@@ -83,7 +83,7 @@ pub fn process(recording: &Recording, config: &ApoCfg) -> anyhow::Result<Vec<f32
             recording.sample_rate,
             u32::from(recording.channels),
             u32::try_from(recording.samples.len() / recording.channels as usize)?,
-            config.gain_millidb.as_i32(),
+            config.gain_db.as_i8(),
             u32::from(config.denoising_enabled),
             recording.samples.as_ptr(),
             output.as_mut_ptr(),

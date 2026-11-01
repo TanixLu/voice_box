@@ -44,7 +44,7 @@ impl Default for RtConfig {
 }
 impl RtConfig {
     pub fn store(&self, apo_config: ApoCfg) {
-        let gain = apo_config.gain_millidb.as_f32_gain();
+        let gain = apo_config.gain_db.as_f32_gain();
         let bits = if apo_config.denoising_enabled {
             ENABLED_BIT
         } else {

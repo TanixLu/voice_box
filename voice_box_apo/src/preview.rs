@@ -6,7 +6,7 @@ use windows::Win32::Foundation::{E_INVALIDARG, E_POINTER, S_OK};
 use windows_core::HRESULT;
 
 use voice_box_shared::{
-    apo_cfg::{ApoCfg, GainMillidb},
+    apo_cfg::{ApoCfg, GainDb},
     audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
     preview,
 };
@@ -24,13 +24,13 @@ pub unsafe extern "system" fn VoiceBoxPreviewProcess(
     sample_rate: u32,
     channels: u32,
     frames: u32,
-    gain_millidb: i32,
+    gain_db: i8,
     denoising: u32,
     input: *const f32,
     output: *mut f32,
 ) -> HRESULT {
     let config = ApoCfg {
-        gain_millidb: GainMillidb::new(gain_millidb),
+        gain_db: GainDb::new(gain_db),
         denoising_enabled: denoising != 0,
     };
     let Some(samples) = (frames as usize).checked_mul(channels as usize) else {
@@ -51,7 +51,7 @@ pub unsafe extern "system" fn VoiceBoxPreviewProcess(
     if !input.is_aligned() || !output.is_aligned() {
         return E_INVALIDARG;
     }
-    let gain = config.gain_millidb.as_f32_gain();
+    let gain = config.gain_db.as_f32_gain();
     if gain == 0.0 {
         unsafe { ptr::write_bytes(output, 0, samples) };
         return S_OK;

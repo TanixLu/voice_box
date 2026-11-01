@@ -9,22 +9,22 @@ use crate::{
 };
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
-pub struct GainMillidb(i32);
+pub struct GainDb(i8);
 
-impl GainMillidb {
-    pub const MIN_VALUE: i32 = -60_000;
-    pub const MAX_VALUE: i32 = 60_000;
+impl GainDb {
+    pub const MIN_VALUE: i8 = -60;
+    pub const MAX_VALUE: i8 = 60;
 
-    pub fn new(value: i32) -> Self {
+    pub fn new(value: i8) -> Self {
         Self(value.clamp(Self::MIN_VALUE, Self::MAX_VALUE))
     }
 
     pub fn parse(s: &str) -> Result<Self, std::num::ParseIntError> {
-        let value = s.parse::<i32>()?;
+        let value = s.parse::<i8>()?;
         Ok(Self::new(value))
     }
 
-    pub fn as_i32(&self) -> i32 {
+    pub fn as_i8(&self) -> i8 {
         self.0
     }
 
@@ -32,7 +32,7 @@ impl GainMillidb {
         if self.0 == Self::MIN_VALUE {
             0.0
         } else {
-            10.0_f32.powf(self.0 as f32 / 20_000.0)
+            10.0_f32.powf(self.0 as f32 / 20.0)
         }
     }
 }
@@ -40,7 +40,7 @@ impl GainMillidb {
 #[derive(Default, Clone, PartialEq, Eq)]
 pub struct ApoCfg {
     pub denoising_enabled: bool,
-    pub gain_millidb: GainMillidb,
+    pub gain_db: GainDb,
 }
 
 impl ApoCfg {
@@ -73,9 +73,9 @@ impl ApoCfg {
                 if let Ok(v) = value.parse() {
                     cfg.denoising_enabled = v;
                 }
-            } else if key == field_name!(cfg, gain_millidb) {
-                if let Ok(v) = GainMillidb::parse(value) {
-                    cfg.gain_millidb = v;
+            } else if key == field_name!(cfg, gain_db) {
+                if let Ok(v) = GainDb::parse(value) {
+                    cfg.gain_db = v;
                 }
             }
         }
@@ -87,8 +87,8 @@ impl ApoCfg {
             "{}={}\n{}={}\n",
             field_name!(self, denoising_enabled),
             self.denoising_enabled,
-            field_name!(self, gain_millidb),
-            self.gain_millidb.as_i32(),
+            field_name!(self, gain_db),
+            self.gain_db.as_i8(),
         )
         .into_bytes();
         if bytes.len() > Self::MAX_CFG_BYTES {
