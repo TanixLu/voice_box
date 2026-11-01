@@ -2,7 +2,6 @@
 
 pub mod apo_cfg;
 pub mod audio;
-pub mod paths;
 pub mod pcm_transport;
 pub mod plugin;
 pub mod preview;

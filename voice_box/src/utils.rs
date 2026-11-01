@@ -1,10 +1,4 @@
-use std::{
-    io,
-    marker::PhantomData,
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::OnceLock,
-};
+use std::{marker::PhantomData, rc::Rc};
 
 use windows::{
     Win32::{
@@ -20,12 +14,9 @@ use windows::{
     },
     core::PWSTR,
 };
-
-use voice_box_shared::{
-    paths::{cached_path, data_dir, system_dir},
-    utils::wide_null,
-};
 use windows_core::{PCWSTR, w};
+
+use voice_box_shared::utils::wide_null;
 
 pub struct ComGuard(PhantomData<Rc<()>>);
 impl ComGuard {
@@ -42,28 +33,6 @@ impl Drop for ComGuard {
     fn drop(&mut self) {
         wasapi::deinitialize();
     }
-}
-
-pub fn conhost_path() -> io::Result<&'static Path> {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    cached_path(&CACHE, || Ok(system_dir()?.join("conhost.exe")))
-}
-
-pub fn powershell_path() -> io::Result<&'static Path> {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    cached_path(&CACHE, || {
-        Ok(system_dir()?.join(r"WindowsPowerShell\v1.0\powershell.exe"))
-    })
-}
-
-pub fn database_path() -> io::Result<&'static Path> {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    cached_path(&CACHE, || Ok(data_dir()?.join("voice_box.db")))
-}
-
-pub fn ui_state_path() -> io::Result<&'static Path> {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    cached_path(&CACHE, || Ok(data_dir()?.join("voice_box_ui.ron")))
 }
 
 pub fn win_base64_encode(bytes: &[u8]) -> windows::core::Result<String> {

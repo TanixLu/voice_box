@@ -20,7 +20,7 @@ use windows::Win32::{
 };
 use windows_core::{BOOL, GUID, HRESULT};
 
-use voice_box_shared::{paths::transport_path, plugin};
+use voice_box_shared::{plugin, utils::transport_path};
 
 use crate::{
     com::{EFFECT_ID_DENOISE, object_from},

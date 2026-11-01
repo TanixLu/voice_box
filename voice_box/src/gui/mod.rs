@@ -16,7 +16,7 @@ mod voice;
 mod widgets;
 
 use strum::IntoEnumIterator;
-use voice_box_shared::apo_cfg::ApoCfg;
+use voice_box_shared::{apo_cfg::ApoCfg, utils::ui_state_path};
 
 use crate::{
     gui::{
@@ -32,7 +32,6 @@ use crate::{
     settings,
     soundboard::library::Library,
     static_data::ICON_PNG_DATA,
-    utils::ui_state_path,
 };
 
 fn wake_ui(ctx: egui::Context) -> impl Fn() + Clone + Send + 'static {
@@ -59,7 +58,7 @@ pub fn run(settings: settings::Settings, start_in_tray: bool) -> anyhow::Result<
             .with_inner_size([560.0, 760.0])
             .with_min_inner_size([380.0, 340.0]),
         persist_window: true,
-        persistence_path: Some(ui_state_path()?.to_path_buf()),
+        persistence_path: Some(ui_state_path().to_path_buf()),
         ..Default::default()
     };
     eframe::run_native(

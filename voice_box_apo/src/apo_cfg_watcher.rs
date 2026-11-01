@@ -23,7 +23,7 @@ use windows::{
     core::{PCWSTR, w},
 };
 
-use voice_box_shared::{apo_cfg::ApoCfg, paths::data_dir, utils::wide_null};
+use voice_box_shared::{apo_cfg::ApoCfg, utils::data_dir, utils::wide_null};
 
 use crate::{etw, worker};
 
@@ -144,7 +144,7 @@ impl Drop for ApoCfgWatcher {
 struct DirectoryWatch(HANDLE);
 impl DirectoryWatch {
     fn open() -> anyhow::Result<Self> {
-        let path = wide_null(data_dir()?);
+        let path = wide_null(data_dir());
         let handle = unsafe {
             FindFirstChangeNotificationW(
                 PCWSTR(path.as_ptr()),

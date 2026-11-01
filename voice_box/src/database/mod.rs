@@ -7,19 +7,15 @@ use std::{io, path::Path, time::Duration};
 
 use anyhow::{Context, ensure};
 use rusqlite::Connection;
+use voice_box_shared::utils::database_path;
 
-use voice_box_shared::paths::data_dir;
-
-use crate::{
-    i18n::{Text, UserContext},
-    utils::database_path,
-};
+use crate::i18n::{Text, UserContext};
 
 const MIN_RECLAIM_BYTES: i64 = 64 * 1024 * 1024;
 const MIN_RECLAIM_RATIO: f64 = 0.25;
 
 pub fn open() -> anyhow::Result<Connection> {
-    open_at(database_path()?).user_context(Text::OpenDatabase)
+    open_at(database_path()).user_context(Text::OpenDatabase)
 }
 
 pub fn open_at(path: &Path) -> anyhow::Result<Connection> {

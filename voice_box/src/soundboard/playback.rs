@@ -7,8 +7,8 @@ use std::{
 use anyhow::ensure;
 
 use voice_box_shared::{
-    paths::transport_path,
     pcm_transport::{Clock, DECODE_AHEAD_FRAMES, GainPercent, Mapping, SAMPLE_RATE},
+    utils::transport_path,
 };
 
 use crate::{

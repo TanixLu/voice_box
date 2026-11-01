@@ -3,49 +3,41 @@
 use std::{
     fs,
     io::{self, Write},
-    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 use tracing_subscriber::fmt::MakeWriter;
-use voice_box_shared::{
-    paths::data_dir,
-    utils::{WriteMode, write_file_with_parents},
-};
+use voice_box_shared::utils::{WriteMode, log_path, rotated_log_path, write_file_with_parents};
 
 use crate::i18n::{Details, Message};
 
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_EVENT_BYTES: usize = 64 * 1024;
-const LOG_FILE: &str = "voice_box.log";
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 struct RollingLog {
-    directory: PathBuf,
     mutex: Arc<Mutex<()>>,
 }
 
 impl RollingLog {
     fn append(&self, bytes: &[u8]) -> io::Result<()> {
         let _local = self.mutex.lock().unwrap_or_else(|error| error.into_inner());
-        let path = self.directory.join(LOG_FILE);
-        let size = match fs::metadata(&path) {
+        let size = match fs::metadata(log_path()) {
             Ok(metadata) => metadata.len(),
             Err(error) if error.kind() == io::ErrorKind::NotFound => 0,
             Err(error) => return Err(error),
         };
         if size + bytes.len() as u64 > MAX_FILE_BYTES {
-            let backup = self.directory.join(format!("{LOG_FILE}.1"));
-            match fs::remove_file(&backup) {
+            match fs::remove_file(rotated_log_path()) {
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error),
             }
             if size > 0 {
-                fs::rename(&path, backup)?;
+                fs::rename(log_path(), rotated_log_path())?;
             }
         }
-        write_file_with_parents(path, WriteMode::Append, |file| file.write_all(bytes))
+        write_file_with_parents(log_path(), WriteMode::Append, |file| file.write_all(bytes))
     }
 }
 
@@ -55,7 +47,7 @@ struct EventWriter {
 }
 impl Write for EventWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        let remaining = MAX_EVENT_BYTES.saturating_sub(self.bytes.len());
+        let remaining = (MAX_EVENT_BYTES - 1).saturating_sub(self.bytes.len());
         self.bytes
             .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
         Ok(bytes.len())
@@ -68,6 +60,9 @@ impl Drop for EventWriter {
     fn drop(&mut self) {
         if !self.bytes.is_empty() {
             if self.bytes.last() != Some(&b'\n') {
+                if let Err(error) = std::str::from_utf8(&self.bytes) {
+                    self.bytes.truncate(error.valid_up_to());
+                }
                 self.bytes.push(b'\n');
             }
             let _ = self.log.append(&self.bytes);
@@ -85,10 +80,7 @@ impl<'a> MakeWriter<'a> for RollingLog {
 }
 
 pub fn init() -> anyhow::Result<()> {
-    let log = RollingLog {
-        directory: data_dir()?.to_path_buf(),
-        mutex: Arc::new(Mutex::new(())),
-    };
+    let log = RollingLog::default();
     // Detect inability to open the destination before installing the subscriber.
     log.append(&[])?;
     tracing_subscriber::fmt()
@@ -102,8 +94,10 @@ pub fn init() -> anyhow::Result<()> {
                 error: Details::new(anyhow::Error::from_boxed(error))
             })
         })?;
-    std::panic::set_hook(Box::new(|panic| {
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
         tracing::error!("Application panic: {panic}");
+        previous_hook(panic);
     }));
     tracing::info!(
         pid = std::process::id(),

@@ -4,7 +4,7 @@ use std::io::{self, Read};
 
 use crate::{
     field_name,
-    paths::apo_cfg_path,
+    utils::apo_cfg_path,
     utils::{WriteMode, write_file_with_parents},
 };
 
@@ -48,7 +48,7 @@ impl ApoCfg {
 
     pub fn read() -> io::Result<Self> {
         let mut bytes = Vec::new();
-        std::fs::File::open(apo_cfg_path()?)?
+        std::fs::File::open(apo_cfg_path())?
             .take((Self::MAX_CFG_BYTES + 1) as u64)
             .read_to_end(&mut bytes)?;
         let bytes = &bytes[..];
@@ -94,7 +94,7 @@ impl ApoCfg {
         if bytes.len() > Self::MAX_CFG_BYTES {
             anyhow::bail!("The VoiceBox APO configuration file is too large");
         }
-        write_file_with_parents(apo_cfg_path()?, WriteMode::AtomicReplace, |file| {
+        write_file_with_parents(apo_cfg_path(), WriteMode::AtomicReplace, |file| {
             file.write_all(&bytes)
         })?;
         Ok(())

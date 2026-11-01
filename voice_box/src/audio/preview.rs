@@ -14,7 +14,7 @@ use windows::{
     core::{PCSTR, PCWSTR},
 };
 
-use voice_box_shared::{apo_cfg::ApoCfg, paths::apo_dll_path, preview, utils::wide_null};
+use voice_box_shared::{apo_cfg::ApoCfg, preview, utils::apo_dll_path, utils::wide_null};
 
 use crate::{
     audio::capture::Recording,
@@ -26,7 +26,7 @@ struct PreviewDll(HMODULE);
 
 impl PreviewDll {
     fn load() -> anyhow::Result<Self> {
-        let apo_dll_path = apo_dll_path()?;
+        let apo_dll_path = apo_dll_path();
         // The unversioned ABI requires the installed DLL to match this EXE.
         ensure!(
             fs::read(&apo_dll_path)

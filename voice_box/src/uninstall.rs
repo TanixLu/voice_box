@@ -26,8 +26,8 @@ use windows::{
 };
 
 use voice_box_shared::{
-    paths::{apo_dll_path, data_dir, system_dir},
     utils::wide_null,
+    utils::{apo_dll_path, data_dir, powershell_path, system_dir},
 };
 
 use crate::{
@@ -35,17 +35,17 @@ use crate::{
     setup,
     single::SINGLE_INSTANCE_MUTEX,
     static_data::UNINSTALL_CLEANUP_SCRIPT,
-    utils::{ComGuard, powershell_path},
+    utils::ComGuard,
 };
 
 // The GUI is already elevated; only self-deletion needs a separate process.
 pub fn run() -> anyhow::Result<()> {
     crate::startup::synchronize_startup(false)?;
-    let cleanup = start_cleanup(&data_dir()?)?;
+    let cleanup = start_cleanup(data_dir())?;
     let _com_guard = ComGuard::sta()?;
     setup::with_audio_service_stopped(|| {
         setup::unregister_all()?;
-        recycle(&apo_dll_path()?).user_context(Text::RecycleApo)
+        recycle(apo_dll_path()).user_context(Text::RecycleApo)
     })?;
     cleanup.finish()
 }
@@ -91,7 +91,7 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
         committed: false,
     };
 
-    let cleanup = Command::new(powershell_path()?)
+    let cleanup = Command::new(powershell_path())
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -117,7 +117,7 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
             "VOICEBOX_UNINSTALL_PROCESS_ID",
             std::process::id().to_string(),
         )
-        .current_dir(system_dir()?)
+        .current_dir(system_dir())
         .creation_flags(CREATE_NO_WINDOW.0)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

@@ -24,12 +24,12 @@ use windows::{
     core::{BSTR, Interface},
 };
 
-use voice_box_shared::paths::system_dir;
+use voice_box_shared::utils::{conhost_path, powershell_path, system_dir};
 
 use crate::{
     i18n::{Text, UserContext},
     static_data::startup_script,
-    utils::{ComGuard, conhost_path, powershell_path, win_base64_encode, win_sha256},
+    utils::{ComGuard, win_base64_encode, win_sha256},
 };
 
 const SILENT_START_ARG: &str = "--silent-start";
@@ -144,16 +144,16 @@ fn definition(service: &ITaskService, arguments: &str) -> anyhow::Result<ITaskDe
         actions.SetContext(&BSTR::from("VoiceBox"))?;
         let action: IExecAction = actions.Create(TASK_ACTION_EXEC)?.cast()?;
         action.SetPath(&BSTR::from(
-            conhost_path()?
+            conhost_path()
                 .to_str()
                 .context("Invalid console host path")?,
         ))?;
         action.SetWorkingDirectory(&BSTR::from(
-            system_dir()?.to_str().context("Invalid system path")?,
+            system_dir().to_str().context("Invalid system path")?,
         ))?;
         action.SetArguments(&BSTR::from(format!(
             "--headless \"{}\" {arguments}",
-            powershell_path()?
+            powershell_path()
                 .to_str()
                 .context("Invalid PowerShell path")?,
         )))?;

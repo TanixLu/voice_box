@@ -15,8 +15,8 @@ use winreg::{
 
 use voice_box_shared::{
     apo_cfg::ApoCfg,
-    paths::apo_dll_path,
     plugin,
+    utils::apo_dll_path,
     utils::{WriteMode, write_file_with_parents},
 };
 
@@ -140,9 +140,7 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
         return PluginStatus::NeedsUpdate;
     }
     // Check whether the DLL needs to be updated.
-    let Ok(apo_dll) = apo_dll_path() else {
-        return PluginStatus::NeedsUpdate;
-    };
+    let apo_dll = apo_dll_path();
     if std::fs::read(&apo_dll).ok().as_deref() != Some(apo_dll_bytes()) {
         return PluginStatus::NeedsUpdate;
     }
@@ -242,7 +240,7 @@ pub fn with_audio_service_stopped(
 }
 
 fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
-    let apo_dll_path = apo_dll_path()?;
+    let apo_dll_path = apo_dll_path();
     let string_values = string_registration_values(&apo_dll_path)?;
     // Update the DLL.
     if std::fs::read(&apo_dll_path).ok().as_deref() != Some(apo_dll_bytes()) {
