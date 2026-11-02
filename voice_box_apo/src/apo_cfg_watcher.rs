@@ -2,7 +2,7 @@
 
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicU16, Ordering},
 };
 
 use windows::{
@@ -23,40 +23,59 @@ use windows::{
     core::{PCWSTR, w},
 };
 
-use voice_box_shared::{apo_cfg::ApoCfg, utils::data_dir, utils::wide_null};
+use voice_box_shared::{
+    apo_cfg::{ApoCfg, GainDb},
+    utils::{data_dir, wide_null},
+};
 
 use crate::{etw, worker};
 
-const ENABLED_BIT: u64 = 1 << 32;
+const DENOISING_ENABLED_MASK: u16 = 0x0100;
+const GAIN_DB_MASK: u16 = 0x00FF;
+
+fn apo_cfg_to_bits(apo_config: ApoCfg) -> u16 {
+    (if apo_config.denoising_enabled {
+        DENOISING_ENABLED_MASK
+    } else {
+        0
+    }) | (apo_config.gain_db.as_i8() as u16 & GAIN_DB_MASK)
+}
+
+fn bits_to_apo_cfg(bits: u16) -> ApoCfg {
+    ApoCfg {
+        denoising_enabled: (bits & DENOISING_ENABLED_MASK) != 0,
+        gain_db: GainDb::new((bits & GAIN_DB_MASK) as i8),
+    }
+}
 
 pub struct RtConfig {
-    bits: AtomicU64,
+    atomic_bits: AtomicU16,
     // Only APO configuration updates and COM discovery touch this mutex. RT loads bits alone.
     effects: Mutex<[Option<Event>; 2]>,
 }
+
 impl Default for RtConfig {
     fn default() -> Self {
         Self {
-            bits: AtomicU64::new(ENABLED_BIT | u64::from(1.0_f32.to_bits())),
+            atomic_bits: AtomicU16::new(apo_cfg_to_bits(ApoCfg::default())),
             effects: Mutex::new([None, None]),
         }
     }
 }
 impl RtConfig {
+    pub fn load(&self) -> ApoCfg {
+        bits_to_apo_cfg(self.atomic_bits.load(Ordering::Acquire))
+    }
     pub fn store(&self, apo_config: ApoCfg) {
-        let gain = apo_config.gain_db.as_f32_gain();
-        let bits = if apo_config.denoising_enabled {
-            ENABLED_BIT
-        } else {
-            0
-        } | u64::from(gain.to_bits());
         // Subscription plus its returned snapshot must be serialized with updates.
         let effects = self
             .effects
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let previous = self.bits.swap(bits, Ordering::AcqRel);
-        let was_enabled = previous & ENABLED_BIT != 0;
+        let previous = self
+            .atomic_bits
+            .swap(apo_cfg_to_bits(apo_config.clone()), Ordering::AcqRel);
+        let was_enabled = (previous & DENOISING_ENABLED_MASK) != 0;
         if was_enabled != apo_config.denoising_enabled {
             for event in effects.iter().flatten() {
                 unsafe {
@@ -64,10 +83,6 @@ impl RtConfig {
                 }
             }
         }
-    }
-    pub fn load(&self) -> (bool, f32) {
-        let bits = self.bits.load(Ordering::Acquire);
-        (bits & ENABLED_BIT != 0, f32::from_bits(bits as u32))
     }
 
     pub fn subscribe_effects(
@@ -98,7 +113,7 @@ impl RtConfig {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         effects[usize::from(controllable)] = event;
-        Ok(self.load().0)
+        Ok(self.load().denoising_enabled)
     }
 }
 
@@ -124,7 +139,9 @@ pub struct ApoCfgWatcher {
 }
 impl ApoCfgWatcher {
     pub fn start(config: Arc<RtConfig>) -> windows::core::Result<Self> {
-        config.store(ApoCfg::read().unwrap_or_default());
+        if let Ok(cfg) = ApoCfg::read() {
+            config.store(cfg);
+        }
         let stop = Arc::new(Event(unsafe { CreateEventW(None, true, false, None)? }));
         let worker_stop = Arc::clone(&stop);
         worker::spawn(w!("VoiceBoxApoCfg"), move || watch(&worker_stop, &config))?;

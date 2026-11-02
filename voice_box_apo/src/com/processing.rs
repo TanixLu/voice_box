@@ -300,7 +300,7 @@ pub unsafe extern "system" fn lock_for_process(
         unsafe { (**inputs).u32MaxFrameCount },
         unsafe { (**outputs).u32MaxFrameCount },
         input_format.dwSamplesPerFrame,
-        unsafe { (*object).config.load().0 },
+        unsafe { (*object).config.load().denoising_enabled },
         unsafe { (*object).latency_hns.load(Ordering::Acquire) },
     );
     S_OK
@@ -398,8 +398,14 @@ pub unsafe extern "system" fn process(
     if unsafe { (*object).effect_enabled.load(Ordering::Acquire) } {
         let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
         let config = unsafe { &(*object).config };
-        let (enabled, gain) = config.load();
-        unsafe { (&mut *(*object).dsp.get()).process_with_config(buffer, gain, enabled) };
+        let apo_config = config.load();
+        unsafe {
+            (&mut *(*object).dsp.get()).process_with_config(
+                buffer,
+                apo_config.gain_db.as_f32_gain(),
+                apo_config.denoising_enabled,
+            )
+        };
         if let Some(injection) = unsafe { &mut *(*object).injection.get() } {
             injection.mix(buffer);
         }
