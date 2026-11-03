@@ -177,10 +177,79 @@ impl ApoCfgWatcher {
         if let Ok(cfg) = ApoCfg::read() {
             config.store(cfg);
         }
+        let file_name: Vec<u16> = apo_cfg_path()
+            .file_name()
+            .expect("UNREACHABLE: APO configuration path must have a file name")
+            .encode_wide()
+            .collect();
+        let inspect =
+            move |notifications: &[u8]| notifications_require_reload(notifications, &file_name);
         let stop = Arc::new(Event(unsafe { CreateEventW(None, true, false, None)? }));
         let worker_stop = Arc::clone(&stop);
-        worker::spawn("VoiceBoxApoCfgWatcher", move || watch(worker_stop, config))?;
+        worker::spawn("VoiceBoxApoCfgWatcher", move || {
+            Self::run(worker_stop, config, data_dir(), inspect)
+        })?;
         Ok(Self { stop })
+    }
+
+    fn run(
+        stop: Arc<Event>,
+        config: Arc<RtConfig>,
+        directory: &Path,
+        inspect: impl Fn(&[u8]) -> bool,
+    ) {
+        let stop = stop.as_ref();
+        let config = config.as_ref();
+
+        let mut monitor = DirectoryMonitor::new();
+        let mut reload_retry = RetryState::new("configuration reload");
+        let mut reload_at = Some(Instant::now());
+        loop {
+            let deadline = reload_at.map_or(monitor.reopen_at, |at| at.min(monitor.reopen_at));
+            let should_reload =
+                match wait_for_directory_change_or_stop(stop, monitor.event(), deadline) {
+                    Ok(WakeReason::Stop) => break,
+                    Ok(WakeReason::DirectoryChanged) => monitor.process_notifications(&inspect),
+                    Ok(WakeReason::Deadline) => false,
+                    Err(error) if monitor.event().is_none() => {
+                        // Only the stop event was being waited on; reopening the directory cannot help.
+                        etw::apo_log!(
+                            etw::ERROR,
+                            etw::APO_CFG,
+                            "APO configuration stop event wait failed; watcher exiting: {error:#}"
+                        );
+                        break;
+                    }
+                    Err(error) => {
+                        monitor.failed(&error);
+                        false
+                    }
+                };
+            if should_reload {
+                reload_at = Some(Instant::now());
+            }
+
+            // Maintenance runs after every wake, including unrelated directory notifications.
+            // Its deadline is independent of configuration read failures and file traffic.
+            if monitor.reopen_if_due(directory) {
+                // Subscribe before reading so a concurrent replacement is not lost.
+                reload_at = Some(Instant::now());
+            }
+
+            if reload_at.is_some_and(|at| Instant::now() >= at) {
+                match ApoCfg::read() {
+                    Ok(cfg) => {
+                        config.store(cfg);
+                        reload_retry.recovered();
+                        reload_at = None;
+                    }
+                    Err(error) => {
+                        // Keep the last published configuration; retry even without a watch.
+                        reload_at = Some(Instant::now() + reload_retry.failed(&error.into()));
+                    }
+                }
+            }
+        }
     }
 }
 impl Drop for ApoCfgWatcher {
@@ -200,13 +269,9 @@ struct DirectoryWatch {
     overlapped: Box<OVERLAPPED>,
     // ReadDirectoryChangesW requires DWORD alignment.
     buffer: Box<[u32; 4096]>,
-    file_name: Vec<u16>,
     pending: bool,
 }
 impl DirectoryWatch {
-    fn open() -> anyhow::Result<Self> {
-        Self::open_at(data_dir())
-    }
     fn open_at(directory: &Path) -> anyhow::Result<Self> {
         let path = wide_null(directory);
         let event = Event(unsafe { CreateEventW(None, true, false, None)? });
@@ -229,11 +294,6 @@ impl DirectoryWatch {
             }),
             event,
             buffer: Box::new([0; 4096]),
-            file_name: apo_cfg_path()
-                .file_name()
-                .expect("UNREACHABLE: APO configuration path must have a file name")
-                .encode_wide()
-                .collect(),
             pending: false,
         };
         watch.rearm()?;
@@ -260,29 +320,35 @@ impl DirectoryWatch {
         self.pending = true;
         Ok(())
     }
-    fn process_notifications(&mut self) -> anyhow::Result<bool> {
+    fn process_notifications(
+        &mut self,
+        inspect: impl FnOnce(&[u8]) -> bool,
+    ) -> anyhow::Result<bool> {
         let mut bytes = 0;
         let result = unsafe {
             GetOverlappedResult(self.directory, self.overlapped.as_ref(), &mut bytes, true)
         };
         // Called only after the completion event is signalled.
         self.pending = false;
-        let changed = match result {
+        let reload_decision = match result {
+            // No details are available after overflow; refresh without applying the filter.
+            Ok(()) if bytes == 0 => true,
             Ok(()) => {
                 anyhow::ensure!(bytes as usize <= size_of_val(self.buffer.as_ref()));
                 // The read has completed, so Windows no longer writes to this buffer.
                 let notifications = unsafe {
                     std::slice::from_raw_parts(self.buffer.as_ptr().cast(), bytes as usize)
                 };
-                notifications_require_reload(notifications, &self.file_name)
+                inspect(notifications)
             }
             // Lost notification details: reload once to avoid missing a configuration change.
             Err(error) if error.code() == ERROR_NOTIFY_ENUM_DIR.to_hresult() => true,
             Err(error) => return Err(error.into()),
         };
+        // Inspect before rearming: the next read may write to the same buffer.
         // Rearm before the caller reloads, so a concurrent save is still observed.
         self.rearm()?;
-        Ok(changed)
+        Ok(reload_decision)
     }
 }
 impl Drop for DirectoryWatch {
@@ -312,7 +378,7 @@ fn notifications_require_reload(mut bytes: &[u8], file_name: &[u16]) -> bool {
         let Some(name) = bytes[12..].get(..name_len).filter(|_| name_len % 2 == 0) else {
             return true;
         };
-        // apo.cfg is ASCII; compare case-insensitively without allocating for unrelated events.
+        // Compare ASCII case-insensitively without allocating for unrelated events.
         let ascii_lower = |unit: u16| {
             if unit <= 0x7f {
                 (unit as u8).to_ascii_lowercase() as u16
@@ -381,6 +447,76 @@ impl RetryState {
     }
 }
 
+/// Keeps recovery state alive while individual directory watches are replaced.
+struct DirectoryMonitor {
+    watch: Option<DirectoryWatch>,
+    retry: RetryState,
+    reopen_at: Instant,
+}
+
+impl DirectoryMonitor {
+    fn new() -> Self {
+        Self {
+            watch: None,
+            retry: RetryState::new("configuration directory watcher"),
+            reopen_at: Instant::now(),
+        }
+    }
+
+    fn event(&self) -> Option<&Event> {
+        self.watch.as_ref().map(|watch| &watch.event)
+    }
+
+    fn failed(&mut self, error: &anyhow::Error) {
+        // All directory failures share a backoff, including wait and completion errors.
+        self.watch = None;
+        self.reopen_at = Instant::now() + self.retry.failed(error);
+    }
+
+    fn process_notifications(&mut self, inspect: impl FnOnce(&[u8]) -> bool) -> bool {
+        let reload_decision = self
+            .watch
+            .as_mut()
+            .expect("UNREACHABLE: directory event requires an active watch")
+            .process_notifications(inspect);
+        match reload_decision {
+            Ok(should_reload) => {
+                self.retry.recovered();
+                should_reload
+            }
+            Err(error) => {
+                self.failed(&error);
+                false
+            }
+        }
+    }
+
+    /// Returns true when a new watch was installed, so the caller can refresh its snapshot.
+    fn reopen_if_due(&mut self, directory: &Path) -> bool {
+        if Instant::now() < self.reopen_at {
+            return false;
+        }
+        let was_watching = self.watch.is_some();
+        self.watch = None;
+        match DirectoryWatch::open_at(directory) {
+            Ok(opened) => {
+                self.watch = Some(opened);
+                self.reopen_at = Instant::now() + WATCH_REOPEN_INTERVAL;
+                // Opening alone must not reset repeated immediate completion failures.
+                // Surviving a full maintenance interval is also evidence of recovery.
+                if was_watching {
+                    self.retry.recovered();
+                }
+                true
+            }
+            Err(error) => {
+                self.failed(&error);
+                false
+            }
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum WakeReason {
     Stop,
@@ -388,7 +524,7 @@ enum WakeReason {
     Deadline,
 }
 
-fn wait_for_watch_or_stop(
+fn wait_for_directory_change_or_stop(
     stop: &Event,
     directory_changed: Option<&Event>,
     deadline: Instant,
@@ -419,93 +555,5 @@ fn wait_for_watch_or_stop(
         Ok(WakeReason::Deadline)
     } else {
         anyhow::bail!("Unexpected APO configuration wait result: {result:?}")
-    }
-}
-
-fn watch(stop: Arc<Event>, config: Arc<RtConfig>) {
-    let stop = stop.as_ref();
-    let config = config.as_ref();
-
-    let mut watch: Option<DirectoryWatch> = None;
-    let mut watch_retry = RetryState::new("configuration directory watcher");
-    let mut reload_retry = RetryState::new("configuration reload");
-    let mut reopen_at = Instant::now();
-    let mut reload_at = Some(reopen_at);
-    loop {
-        let deadline = reload_at.map_or(reopen_at, |at| at.min(reopen_at));
-        let reload_decision = match wait_for_watch_or_stop(
-            stop,
-            watch.as_ref().map(|watch| &watch.event),
-            deadline,
-        ) {
-            Ok(WakeReason::Stop) => break,
-            Ok(WakeReason::DirectoryChanged) => {
-                let reload_decision = watch
-                    .as_mut()
-                    .expect("UNREACHABLE: directory event requires an active watch")
-                    .process_notifications();
-                if reload_decision.is_ok() {
-                    watch_retry.recovered();
-                }
-                reload_decision
-            }
-            Ok(WakeReason::Deadline) => Ok(false),
-            Err(error) if watch.is_none() => {
-                // Only the stop event was being waited on; reopening the directory cannot help.
-                etw::apo_log!(
-                    etw::ERROR,
-                    etw::APO_CFG,
-                    "APO configuration stop event wait failed; watcher exiting: {error:#}"
-                );
-                break;
-            }
-            Err(error) => Err(error),
-        };
-        match reload_decision {
-            Ok(true) => reload_at = Some(Instant::now()),
-            Ok(false) => {}
-            Err(error) => {
-                // All directory failures share the same backoff, including completion errors.
-                watch = None;
-                reopen_at = Instant::now() + watch_retry.failed(&error);
-            }
-        }
-
-        // Maintenance runs after every wake, including unrelated directory notifications.
-        // Its deadline is independent of configuration read failures and file traffic.
-        if Instant::now() >= reopen_at {
-            let was_watching = watch.is_some();
-            watch = None;
-            match DirectoryWatch::open() {
-                Ok(opened) => {
-                    // Subscribe before reading so a concurrent replacement is not lost.
-                    watch = Some(opened);
-                    reopen_at = Instant::now() + WATCH_REOPEN_INTERVAL;
-                    reload_at = Some(Instant::now());
-                    // Opening alone must not reset repeated immediate completion failures.
-                    // Surviving a full maintenance interval is also evidence of recovery.
-                    if was_watching {
-                        watch_retry.recovered();
-                    }
-                }
-                Err(error) => {
-                    reopen_at = Instant::now() + watch_retry.failed(&error);
-                }
-            }
-        }
-
-        if reload_at.is_some_and(|at| Instant::now() >= at) {
-            match ApoCfg::read() {
-                Ok(cfg) => {
-                    config.store(cfg);
-                    reload_retry.recovered();
-                    reload_at = None;
-                }
-                Err(error) => {
-                    // Keep the last published configuration; retry even without a watch.
-                    reload_at = Some(Instant::now() + reload_retry.failed(&error.into()));
-                }
-            }
-        }
     }
 }
