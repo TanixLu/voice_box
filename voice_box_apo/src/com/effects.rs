@@ -192,7 +192,7 @@ pub unsafe extern "system" fn get_effects_list(
     if supports_effect && memory.is_null() {
         return E_OUTOFMEMORY;
     }
-    let denoise = match unsafe { (*object).config.subscribe_effects(event, false) } {
+    let denoise = match unsafe { (*object).config.subscribe_effects_list(event) } {
         Ok(enabled) => enabled,
         Err(error) => {
             unsafe { CoTaskMemFree(Some(memory.cast())) };
@@ -240,7 +240,7 @@ pub unsafe extern "system" fn get_controllable_effects_list(
     if supports_effect && memory.is_null() {
         return E_OUTOFMEMORY;
     }
-    let denoise = match unsafe { (*object).config.subscribe_effects(event, true) } {
+    let denoise = match unsafe { (*object).config.subscribe_controllable_effects_list(event) } {
         Ok(enabled) => enabled,
         Err(error) => {
             unsafe { CoTaskMemFree(Some(memory.cast())) };

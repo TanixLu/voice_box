@@ -15,11 +15,8 @@ use std::{
     time::Duration,
 };
 
-use windows::{
-    Win32::System::Memory::{
-        MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
-    },
-    core::w,
+use windows::Win32::System::Memory::{
+    MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
 };
 
 use voice_box_shared::{
@@ -168,7 +165,7 @@ impl Injection {
         let background = Arc::clone(&state);
         let stop = Arc::new(AtomicBool::new(false));
         let background_stop = Arc::clone(&stop);
-        worker::spawn(w!("VoiceBoxSoundboard"), move || {
+        worker::spawn("VoiceBoxSoundboard", move || {
             receive(path, &background, &background_stop, clock)
         })?;
         Ok(Self {

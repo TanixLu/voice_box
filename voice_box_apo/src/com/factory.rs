@@ -14,6 +14,7 @@ use voice_box_shared::plugin;
 use crate::{
     com::{LIVE_OBJECTS, create_apo, inner_query_interface, inner_release},
     etw::{self, apo_log},
+    worker::get_active_worker_count,
 };
 
 static SERVER_LOCKS: AtomicU32 = AtomicU32::new(0);
@@ -155,7 +156,7 @@ pub extern "system" fn DllCanUnloadNow() -> HRESULT {
     if LIVE_OBJECTS.load(Ordering::Acquire) == 0
         && SERVER_LOCKS.load(Ordering::Acquire) == 0
         && FACTORY_REFS.load(Ordering::Acquire) == 1
-        && crate::worker::active_count() == 0
+        && get_active_worker_count() == 0
     {
         etw::unregister();
         S_OK
