@@ -1,5 +1,5 @@
-//! Detached native workers with an owned DLL reference through their final exit.
-//! No APO control callback waits for a APO configuration worker to exit.
+//! Detached native workers that keep this DLL loaded until exit.
+//! Callers never wait for worker termination.
 
 use std::{
     ffi::c_void,
@@ -20,16 +20,29 @@ use windows::{
     },
     core::PCWSTR,
 };
+use windows_core::HSTRING;
 
 use crate::etw;
 
-static ACTIVE_WORKERS: AtomicU32 = AtomicU32::new(0);
-pub fn active_count() -> u32 {
-    ACTIVE_WORKERS.load(Ordering::Acquire)
+static ACTIVE_WORKER_COUNT: AtomicU32 = AtomicU32::new(0);
+pub fn get_active_worker_count() -> u32 {
+    ACTIVE_WORKER_COUNT.load(Ordering::Acquire)
+}
+struct ActiveWorkerGuard;
+impl ActiveWorkerGuard {
+    pub fn enter() -> Self {
+        let _ = ACTIVE_WORKER_COUNT.fetch_add(1, Ordering::AcqRel);
+        Self
+    }
+}
+impl Drop for ActiveWorkerGuard {
+    fn drop(&mut self) {
+        let _ = ACTIVE_WORKER_COUNT.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
-struct ModuleRef(HMODULE);
-impl ModuleRef {
+struct DllRef(HMODULE);
+impl DllRef {
     fn acquire() -> windows::core::Result<Self> {
         let mut module = HMODULE::default();
         // FROM_ADDRESS increments the reference count. Do not use PIN (which
@@ -37,7 +50,7 @@ impl ModuleRef {
         unsafe {
             GetModuleHandleExW(
                 GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-                PCWSTR(entry as *const () as *const u16),
+                PCWSTR(thread_entry as *const () as *const u16),
                 &mut module,
             )?;
         }
@@ -47,7 +60,7 @@ impl ModuleRef {
         std::mem::ManuallyDrop::new(self).0
     }
 }
-impl Drop for ModuleRef {
+impl Drop for DllRef {
     fn drop(&mut self) {
         unsafe {
             let _ = FreeLibrary(self.0);
@@ -56,69 +69,55 @@ impl Drop for ModuleRef {
 }
 
 struct WorkerContext {
-    action: Option<Box<dyn FnOnce() + Send>>,
-    module: Option<ModuleRef>,
-}
-impl Drop for WorkerContext {
-    fn drop(&mut self) {
-        ACTIVE_WORKERS.fetch_sub(1, Ordering::AcqRel);
-    }
+    action: Box<dyn FnOnce() + Send>,
+    active_worker_guard: ActiveWorkerGuard,
+    dll_ref: DllRef,
 }
 
-pub fn spawn(name: PCWSTR, action: impl FnOnce() + Send + 'static) -> windows::core::Result<()> {
-    let module = ModuleRef::acquire()?;
-    let action = Box::new(action);
-    ACTIVE_WORKERS.fetch_add(1, Ordering::AcqRel);
-    let start = Box::into_raw(Box::new(WorkerContext {
-        action: Some(action),
-        module: Some(module),
+pub fn spawn(name: &str, action: impl FnOnce() + Send + 'static) -> windows::core::Result<()> {
+    let worker_context_ptr = Box::into_raw(Box::new(WorkerContext {
+        action: Box::new(action),
+        active_worker_guard: ActiveWorkerGuard::enter(),
+        dll_ref: DllRef::acquire()?,
     }));
-    let result = unsafe {
+    let create_result = unsafe {
         CreateThread(
             None,
             0,
-            Some(entry),
-            Some(start.cast()),
+            Some(thread_entry),
+            Some(worker_context_ptr.cast()),
             THREAD_CREATION_FLAGS(0),
             None,
         )
     };
-    match result {
-        Ok(thread) => unsafe {
-            // Available since Windows 10 1607, below the existing 1803 minimum.
-            let _ = SetThreadDescription(thread, name);
-            let _ = CloseHandle(thread); // Detach; cleanup belongs to the worker.
-            Ok(())
-        },
-        Err(error) => {
-            unsafe {
-                drop(Box::from_raw(start));
-            }
-            Err(error)
-        }
+    let thread = create_result.inspect_err(|_| unsafe {
+        drop(Box::from_raw(worker_context_ptr));
+    })?;
+    unsafe {
+        let name = HSTRING::from(name);
+        let _ = SetThreadDescription(thread, &name);
+        let _ = CloseHandle(thread); // Detach; cleanup belongs to the worker.
     }
+    Ok(())
 }
 
-unsafe extern "system" fn entry(raw: *mut c_void) -> u32 {
-    let mut start = unsafe { Box::from_raw(raw.cast::<WorkerContext>()) };
-    let action = start
-        .action
-        .take()
-        .expect("UNREACHABLE: worker context should contain an action");
-    if catch_unwind(AssertUnwindSafe(action)).is_err() {
-        etw::apo_log!(etw::ERROR, etw::LIFECYCLE, "APO background worker panicked");
+unsafe extern "system" fn thread_entry(raw_worker_context_ptr: *mut c_void) -> u32 {
+    let WorkerContext {
+        action,
+        active_worker_guard,
+        dll_ref,
+    } = unsafe { *Box::from_raw(raw_worker_context_ptr.cast::<WorkerContext>()) };
+    {
+        let action_result = catch_unwind(AssertUnwindSafe(action));
+        if action_result.is_err() {
+            etw::apo_log!(etw::ERROR, etw::LIFECYCLE, "APO background worker panicked");
+        }
     }
-    let module = start
-        .module
-        .take()
-        .expect("UNREACHABLE: worker context should contain a DLL reference")
-        .into_raw();
-    // All Rust values, buffers and counters are destroyed first.
-    drop(start);
-    // Clean up ETW too if the host already released its loader reference and
-    // this worker is now the last owner. COM hosts otherwise do this themselves.
+    let dll_ref_handle = dll_ref.into_raw();
+    // Stop counting this worker before checking whether the DLL is idle.
+    drop(active_worker_guard);
+    // Unregister ETW if no COM references or active workers remain.
     let _ = super::DllCanUnloadNow();
-    // Use a native thread rather than std::thread's trampoline: ExitThread must
-    // not bypass the Rust join packet or leave any Rust destructors pending.
-    unsafe { FreeLibraryAndExitThread(module, 0) }
+    // Release the DLL reference and exit without returning to DLL code.
+    unsafe { FreeLibraryAndExitThread(dll_ref_handle, 0) }
 }
