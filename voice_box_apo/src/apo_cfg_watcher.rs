@@ -202,7 +202,7 @@ impl ApoCfgWatcher {
         let config = config.as_ref();
 
         let mut monitor = DirectoryMonitor::new();
-        let mut reload_retry = RetryState::new("configuration reload");
+        let mut reload_faulted = false;
         let mut reload_at = Some(Instant::now());
         loop {
             let deadline = reload_at.map_or(monitor.reopen_at, |at| at.min(monitor.reopen_at));
@@ -222,16 +222,15 @@ impl ApoCfgWatcher {
                     }
                     Err(error) => {
                         monitor.failed(&error);
-                        false
+                        true
                     }
                 };
-            if should_reload {
-                reload_at = Some(Instant::now());
-            }
 
-            // Maintenance runs after every wake, including unrelated directory notifications.
-            // Its deadline is independent of configuration read failures and file traffic.
-            if monitor.reopen_if_due(directory) {
+            // Run maintenance first so short-circuiting cannot skip it.
+            if monitor.reopen_if_due(directory)
+                || should_reload
+                || (monitor.event().is_none() && reload_at.is_none())
+            {
                 // Subscribe before reading so a concurrent replacement is not lost.
                 reload_at = Some(Instant::now());
             }
@@ -240,14 +239,19 @@ impl ApoCfgWatcher {
                 match ApoCfg::read() {
                     Ok(cfg) => {
                         config.store(cfg);
-                        reload_retry.recovered();
-                        reload_at = None;
+                        log_status_change(&mut reload_faulted, "configuration reload", None);
                     }
                     Err(error) => {
-                        // Keep the last published configuration; retry even without a watch.
-                        reload_at = Some(Instant::now() + reload_retry.failed(&error.into()));
+                        log_status_change(
+                            &mut reload_faulted,
+                            "configuration reload",
+                            Some(&error),
+                        );
                     }
                 }
+                // Keep the last configuration and poll while reading or watching is unavailable.
+                reload_at = (reload_faulted || monitor.event().is_none())
+                    .then(|| Instant::now() + RETRY_INTERVAL);
             }
         }
     }
@@ -403,54 +407,29 @@ fn notifications_require_reload(mut bytes: &[u8], file_name: &[u16]) -> bool {
     }
 }
 
-const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
-const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
+const RETRY_INTERVAL: Duration = Duration::from_millis(500);
 const WATCH_REOPEN_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Each operation has its own backoff and diagnostic state.
-struct RetryState {
-    operation: &'static str,
-    next_delay: Duration,
-    faulted: bool,
-}
-
-impl RetryState {
-    fn new(operation: &'static str) -> Self {
-        Self {
-            operation,
-            next_delay: INITIAL_RETRY_DELAY,
-            faulted: false,
-        }
+fn log_status_change(faulted: &mut bool, operation: &str, error: Option<&dyn std::fmt::Display>) {
+    if *faulted == error.is_some() {
+        return;
     }
-
-    fn failed(&mut self, error: &anyhow::Error) -> Duration {
-        if !self.faulted {
-            etw::apo_log!(
-                etw::WARNING,
-                etw::APO_CFG,
-                "APO {} failed; will retry: {error:#}",
-                self.operation
-            );
-            self.faulted = true;
-        }
-        let delay = self.next_delay;
-        self.next_delay = (delay * 2).min(MAX_RETRY_DELAY);
-        delay
-    }
-
-    fn recovered(&mut self) {
-        if self.faulted {
-            etw::apo_log!(etw::INFO, etw::APO_CFG, "APO {} recovered", self.operation);
-            self.faulted = false;
-        }
-        self.next_delay = INITIAL_RETRY_DELAY;
+    *faulted = error.is_some();
+    if let Some(error) = error {
+        etw::apo_log!(
+            etw::WARNING,
+            etw::APO_CFG,
+            "APO {operation} failed; will retry: {error:#}"
+        );
+    } else {
+        etw::apo_log!(etw::INFO, etw::APO_CFG, "APO {operation} recovered");
     }
 }
 
 /// Keeps recovery state alive while individual directory watches are replaced.
 struct DirectoryMonitor {
     watch: Option<DirectoryWatch>,
-    retry: RetryState,
+    faulted: bool,
     reopen_at: Instant,
 }
 
@@ -458,7 +437,7 @@ impl DirectoryMonitor {
     fn new() -> Self {
         Self {
             watch: None,
-            retry: RetryState::new("configuration directory watcher"),
+            faulted: false,
             reopen_at: Instant::now(),
         }
     }
@@ -468,9 +447,13 @@ impl DirectoryMonitor {
     }
 
     fn failed(&mut self, error: &anyhow::Error) {
-        // All directory failures share a backoff, including wait and completion errors.
         self.watch = None;
-        self.reopen_at = Instant::now() + self.retry.failed(error);
+        self.reopen_at = Instant::now() + RETRY_INTERVAL;
+        log_status_change(
+            &mut self.faulted,
+            "configuration directory watcher",
+            Some(error),
+        );
     }
 
     fn process_notifications(&mut self, inspect: impl FnOnce(&[u8]) -> bool) -> bool {
@@ -481,12 +464,12 @@ impl DirectoryMonitor {
             .process_notifications(inspect);
         match reload_decision {
             Ok(should_reload) => {
-                self.retry.recovered();
+                log_status_change(&mut self.faulted, "configuration directory watcher", None);
                 should_reload
             }
             Err(error) => {
                 self.failed(&error);
-                false
+                true
             }
         }
     }
@@ -502,10 +485,10 @@ impl DirectoryMonitor {
             Ok(opened) => {
                 self.watch = Some(opened);
                 self.reopen_at = Instant::now() + WATCH_REOPEN_INTERVAL;
-                // Opening alone must not reset repeated immediate completion failures.
+                // Opening alone does not prove notifications are working.
                 // Surviving a full maintenance interval is also evidence of recovery.
                 if was_watching {
-                    self.retry.recovered();
+                    log_status_change(&mut self.faulted, "configuration directory watcher", None);
                 }
                 true
             }
