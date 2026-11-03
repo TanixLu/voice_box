@@ -14,7 +14,7 @@ use windows::{
     Win32::{
         Foundation::{
             CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_NOTIFY_ENUM_DIR, HANDLE,
-            WAIT_OBJECT_0, WAIT_TIMEOUT,
+            WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
         },
         Storage::FileSystem::{
             CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OVERLAPPED, FILE_LIST_DIRECTORY,
@@ -26,7 +26,6 @@ use windows::{
             IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED},
             Threading::{
                 CreateEventW, GetCurrentProcess, ResetEvent, SetEvent, WaitForMultipleObjects,
-                WaitForSingleObject,
             },
         },
     },
@@ -261,7 +260,7 @@ impl DirectoryWatch {
         self.pending = true;
         Ok(())
     }
-    fn config_changed(&mut self) -> anyhow::Result<bool> {
+    fn process_notifications(&mut self) -> anyhow::Result<bool> {
         let mut bytes = 0;
         let result = unsafe {
             GetOverlappedResult(self.directory, self.overlapped.as_ref(), &mut bytes, true)
@@ -275,7 +274,7 @@ impl DirectoryWatch {
                 let notifications = unsafe {
                     std::slice::from_raw_parts(self.buffer.as_ptr().cast(), bytes as usize)
                 };
-                should_reload_config(notifications, &self.file_name)
+                notifications_require_reload(notifications, &self.file_name)
             }
             // Lost notification details: reload once to avoid missing a configuration change.
             Err(error) if error.code() == ERROR_NOTIFY_ENUM_DIR.to_hresult() => true,
@@ -301,7 +300,7 @@ impl Drop for DirectoryWatch {
     }
 }
 
-fn should_reload_config(mut bytes: &[u8], file_name: &[u16]) -> bool {
+fn notifications_require_reload(mut bytes: &[u8], file_name: &[u16]) -> bool {
     // Empty buffers indicate overflow. Invalid records also warrant a conservative reload.
     loop {
         if bytes.len() < 12 {
@@ -338,31 +337,88 @@ fn should_reload_config(mut bytes: &[u8], file_name: &[u16]) -> bool {
     }
 }
 
-fn report_fault(faulted: &mut bool, error: &anyhow::Error) {
-    if !*faulted {
-        etw::apo_log!(
-            etw::WARNING,
-            etw::APO_CFG,
-            "APO configuration file watcher will retry; retaining last valid APO configuration: {error:#}"
-        );
-        *faulted = true;
+const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
+const WATCH_REOPEN_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Each operation has its own backoff and diagnostic state.
+struct RetryState {
+    operation: &'static str,
+    next_delay: Duration,
+    faulted: bool,
+}
+
+impl RetryState {
+    fn new(operation: &'static str) -> Self {
+        Self {
+            operation,
+            next_delay: INITIAL_RETRY_DELAY,
+            faulted: false,
+        }
+    }
+
+    fn failed(&mut self, error: &anyhow::Error) -> Duration {
+        if !self.faulted {
+            etw::apo_log!(
+                etw::WARNING,
+                etw::APO_CFG,
+                "APO {} failed; will retry: {error:#}",
+                self.operation
+            );
+            self.faulted = true;
+        }
+        let delay = self.next_delay;
+        self.next_delay = (delay * 2).min(MAX_RETRY_DELAY);
+        delay
+    }
+
+    fn recovered(&mut self) {
+        if self.faulted {
+            etw::apo_log!(etw::INFO, etw::APO_CFG, "APO {} recovered", self.operation);
+            self.faulted = false;
+        }
+        self.next_delay = INITIAL_RETRY_DELAY;
     }
 }
 
-fn reload(config: &RtConfig, faulted: &mut bool) {
-    match ApoCfg::read() {
-        Ok(cfg) => {
-            config.store(cfg);
-            if *faulted {
-                etw::apo_log!(
-                    etw::INFO,
-                    etw::APO_CFG,
-                    "APO configuration file watcher recovered"
-                );
-                *faulted = false;
-            }
-        }
-        Err(error) => report_fault(faulted, &error.into()),
+#[derive(Debug, PartialEq, Eq)]
+enum WakeReason {
+    Stop,
+    DirectoryChanged,
+    Deadline,
+}
+
+fn wait_for_watch_or_stop(
+    stop: &Event,
+    directory_changed: Option<&Event>,
+    deadline: Instant,
+) -> anyhow::Result<WakeReason> {
+    let mut handles = [stop.handle(), HANDLE::default()];
+    let handles = if let Some(event) = directory_changed {
+        handles[1] = event.handle();
+        &handles[..]
+    } else {
+        &handles[..1]
+    };
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    let timeout = if remaining.is_zero() {
+        0
+    } else {
+        // Avoid rounding a positive duration down to a poll, or up to INFINITE.
+        remaining.as_millis().clamp(1, (u32::MAX - 1) as u128) as u32
+    };
+    // Poll even at an expired deadline so a simultaneous stop takes precedence.
+    let result = unsafe { WaitForMultipleObjects(handles, false, timeout) };
+    if result == WAIT_FAILED {
+        Err(std::io::Error::last_os_error().into())
+    } else if result == WAIT_OBJECT_0 {
+        Ok(WakeReason::Stop)
+    } else if directory_changed.is_some() && result.0 == WAIT_OBJECT_0.0 + 1 {
+        Ok(WakeReason::DirectoryChanged)
+    } else if result == WAIT_TIMEOUT {
+        Ok(WakeReason::Deadline)
+    } else {
+        anyhow::bail!("Unexpected APO configuration wait result: {result:?}")
     }
 }
 
@@ -371,81 +427,85 @@ fn watch(stop: Arc<Event>, config: Arc<RtConfig>) {
     let config = config.as_ref();
 
     let mut watch: Option<DirectoryWatch> = None;
-    let mut retry_ms = 250;
-    let mut faulted = false;
-    let mut check_at = Instant::now();
+    let mut watch_retry = RetryState::new("configuration directory watcher");
+    let mut reload_retry = RetryState::new("configuration reload");
+    let mut reopen_at = Instant::now();
+    let mut reload_at = Some(reopen_at);
     loop {
-        if unsafe { WaitForSingleObject(stop.handle(), 0) } == WAIT_OBJECT_0 {
-            break;
+        let deadline = reload_at.map_or(reopen_at, |at| at.min(reopen_at));
+        let reload_decision = match wait_for_watch_or_stop(
+            stop,
+            watch.as_ref().map(|watch| &watch.event),
+            deadline,
+        ) {
+            Ok(WakeReason::Stop) => break,
+            Ok(WakeReason::DirectoryChanged) => {
+                let reload_decision = watch
+                    .as_mut()
+                    .expect("UNREACHABLE: directory event requires an active watch")
+                    .process_notifications();
+                if reload_decision.is_ok() {
+                    watch_retry.recovered();
+                }
+                reload_decision
+            }
+            Ok(WakeReason::Deadline) => Ok(false),
+            Err(error) if watch.is_none() => {
+                // Only the stop event was being waited on; reopening the directory cannot help.
+                etw::apo_log!(
+                    etw::ERROR,
+                    etw::APO_CFG,
+                    "APO configuration stop event wait failed; watcher exiting: {error:#}"
+                );
+                break;
+            }
+            Err(error) => Err(error),
+        };
+        match reload_decision {
+            Ok(true) => reload_at = Some(Instant::now()),
+            Ok(false) => {}
+            Err(error) => {
+                // All directory failures share the same backoff, including completion errors.
+                watch = None;
+                reopen_at = Instant::now() + watch_retry.failed(&error);
+            }
         }
-        if watch.is_none() {
+
+        // Maintenance runs after every wake, including unrelated directory notifications.
+        // Its deadline is independent of configuration read failures and file traffic.
+        if Instant::now() >= reopen_at {
+            let was_watching = watch.is_some();
+            watch = None;
             match DirectoryWatch::open() {
                 Ok(opened) => {
                     // Subscribe before reading so a concurrent replacement is not lost.
                     watch = Some(opened);
-                    reload(config, &mut faulted);
-                    retry_ms = 250;
-                    check_at = Instant::now()
-                        + Duration::from_millis(if faulted { retry_ms.into() } else { 30_000 });
-                }
-                Err(error) => {
-                    report_fault(&mut faulted, &error);
-                    if unsafe { WaitForSingleObject(stop.handle(), retry_ms) } == WAIT_OBJECT_0 {
-                        break;
+                    reopen_at = Instant::now() + WATCH_REOPEN_INTERVAL;
+                    reload_at = Some(Instant::now());
+                    // Opening alone must not reset repeated immediate completion failures.
+                    // Surviving a full maintenance interval is also evidence of recovery.
+                    if was_watching {
+                        watch_retry.recovered();
                     }
-                    retry_ms = (retry_ms * 2).min(5_000);
-                    continue;
                 }
-            }
-        }
-        let current = watch
-            .as_mut()
-            .expect("UNREACHABLE: directory subscription should exist");
-        let events = [stop.handle(), current.event.handle()];
-        // Directory notifications handle writes and atomic replacements. A slow
-        // health check also recovers if the whole directory is deleted/recreated.
-        // Unrelated traffic must not postpone retries or the directory health check.
-        let remaining = check_at.saturating_duration_since(Instant::now());
-        let result = if remaining.is_zero() {
-            WAIT_TIMEOUT
-        } else {
-            unsafe { WaitForMultipleObjects(&events, false, remaining.as_millis().max(1) as u32) }
-        };
-        if result == WAIT_OBJECT_0 {
-            break;
-        }
-        if result.0 == WAIT_OBJECT_0.0 + 1 {
-            match current.config_changed() {
-                Ok(true) => reload(config, &mut faulted),
-                Ok(false) => continue,
                 Err(error) => {
-                    report_fault(&mut faulted, &error);
-                    watch = None;
-                    continue;
+                    reopen_at = Instant::now() + watch_retry.failed(&error);
                 }
             }
-        } else if result == WAIT_TIMEOUT {
-            if faulted {
-                reload(config, &mut faulted);
-            } else {
-                watch = None;
-            }
-        } else {
-            report_fault(
-                &mut faulted,
-                &anyhow::anyhow!("APO configuration directory wait failed: {result:?}"),
-            );
-            watch = None;
-            if unsafe { WaitForSingleObject(stop.handle(), retry_ms) } == WAIT_OBJECT_0 {
-                break;
+        }
+
+        if reload_at.is_some_and(|at| Instant::now() >= at) {
+            match ApoCfg::read() {
+                Ok(cfg) => {
+                    config.store(cfg);
+                    reload_retry.recovered();
+                    reload_at = None;
+                }
+                Err(error) => {
+                    // Keep the last published configuration; retry even without a watch.
+                    reload_at = Some(Instant::now() + reload_retry.failed(&error.into()));
+                }
             }
         }
-        retry_ms = if faulted {
-            (retry_ms * 2).min(5_000)
-        } else {
-            250
-        };
-        check_at =
-            Instant::now() + Duration::from_millis(if faulted { retry_ms.into() } else { 30_000 });
     }
 }
