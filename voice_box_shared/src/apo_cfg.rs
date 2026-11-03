@@ -51,14 +51,15 @@ impl ApoCfg {
         std::fs::File::open(apo_cfg_path())?
             .take((Self::MAX_CFG_BYTES + 1) as u64)
             .read_to_end(&mut bytes)?;
-        let bytes = &bytes[..];
-        let mut cfg = Self::default();
         if bytes.len() > Self::MAX_CFG_BYTES {
-            return Ok(cfg);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "The VoiceBox APO configuration file is too large",
+            ));
         }
-        let Ok(text) = std::str::from_utf8(bytes) else {
-            return Ok(cfg);
-        };
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let mut cfg = Self::default();
         for line in text.split_inclusive('\n') {
             let entry = line.trim();
             if entry.chars().any(|c| c.is_control() && c != '\t') {
