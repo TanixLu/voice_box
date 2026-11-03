@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow.workspace = true
-ul_unas_rs = "0.1.1"
+ul_unas_rs = "0.1.2"
 voice_box_shared.workspace = true
 windows = { workspace = true, features = [
     "Win32_Foundation",

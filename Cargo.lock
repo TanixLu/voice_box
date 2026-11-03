@@ -3456,9 +3456,9 @@ dependencies = [
 
 [[package]]
 name = "ul_unas_rs"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "699ab888e70bb3ac965d56483d33756371dd37dec1142f63ddb6eff9529cdda0"
+checksum = "7af6ec5ed4d6c76855dd62e7a862f251a09d8e77b55f5c8495cfe12554af8217"
 
 [[package]]
 name = "unicode-general-category"
