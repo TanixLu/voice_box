@@ -2,7 +2,7 @@
 
 # VoiceBox
 
-VoiceBox游戏语音助手，正在开发中。。。
+VoiceBox是一款Windows麦克风助手，正在开发中。。。
 
 ## 开源协议
 
