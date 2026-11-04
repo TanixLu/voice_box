@@ -9,7 +9,7 @@ use std::{
         Arc,
         atomic::{
             AtomicBool, AtomicU64,
-            Ordering::{Acquire, Release},
+            Ordering::{Acquire, Relaxed, Release},
         },
     },
     time::Duration,
@@ -192,10 +192,10 @@ impl Injection {
             self.position = now as f64;
         }
         let live = generation != 0 && now < self.state.deadline.load(Acquire);
-        let gain_percent = GainPercent::from_u64_bits(self.state.gain_percent.load(Acquire));
+        let gain_percent = GainPercent::from_u64_bits(self.state.gain_percent.load(Relaxed));
         let gain = gain_percent.as_f32_gain();
         let mute_microphone =
-            live && !gain_percent.is_zero() && !self.state.include_microphone.load(Acquire);
+            live && !gain_percent.is_zero() && !self.state.include_microphone.load(Relaxed);
         let bytes = self.format.bytes();
         let mut values = [0.0_f32; MAX_CHANNELS];
         for frame in buffer.chunks_exact_mut(bytes * self.channels) {
@@ -251,7 +251,7 @@ impl Injection {
 }
 impl Drop for Injection {
     fn drop(&mut self) {
-        self.stop.store(true, Release);
+        self.stop.store(true, Relaxed);
     }
 }
 
@@ -260,7 +260,7 @@ fn receive(path: PathBuf, state: &Resident, stop: &AtomicBool, clock: Clock) {
     let mut retry_at = 0;
     let mut cursor = 0;
     let mut previous = 0;
-    while !stop.load(Acquire) {
+    while !stop.load(Relaxed) {
         let now = clock.frame();
         if mapping.is_none() && now >= retry_at {
             mapping = Mapping::open(&path, false).ok();
@@ -270,7 +270,7 @@ fn receive(path: PathBuf, state: &Resident, stop: &AtomicBool, clock: Clock) {
         if let Some(mapping) = &mapping {
             let (generation, end, gain_percent, include_microphone) = mapping.status(now);
             if generation != previous || cursor < now.saturating_sub(480) {
-                state.generation.store(0, Release);
+                state.generation.store(0, Relaxed);
                 cursor = now.saturating_sub(480);
             }
             if generation != 0 && !gain_percent.is_zero() {
@@ -285,8 +285,9 @@ fn receive(path: PathBuf, state: &Resident, stop: &AtomicBool, clock: Clock) {
             }
             state
                 .gain_percent
-                .store(gain_percent.to_u64_bits(), Release);
-            state.include_microphone.store(include_microphone, Release);
+                .store(gain_percent.to_u64_bits(), Relaxed);
+            state.include_microphone.store(include_microphone, Relaxed);
+            // Deadline and generation publish the copied frames and scalar metadata.
             state.deadline.store(
                 if generation == 0 {
                     0

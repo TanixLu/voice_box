@@ -90,6 +90,8 @@ struct ApoCom {
 // Non-real-time control operations are serialized. Access to UnsafeCell is exclusive
 // through DspAccess, which never waits on the processing thread. Reset only posts
 // a request that the next processing pass consumes while it owns the DSP.
+// control_guard and DspAccess publish ordinary fields; the remaining atomic
+// flags and scalar properties do not publish additional data.
 unsafe impl Sync for ApoCom {}
 
 struct DspAccess<'a>(&'a AtomicBool);
@@ -252,7 +254,7 @@ unsafe extern "system" fn inner_release(this: *mut c_void) -> u32 {
     let refs = unsafe { (*object).inner_refs.fetch_sub(1, Ordering::Release) - 1 };
     if refs == 0 {
         fence(Ordering::Acquire);
-        let live_objects = LIVE_OBJECTS.load(Ordering::Acquire);
+        let live_objects = LIVE_OBJECTS.load(Ordering::Relaxed);
         apo_log!(
             etw::INFO,
             etw::LIFECYCLE,
@@ -264,7 +266,8 @@ unsafe extern "system" fn inner_release(this: *mut c_void) -> u32 {
         );
         unsafe { drop(Box::from_raw(object)) };
         // Detached workers retain their own DLL references through final cleanup.
-        LIVE_OBJECTS.fetch_sub(1, Ordering::AcqRel);
+        // Publish completed destruction to DllCanUnloadNow's Acquire load.
+        LIVE_OBJECTS.fetch_sub(1, Ordering::Release);
     }
     refs
 }
@@ -379,6 +382,6 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
     } else {
         outer
     };
-    LIVE_OBJECTS.fetch_add(1, Ordering::Release);
+    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
     Ok(raw)
 }

@@ -26,7 +26,7 @@ use crate::{
 
 pub unsafe extern "system" fn reset(this: *mut c_void) -> HRESULT {
     let object = unsafe { object_from(this) };
-    unsafe { (*object).reset_requested.store(true, Ordering::Release) };
+    unsafe { (*object).reset_requested.store(true, Ordering::Relaxed) };
     S_OK
 }
 
@@ -35,7 +35,7 @@ pub unsafe extern "system" fn get_latency(this: *mut c_void, latency: *mut i64) 
         return E_POINTER;
     }
     let object = unsafe { object_from(this) };
-    unsafe { *latency = (*object).latency_hns.load(Ordering::Acquire) };
+    unsafe { *latency = (*object).latency_hns.load(Ordering::Relaxed) };
     S_OK
 }
 
@@ -63,7 +63,7 @@ pub unsafe extern "system" fn lock_for_process(
     outputs: *const *const APO_CONNECTION_DESCRIPTOR,
 ) -> HRESULT {
     let object = unsafe { object_from(this) };
-    if !unsafe { (*object).initialized.load(Ordering::Acquire) } {
+    if !unsafe { (*object).initialized.load(Ordering::Relaxed) } {
         return log_lock_failure(
             object,
             input_count,
@@ -153,7 +153,7 @@ pub unsafe extern "system" fn lock_for_process(
     }
     let _control =
         unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
-    if unsafe { (*object).discovery_only.load(Ordering::Acquire) } {
+    if unsafe { (*object).discovery_only.load(Ordering::Relaxed) } {
         return log_lock_failure(
             object,
             input_count,
@@ -162,7 +162,7 @@ pub unsafe extern "system" fn lock_for_process(
             APOERR_NOT_INITIALIZED,
         );
     }
-    if unsafe { (*object).locked.load(Ordering::Acquire) } {
+    if unsafe { (*object).locked.load(Ordering::Relaxed) } {
         return log_lock_failure(
             object,
             input_count,
@@ -238,7 +238,7 @@ pub unsafe extern "system" fn lock_for_process(
             sample_format,
             input_format.dwSamplesPerFrame as usize,
             f64::from(input_format.fFramesPerSecond),
-            (*object).effect_enabled.load(Ordering::Acquire),
+            (*object).effect_enabled.load(Ordering::Relaxed),
             true,
         )
     } {
@@ -256,7 +256,7 @@ pub unsafe extern "system" fn lock_for_process(
         }
         *(*object).injection.get() = None;
         (*object).injection_stop = None;
-        if (*object).effect_enabled.load(Ordering::Acquire)
+        if (*object).effect_enabled.load(Ordering::Relaxed)
             && let Some(path) = (*object).soundboard_path.clone()
         {
             match crate::soundboard::Injection::start(
@@ -278,10 +278,10 @@ pub unsafe extern "system" fn lock_for_process(
         }
         (*object)
             .latency_hns
-            .store((&*(*object).dsp.get()).latency_hns(), Ordering::Release);
+            .store((&*(*object).dsp.get()).latency_hns(), Ordering::Relaxed);
         (*object)
             .input_channels
-            .store(input_format.dwSamplesPerFrame, Ordering::Release);
+            .store(input_format.dwSamplesPerFrame, Ordering::Relaxed);
         (*object).process_calls.store(0, Ordering::Relaxed);
         (*object).processed_frames.store(0, Ordering::Relaxed);
         (*object)
@@ -290,8 +290,8 @@ pub unsafe extern "system" fn lock_for_process(
         (*object)
             .max_output_frames
             .store(max_output_frames, Ordering::Relaxed);
-        (*object).reset_requested.store(false, Ordering::Release);
-        (*object).locked.store(true, Ordering::Release);
+        (*object).reset_requested.store(false, Ordering::Relaxed);
+        (*object).locked.store(true, Ordering::Relaxed);
     }
     apo_log!(
         etw::INFO,
@@ -301,7 +301,7 @@ pub unsafe extern "system" fn lock_for_process(
         unsafe { (**outputs).u32MaxFrameCount },
         input_format.dwSamplesPerFrame,
         unsafe { (*object).config.load().denoising_enabled },
-        unsafe { (*object).latency_hns.load(Ordering::Acquire) },
+        unsafe { (*object).latency_hns.load(Ordering::Relaxed) },
     );
     S_OK
 }
@@ -310,11 +310,11 @@ pub unsafe extern "system" fn unlock_for_process(this: *mut c_void) -> HRESULT {
     let object = unsafe { object_from(this) };
     let _control =
         unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
-    if !unsafe { (*object).locked.swap(false, Ordering::AcqRel) } {
+    if !unsafe { (*object).locked.swap(false, Ordering::Relaxed) } {
         return APOERR_ALREADY_UNLOCKED;
     }
     if let Some(stop) = unsafe { &(*object).injection_stop } {
-        stop.store(true, Ordering::Release);
+        stop.store(true, Ordering::Relaxed);
     }
     // Unlock is non-RT. Normally no callback remains; if one is still exiting,
     // retain its storage until the next prepare or final destruction.
@@ -358,7 +358,8 @@ pub unsafe extern "system" fn process(
     let Some(_dsp_access) = (unsafe { DspAccess::try_acquire(&(*object).dsp_in_use) }) else {
         return;
     };
-    if !unsafe { (*object).locked.load(Ordering::Acquire) } {
+    // DspAccess acquired the state prepared by the previous DSP owner.
+    if !unsafe { (*object).locked.load(Ordering::Relaxed) } {
         return;
     }
     if input.u32ValidFrameCount > unsafe { (*object).max_input_frames.load(Ordering::Relaxed) }
@@ -391,11 +392,11 @@ pub unsafe extern "system" fn process(
     } else {
         return;
     }
-    if unsafe { (*object).reset_requested.swap(false, Ordering::AcqRel) } {
+    if unsafe { (*object).reset_requested.swap(false, Ordering::Relaxed) } {
         unsafe { (&mut *(*object).dsp.get()).reset() };
     }
     let mut output_flags = input.u32BufferFlags;
-    if unsafe { (*object).effect_enabled.load(Ordering::Acquire) } {
+    if unsafe { (*object).effect_enabled.load(Ordering::Relaxed) } {
         let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
         let config = unsafe { &(*object).config };
         let apo_config = config.load();

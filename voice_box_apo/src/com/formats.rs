@@ -55,11 +55,11 @@ unsafe fn negotiate_format(
     {
         let _control = unsafe { (*object).control_guard.lock() }
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !unsafe { (*object).locked.load(Ordering::Acquire) } {
+        if !unsafe { (*object).locked.load(Ordering::Relaxed) } {
             unsafe {
                 (*object)
                     .input_channels
-                    .store(format.dwSamplesPerFrame, Ordering::Release)
+                    .store(format.dwSamplesPerFrame, Ordering::Relaxed)
             };
         }
     }
@@ -202,7 +202,7 @@ pub unsafe extern "system" fn get_input_channel_count(
         return E_POINTER;
     }
     let object = unsafe { object_from(this) };
-    if !unsafe { (*object).initialized.load(Ordering::Acquire) } {
+    if !unsafe { (*object).initialized.load(Ordering::Relaxed) } {
         apo_log!(
             etw::ERROR,
             etw::FORMAT,
@@ -211,7 +211,7 @@ pub unsafe extern "system" fn get_input_channel_count(
         );
         return APOERR_NOT_INITIALIZED;
     }
-    let channels = unsafe { (*object).input_channels.load(Ordering::Acquire) };
+    let channels = unsafe { (*object).input_channels.load(Ordering::Relaxed) };
     if channels == 0 {
         apo_log!(
             etw::ERROR,

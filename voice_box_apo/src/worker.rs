@@ -31,13 +31,14 @@ pub fn get_active_worker_count() -> u32 {
 struct ActiveWorkerGuard;
 impl ActiveWorkerGuard {
     pub fn enter() -> Self {
-        let _ = ACTIVE_WORKER_COUNT.fetch_add(1, Ordering::AcqRel);
+        let _ = ACTIVE_WORKER_COUNT.fetch_add(1, Ordering::Relaxed);
         Self
     }
 }
 impl Drop for ActiveWorkerGuard {
     fn drop(&mut self) {
-        let _ = ACTIVE_WORKER_COUNT.fetch_sub(1, Ordering::AcqRel);
+        // Publish completed worker cleanup to the unload check.
+        let _ = ACTIVE_WORKER_COUNT.fetch_sub(1, Ordering::Release);
     }
 }
 

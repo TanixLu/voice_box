@@ -6,7 +6,10 @@ use std::{
     mem::size_of,
     os::windows::io::AsRawHandle,
     path::Path,
-    sync::atomic::{AtomicU64, Ordering::SeqCst},
+    sync::atomic::{
+        AtomicU64,
+        Ordering::{Acquire, Relaxed, Release},
+    },
 };
 
 use anyhow::ensure;
@@ -91,19 +94,25 @@ pub struct Slot {
     stereo: AtomicU64,
 }
 impl Slot {
+    // Each slot has one writer. Tags must not be reused while a reader could
+    // still be validating an earlier write with the same tag.
     pub fn write(&self, frame: u64, generation: u64, samples: [f32; 2]) {
-        self.stamp.store(0, SeqCst);
+        self.stamp.store(0, Relaxed);
         let bits = u64::from(samples[0].to_bits()) | (u64::from(samples[1].to_bits()) << 32);
-        self.stereo.store(bits, SeqCst);
-        self.stamp.store(tag(frame, generation), SeqCst);
+        // Release the invalidation with the samples, so an overwritten payload
+        // cannot pass the reader's final check under the previous tag.
+        self.stereo.store(bits, Release);
+        self.stamp.store(tag(frame, generation), Release);
     }
     pub fn read(&self, frame: u64, generation: u64) -> [f32; 2] {
         let expected = tag(frame, generation);
-        if generation == 0 || self.stamp.load(SeqCst) != expected {
+        // Reading the tag acquires its samples; reading newer samples acquires
+        // their preceding stamp invalidation. Both edges are needed.
+        if generation == 0 || self.stamp.load(Acquire) != expected {
             return [0.0; 2];
         }
-        let bits = self.stereo.load(SeqCst);
-        if self.stamp.load(SeqCst) != expected {
+        let bits = self.stereo.load(Acquire);
+        if self.stamp.load(Relaxed) != expected {
             return [0.0; 2];
         }
         [
@@ -200,10 +209,10 @@ impl Mapping {
         };
         if writer {
             result.stop();
-            result.header().magic.store(MAGIC, SeqCst);
+            result.header().magic.store(MAGIC, Release);
         } else {
             ensure!(
-                result.header().magic.load(SeqCst) == MAGIC,
+                result.header().magic.load(Acquire) == MAGIC,
                 "Invalid playback buffer identifier"
             );
         }
@@ -239,30 +248,34 @@ impl Mapping {
     ) {
         self.header()
             .gain_percent
-            .store(gain_percent.to_u64_bits(), SeqCst);
-        self.header().end.store(end, SeqCst);
+            .store(gain_percent.to_u64_bits(), Relaxed);
+        self.header().end.store(end, Relaxed);
         self.header()
             .include_microphone
-            .store(include_microphone as u64, SeqCst);
-        self.header().heartbeat.store(now, SeqCst);
-        self.header().generation.store(generation, SeqCst);
+            .store(include_microphone as u64, Relaxed);
+        // Either publication point makes the preceding PCM and metadata visible.
+        self.header().heartbeat.store(now, Release);
+        self.header().generation.store(generation, Release);
     }
     pub fn status(&self, now: u64) -> (u64, u64, GainPercent, bool) {
         let h = self.header();
-        let heartbeat = h.heartbeat.load(SeqCst);
+        // Acquire publication before reading its scalar metadata. The fields can
+        // still span consecutive publications; this is not a coherent snapshot.
+        let generation = h.generation.load(Acquire);
+        let heartbeat = h.heartbeat.load(Acquire);
         if now.abs_diff(heartbeat) > u64::from(SAMPLE_RATE) / 2 {
             return (0, 0, GainPercent::ZERO, false);
         }
-        let gain_percent = GainPercent::from_u64_bits(h.gain_percent.load(SeqCst));
+        let gain_percent = GainPercent::from_u64_bits(h.gain_percent.load(Relaxed));
         (
-            h.generation.load(SeqCst),
-            h.end.load(SeqCst),
+            generation,
+            h.end.load(Relaxed),
             gain_percent,
-            h.include_microphone.load(SeqCst) != 0,
+            h.include_microphone.load(Relaxed) != 0,
         )
     }
     pub fn stop(&self) {
-        self.header().generation.store(0, SeqCst);
+        self.header().generation.store(0, Relaxed);
     }
 }
 

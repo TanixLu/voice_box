@@ -104,14 +104,15 @@ impl RtConfig {
     }
 
     pub fn load(&self) -> ApoCfg {
-        bits_to_apo_cfg(self.atomic_bits.load(Ordering::Acquire))
+        // The entire RT snapshot fits in one atomic; subscriptions use lock_slots.
+        bits_to_apo_cfg(self.atomic_bits.load(Ordering::Relaxed))
     }
     pub fn store(&self, apo_config: ApoCfg) {
         // Subscription plus its returned snapshot must be serialized with updates.
         let slots = self.lock_slots();
         let previous = self
             .atomic_bits
-            .swap(apo_cfg_to_bits(apo_config.clone()), Ordering::AcqRel);
+            .swap(apo_cfg_to_bits(apo_config.clone()), Ordering::Relaxed);
         let denoising_was_enabled = (previous & DENOISING_ENABLED_MASK) != 0;
         if denoising_was_enabled != apo_config.denoising_enabled {
             unsafe {

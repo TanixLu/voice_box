@@ -54,7 +54,7 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
     let object = unsafe { object_from(this) };
     let _control =
         unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
-    if unsafe { (*object).initialized.load(Ordering::Acquire) } {
+    if unsafe { (*object).initialized.load(Ordering::Relaxed) } {
         return APOERR_ALREADY_INITIALIZED;
     }
     if data.is_null() || (size as usize) < core::mem::size_of::<APOInitBaseStruct>() {
@@ -108,11 +108,11 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
         }
         (*object)
             .effect_enabled
-            .store(mode != AUDIO_SIGNALPROCESSINGMODE_RAW, Ordering::Release);
+            .store(mode != AUDIO_SIGNALPROCESSINGMODE_RAW, Ordering::Relaxed);
         (*object)
             .discovery_only
-            .store(discovery_only, Ordering::Release);
-        (*object).initialized.store(true, Ordering::Release);
+            .store(discovery_only, Ordering::Relaxed);
+        (*object).initialized.store(true, Ordering::Relaxed);
     }
     apo_log!(
         etw::INFO,
@@ -180,7 +180,7 @@ pub unsafe extern "system" fn get_effects_list(
         *count = 0;
     }
     let object = unsafe { object_from(this) };
-    let supports_effect = unsafe { (*object).effect_enabled.load(Ordering::Acquire) };
+    let supports_effect = unsafe { (*object).effect_enabled.load(Ordering::Relaxed) };
     // Allocate before subscribing so an allocation failure cannot replace the
     // caller's existing subscription. The returned snapshot and subscription
     // are synchronized even if Enabled changes while this call is running.
@@ -230,7 +230,7 @@ pub unsafe extern "system" fn get_controllable_effects_list(
         *count = 0;
     }
     let object = unsafe { object_from(this) };
-    let supports_effect = unsafe { (*object).effect_enabled.load(Ordering::Acquire) };
+    let supports_effect = unsafe { (*object).effect_enabled.load(Ordering::Relaxed) };
     let memory = if supports_effect {
         unsafe { CoTaskMemAlloc(core::mem::size_of::<AUDIO_SYSTEMEFFECT>()) }
             .cast::<AUDIO_SYSTEMEFFECT>()

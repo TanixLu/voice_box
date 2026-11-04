@@ -33,7 +33,7 @@ fn register() -> REGHANDLE {
     if unsafe { EventRegister(&PROVIDER, None, None, &mut handle) } != 0 || handle.0 == 0 {
         return REGHANDLE(0);
     }
-    match REGISTRATION.compare_exchange(0, handle.0, Ordering::AcqRel, Ordering::Acquire) {
+    match REGISTRATION.compare_exchange(0, handle.0, Ordering::Release, Ordering::Acquire) {
         Ok(_) => handle,
         Err(existing) => {
             unsafe { EventUnregister(handle) };
@@ -43,7 +43,7 @@ fn register() -> REGHANDLE {
 }
 
 pub fn unregister() {
-    let handle = REGISTRATION.swap(0, Ordering::AcqRel);
+    let handle = REGISTRATION.swap(0, Ordering::Acquire);
     if handle != 0 {
         unsafe { EventUnregister(REGHANDLE(handle)) };
     }
