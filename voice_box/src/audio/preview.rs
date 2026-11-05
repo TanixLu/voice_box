@@ -14,7 +14,10 @@ use windows::{
     core::{PCSTR, PCWSTR},
 };
 
-use voice_box_shared::{apo_cfg::ApoCfg, preview, utils::apo_dll_path, utils::wide_null};
+use voice_box_shared::{
+    apo_cfg::ApoCfg,
+    utils::{PREVIEW_PROCESS_SYMBOL, PreviewProcessFn, apo_dll_path, wide_null},
+};
 
 use crate::{
     audio::capture::Recording,
@@ -47,12 +50,12 @@ impl PreviewDll {
         Ok(Self(module))
     }
 
-    fn resolve_process_function(&self) -> anyhow::Result<preview::Process> {
-        let address = unsafe { GetProcAddress(self.0, PCSTR(preview::PROCESS_SYMBOL.as_ptr())) }
+    fn resolve_process_function(&self) -> anyhow::Result<PreviewProcessFn> {
+        let address = unsafe { GetProcAddress(self.0, PCSTR(PREVIEW_PROCESS_SYMBOL.as_ptr())) }
             .ok_or_else(|| anyhow!(Text::PreviewInterfaceMissing))?;
         // Matching DLL bytes above ensure this shared signature is compatible.
         Ok(unsafe {
-            std::mem::transmute::<unsafe extern "system" fn() -> isize, preview::Process>(address)
+            std::mem::transmute::<unsafe extern "system" fn() -> isize, PreviewProcessFn>(address)
         })
     }
 }

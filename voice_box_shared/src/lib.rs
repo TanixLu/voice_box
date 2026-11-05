@@ -3,6 +3,5 @@
 pub mod apo_cfg;
 pub mod audio;
 pub mod pcm_transport;
-pub mod preview;
 pub mod resample;
 pub mod utils;

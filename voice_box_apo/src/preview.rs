@@ -8,7 +8,7 @@ use windows_core::HRESULT;
 use voice_box_shared::{
     apo_cfg::{ApoCfg, GainDb},
     audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
-    preview,
+    utils::{PREVIEW_MAX_RECORD_SECONDS, PREVIEW_MAX_SAMPLES},
 };
 
 use crate::dsp::AudioProcessor;
@@ -40,8 +40,8 @@ pub unsafe extern "system" fn VoiceBoxPreviewProcess(
     if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&f64::from(sample_rate))
         || !(1..=MAX_CHANNELS).contains(&(channels as usize))
         || frames == 0
-        || frames > sample_rate * preview::MAX_RECORD_SECONDS
-        || samples > preview::MAX_SAMPLES
+        || frames > sample_rate * PREVIEW_MAX_RECORD_SECONDS
+        || samples > PREVIEW_MAX_SAMPLES
         || denoising > 1
     {
         return E_INVALIDARG;

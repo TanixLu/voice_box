@@ -25,7 +25,7 @@ use windows::Win32::{
     },
     UI::Shell::{FOLDERID_ProgramData, KF_FLAG_DEFAULT, SHGetKnownFolderPath},
 };
-use windows_core::{GUID, Interface as _, PCWSTR};
+use windows_core::{GUID, HRESULT, Interface as _, PCWSTR};
 
 #[macro_export]
 macro_rules! field_name {
@@ -40,6 +40,22 @@ macro_rules! field_name {
 pub const APO_CLSID: GUID = GUID::from_u128(0xae672075_b244_4417_b5a5_fbd45b7f0268);
 pub const APO_NAME: &str = "VoiceBox APO";
 pub const COPYRIGHT: &str = "Copyright (C) 2026 Tanix";
+
+pub const PREVIEW_PROCESS_SYMBOL: &[u8] = b"VoiceBoxPreviewProcess\0";
+pub const PREVIEW_MAX_RECORD_SECONDS: u32 = 60;
+pub const PREVIEW_MAX_SAMPLES: usize = 16 * 1024 * 1024;
+
+// The GUI and APO DLL share this signature. No Rust objects or allocations
+// cross the DLL boundary; input/output contain frames * channels samples.
+pub type PreviewProcessFn = unsafe extern "system" fn(
+    sample_rate: u32,
+    channels: u32,
+    frames: u32,
+    gain_db: i8,
+    denoising: u32,
+    input: *const f32,
+    output: *mut f32,
+) -> HRESULT;
 
 pub fn apo_registration_properties() -> APO_REG_PROPERTIES {
     let mut properties = APO_REG_PROPERTIES {

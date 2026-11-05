@@ -19,8 +19,7 @@ use windows::{
 
 use voice_box_shared::{
     audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
-    preview::{MAX_RECORD_SECONDS, MAX_SAMPLES},
-    utils::wide_null,
+    utils::{PREVIEW_MAX_RECORD_SECONDS, PREVIEW_MAX_SAMPLES, wide_null},
 };
 
 use crate::{
@@ -90,9 +89,9 @@ pub fn capture(
     );
     let stream = Stream::new(client, &format, false).user_context(Text::OpenRawCapture)?;
     let capture: IAudioCaptureClient = unsafe { stream.client.GetService()? };
-    let max_frames = (rate * MAX_RECORD_SECONDS) as usize;
-    let max_samples =
-        (max_frames * channels as usize).min(MAX_SAMPLES / channels as usize * channels as usize);
+    let max_frames = (rate * PREVIEW_MAX_RECORD_SECONDS) as usize;
+    let max_samples = (max_frames * channels as usize)
+        .min(PREVIEW_MAX_SAMPLES / channels as usize * channels as usize);
     let mut recording = Recording {
         sample_rate: rate,
         channels,
@@ -141,7 +140,7 @@ pub fn capture(
         }
         if stop.load(Ordering::Relaxed)
             || recording.samples.len() >= max_samples
-            || begin.elapsed() >= Duration::from_secs(u64::from(MAX_RECORD_SECONDS))
+            || begin.elapsed() >= Duration::from_secs(u64::from(PREVIEW_MAX_RECORD_SECONDS))
         {
             break;
         }
