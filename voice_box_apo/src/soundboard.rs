@@ -20,7 +20,7 @@ use windows::Win32::System::Memory::{
 
 use voice_box_shared::{
     apo_cfg::ApoCfg,
-    audio::{MAX_CHANNELS, SampleFormat},
+    audio::{MAX_CHANNELS, PeakLimiter, SampleFormat},
     pcm_transport::{PCM_SAMPLE_RATE, PcmReader, Slot, pcm_frame},
 };
 
@@ -146,8 +146,7 @@ pub struct Injection {
     step: f64,
     channels: usize,
     format: SampleFormat,
-    limiter_gain: f32,
-    release_step: f32,
+    limiter: PeakLimiter,
     stop: Arc<AtomicBool>,
 }
 impl Injection {
@@ -170,8 +169,7 @@ impl Injection {
             step: f64::from(PCM_SAMPLE_RATE) / rate,
             channels,
             format,
-            limiter_gain: 1.0,
-            release_step: (1.0 - (-1.0 / (rate * 0.05)).exp()) as f32,
+            limiter: PeakLimiter::new(rate),
             stop,
         })
     }
@@ -198,11 +196,6 @@ impl Injection {
                 [0.0; 2]
             };
             self.position += self.step;
-            // Preserve native bypass sample bytes exactly whenever the music and
-            // limiter tail are both absent. No extra delay is added to the mic.
-            if !mute_microphone && sound_samples == [0.0; 2] && self.limiter_gain == 1.0 {
-                continue;
-            }
             for (i, sample) in frame.chunks_exact(bytes).enumerate() {
                 let sound_sample = if self.channels == 1 {
                     (sound_samples[0] + sound_samples[1]) * 0.5
@@ -218,24 +211,11 @@ impl Injection {
                 };
                 values[i] = microphone + sound_sample;
             }
-            let peak = values[..self.channels]
-                .iter()
-                .fold(0.0_f32, |p, x| p.max(x.abs()));
-            let safe_gain = if peak > 0.891_250_9 {
-                0.891_250_9 / peak
-            } else {
-                1.0
-            };
-            // Linked-channel peak limiter: immediate attack, 50 ms release. The
-            // existing speech lookahead limiter remains intact before this mixer.
-            self.limiter_gain =
-                (self.limiter_gain + (1.0 - self.limiter_gain) * self.release_step).min(safe_gain);
-            if safe_gain == 1.0 && (1.0 - self.limiter_gain) < 1e-5 {
-                self.limiter_gain = 1.0;
-            }
+            // Always limit the mixed output, including microphone-only frames.
+            // The speech lookahead limiter remains in the enhancement chain before this.
+            self.limiter.process_frame(&mut values[..self.channels]);
             for (sample, &value) in frame.chunks_exact_mut(bytes).zip(&values[..self.channels]) {
-                self.format
-                    .encode(sample, f64::from(value * self.limiter_gain));
+                self.format.encode(sample, f64::from(value));
             }
         }
     }

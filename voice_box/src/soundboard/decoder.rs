@@ -10,8 +10,8 @@ use symphonia::core::{
 };
 
 use voice_box_shared::{
-    audio::{MAX_SAMPLE_RATE, MIN_SAMPLE_RATE},
-    pcm_transport::{PCM_SAMPLE_RATE, sanitize_sample},
+    audio::{MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, finite_sample},
+    pcm_transport::PCM_SAMPLE_RATE,
     resample::Resampler,
 };
 
@@ -94,7 +94,7 @@ impl SoundDecoder {
                 self.delay_frames_remaining -= 1;
             } else {
                 self.output
-                    .push_back([sanitize_sample(left), sanitize_sample(right)]);
+                    .push_back([finite_sample(left), finite_sample(right)]);
             }
         }
     }
@@ -149,9 +149,9 @@ impl SoundDecoder {
             audio.copy_to_slice_interleaved(&mut self.samples);
             self.input_frames += self.samples.len() / self.channels;
             for i in (0..self.samples.len()).step_by(self.channels) {
-                let l = sanitize_sample(self.samples[i]);
+                let l = finite_sample(self.samples[i]);
                 let r = if self.channels == 2 {
-                    sanitize_sample(self.samples[i + 1])
+                    finite_sample(self.samples[i + 1])
                 } else {
                     l
                 };

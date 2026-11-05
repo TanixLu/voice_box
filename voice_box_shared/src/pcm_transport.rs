@@ -1,5 +1,6 @@
 //! Single-writer / multiple-reader PCM broadcast. Only background
 //! workers access the named shared memory; the APO copies into its own locked memory.
+//! Samples retain floating-point headroom; output limiting belongs after mixing.
 
 use std::{
     mem::size_of,
@@ -36,7 +37,10 @@ use windows::{
     core::{PCWSTR, w},
 };
 
-use crate::utils::{wide_null, win_qpf, win_try_create_named_mutex};
+use crate::{
+    audio::finite_sample,
+    utils::{wide_null, win_qpf, win_try_create_named_mutex},
+};
 
 pub const PCM_SAMPLE_RATE: u32 = 48_000;
 
@@ -181,22 +185,14 @@ impl Slot {
             return [0.0; 2];
         }
         [
-            sanitize_sample(f32::from_bits(bits as u32)),
-            sanitize_sample(f32::from_bits((bits >> 32) as u32)),
+            finite_sample(f32::from_bits(bits as u32)),
+            finite_sample(f32::from_bits((bits >> 32) as u32)),
         ]
     }
 }
 fn make_stamp(frame: u64, generation: u16) -> u64 {
     (frame << 16) | (generation as u64)
 }
-pub fn sanitize_sample(value: f32) -> f32 {
-    if value.is_finite() {
-        value.clamp(-1.0, 1.0)
-    } else {
-        0.0
-    }
-}
-
 pub fn pcm_frame() -> u64 {
     let mut ticks = 0;
     if unsafe { QueryPerformanceCounter(&mut ticks) }.is_err() {

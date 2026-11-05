@@ -56,7 +56,7 @@ pub struct PlaybackOutcome {
     pub played_secs: f64,
 }
 
-/// Scheduled PCM plus the short history the speaker cursor can still request.
+/// PCM before output gain, plus the history the speaker cursor can still request.
 struct PlaybackBuffer {
     base: u64,
     played_until: u64,
@@ -303,6 +303,8 @@ pub fn run(
             microphone_cursor = microphone_cursor
                 .max(pending.base)
                 .max(now.saturating_sub(480));
+            // Bake this route's gain into PCM without clipping; the APO limits
+            // only after resampling and mixing with the microphone.
             let gain = settings.microphone_gain_percent.as_f32_gain();
             while microphone_cursor < pending.end() {
                 let stereo = pending.sample(microphone_cursor);

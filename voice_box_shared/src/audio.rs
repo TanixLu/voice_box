@@ -2,6 +2,51 @@ pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
 pub const MAX_SAMPLE_RATE: f64 = 192_000.0;
 pub const MAX_CHANNELS: usize = 32;
 
+/// Reject invalid samples without clipping floating-point processing headroom.
+pub fn finite_sample(value: f32) -> f32 {
+    if value.is_finite() { value } else { 0.0 }
+}
+
+/// Linked-channel output limiting with immediate attack and no added latency.
+pub struct PeakLimiter {
+    gain: f64,
+    release_step: f64,
+}
+
+impl PeakLimiter {
+    // -1 dBFS, rounded down to leave room for f32 rounding.
+    const CEILING: f32 = 0.891_250_9;
+
+    pub fn new(sample_rate: f64) -> Self {
+        Self {
+            gain: 1.0,
+            release_step: -(-1.0 / (sample_rate * 0.05)).exp_m1(),
+        }
+    }
+
+    pub fn process_frame(&mut self, frame: &mut [f32]) {
+        let mut peak = 0.0_f32;
+        for sample in frame.iter_mut() {
+            *sample = finite_sample(*sample);
+            peak = peak.max(sample.abs());
+        }
+        let safe_gain = if peak > Self::CEILING {
+            f64::from(Self::CEILING) / f64::from(peak)
+        } else {
+            1.0
+        };
+        self.gain = (self.gain + (1.0 - self.gain) * self.release_step).min(safe_gain);
+        if safe_gain == 1.0 && (1.0 - self.gain) < 1e-5 {
+            self.gain = 1.0;
+        }
+        for sample in frame {
+            // The clamp only guards rounding; the linked gain controls peaks.
+            *sample =
+                ((f64::from(*sample) * self.gain) as f32).clamp(-Self::CEILING, Self::CEILING);
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum SampleFormat {
     Pcm { bytes: u8, valid_bits: u8 },

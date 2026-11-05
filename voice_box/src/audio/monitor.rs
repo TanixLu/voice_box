@@ -10,7 +10,7 @@ use windows::{
     core::PCWSTR,
 };
 
-use voice_box_shared::utils::wide_null;
+use voice_box_shared::{audio::PeakLimiter, pcm_transport::PCM_SAMPLE_RATE, utils::wide_null};
 
 use crate::{
     audio::{Stream, enumerator},
@@ -30,6 +30,7 @@ pub struct Monitor {
     cursor: u64,
     last_position: u64,
     last_progress: Instant,
+    limiter: PeakLimiter,
     _com_guard: ComGuard,
 }
 impl Monitor {
@@ -46,7 +47,14 @@ impl Monitor {
             None => unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole)? },
         };
         let client = unsafe { device.Activate::<IAudioClient>(CLSCTX_ALL, None)? };
-        let format = WaveFormat::new(32, 32, &SampleType::Float, 48_000, 2, Some(3));
+        let format = WaveFormat::new(
+            32,
+            32,
+            &SampleType::Float,
+            PCM_SAMPLE_RATE as usize,
+            2,
+            Some(3),
+        );
         let stream = Stream::with_buffer(client, &format, true, 200_000)?;
         let render = unsafe { stream.client.GetService()? };
         let clock = unsafe { stream.client.GetService()? };
@@ -63,6 +71,7 @@ impl Monitor {
             cursor: 0,
             last_position: 0,
             last_progress: Instant::now(),
+            limiter: PeakLimiter::new(f64::from(PCM_SAMPLE_RATE)),
             _com_guard,
         })
     }
@@ -91,7 +100,8 @@ impl Monitor {
         if frames > 0 {
             let data = unsafe { self.render.GetBuffer(frames)? }.cast::<f32>();
             for i in 0..frames as usize {
-                let stereo = sample(self.cursor + i as u64);
+                let mut stereo = sample(self.cursor + i as u64);
+                self.limiter.process_frame(&mut stereo);
                 unsafe {
                     data.add(i * 2).write(stereo[0]);
                     data.add(i * 2 + 1).write(stereo[1]);
