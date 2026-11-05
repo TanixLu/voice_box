@@ -20,7 +20,7 @@ use windows::Win32::{
 };
 use windows_core::{BOOL, GUID, HRESULT};
 
-use voice_box_shared::{plugin, utils::transport_name};
+use voice_box_shared::utils::{APO_CLSID, apo_registration_properties, transport_name};
 
 use crate::{
     com::{EFFECT_ID_DENOISE, object_from},
@@ -41,7 +41,7 @@ pub unsafe extern "system" fn get_registration_properties(
         return E_OUTOFMEMORY;
     }
 
-    let properties = plugin::registration_properties();
+    let properties = apo_registration_properties();
 
     unsafe {
         memory.write(properties);
@@ -60,7 +60,7 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
     if data.is_null() || (size as usize) < core::mem::size_of::<APOInitBaseStruct>() {
         return E_INVALIDARG;
     }
-    if unsafe { ptr::read_unaligned(data.cast::<APOInitBaseStruct>()) }.clsid != plugin::CLSID {
+    if unsafe { ptr::read_unaligned(data.cast::<APOInitBaseStruct>()) }.clsid != APO_CLSID {
         return APOERR_INVALID_APO_CLSID;
     }
 

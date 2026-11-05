@@ -15,9 +15,10 @@ use winreg::{
 
 use voice_box_shared::{
     apo_cfg::ApoCfg,
-    plugin,
-    utils::apo_dll_path,
-    utils::{WriteMode, write_file_with_parents},
+    utils::{
+        APO_CLSID, APO_NAME, COPYRIGHT, WriteMode, apo_dll_path, apo_registration_properties,
+        write_file_with_parents,
+    },
 };
 
 use crate::{
@@ -30,7 +31,7 @@ const DISABLE_PROTECTED_AUDIO_DG_REG_PATH: &str =
     r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio\DisableProtectedAudioDG";
 
 fn plugin_guid() -> String {
-    format!("{{{:?}}}", plugin::CLSID)
+    format!("{{{:?}}}", APO_CLSID)
 }
 
 fn string_registration_values(apo_dll: &Path) -> anyhow::Result<[(String, String); 6]> {
@@ -38,16 +39,16 @@ fn string_registration_values(apo_dll: &Path) -> anyhow::Result<[(String, String
     let guid = plugin_guid();
     let com = format!(r"HKLM\SOFTWARE\Classes\CLSID\{guid}\");
     let apo = format!(r"HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}\");
-    let properties = plugin::registration_properties();
+    let properties = apo_registration_properties();
     Ok([
-        (com.clone(), plugin::NAME.into()),
+        (com.clone(), APO_NAME.into()),
         (format!(r"{com}InprocServer32\"), apo_dll.into()),
         (
             format!(r"{com}InprocServer32\ThreadingModel"),
             "Both".into(),
         ),
-        (format!("{apo}FriendlyName"), plugin::NAME.into()),
-        (format!("{apo}Copyright"), plugin::COPYRIGHT.into()),
+        (format!("{apo}FriendlyName"), APO_NAME.into()),
+        (format!("{apo}Copyright"), COPYRIGHT.into()),
         (
             format!("{apo}APOInterface0"),
             format!("{{{:?}}}", properties.iidAPOInterfaceList[0]),
@@ -58,7 +59,7 @@ fn string_registration_values(apo_dll: &Path) -> anyhow::Result<[(String, String
 fn dword_registration_values() -> [(String, u32); 10] {
     let guid = plugin_guid();
     let apo = format!(r"HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}\");
-    let properties = plugin::registration_properties();
+    let properties = apo_registration_properties();
     [
         (DISABLE_PROTECTED_AUDIO_DG_REG_PATH.into(), 1),
         (format!("{apo}MajorVersion"), properties.u32MajorVersion),
