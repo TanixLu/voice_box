@@ -14,7 +14,7 @@ use windows::Win32::{
 };
 use windows_core::{HRESULT, Interface};
 
-use voice_box_shared::audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat};
+use voice_box_shared::utils::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat};
 
 use crate::{
     com::{ApoCom, object_from, unknown_vtable},

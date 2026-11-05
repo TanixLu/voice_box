@@ -10,7 +10,10 @@ use windows::{
     core::PCWSTR,
 };
 
-use voice_box_shared::{audio::PeakLimiter, pcm_transport::PCM_SAMPLE_RATE, utils::wide_null};
+use voice_box_shared::{
+    pcm_transport::PCM_SAMPLE_RATE,
+    utils::{PeakLimiter, wide_null},
+};
 
 use crate::{
     audio::{Stream, enumerator},

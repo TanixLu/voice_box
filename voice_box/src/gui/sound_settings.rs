@@ -4,7 +4,8 @@ use crate::{
     devices::{Microphone, Speaker},
     gui::widgets::{ButtonIcon, hint, hotkey_editor, icon_button, trailing_button, warning},
     i18n::{Message, Text},
-    settings::{BindingTarget, GainPercent, OutputDevice, Settings},
+    settings::{BindingTarget, OutputDevice, Settings},
+    utils::GainPercent,
 };
 
 #[derive(Default)]

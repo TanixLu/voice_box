@@ -6,9 +6,11 @@ use windows::Win32::Foundation::{E_INVALIDARG, E_POINTER, S_OK};
 use windows_core::HRESULT;
 
 use voice_box_shared::{
-    apo_cfg::{ApoCfg, GainDb},
-    audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
-    utils::{PREVIEW_MAX_RECORD_SECONDS, PREVIEW_MAX_SAMPLES},
+    apo_cfg::ApoCfg,
+    utils::{
+        GainDb, MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, PREVIEW_MAX_RECORD_SECONDS,
+        PREVIEW_MAX_SAMPLES, SampleFormat,
+    },
 };
 
 use crate::dsp::AudioProcessor;

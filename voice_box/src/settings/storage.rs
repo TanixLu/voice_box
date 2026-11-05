@@ -8,10 +8,7 @@ use rusqlite::{
 };
 
 pub use crate::impl_storage;
-use crate::{
-    i18n::LanguagePreference,
-    settings::{GainPercent, OutputDevice},
-};
+use crate::{i18n::LanguagePreference, settings::OutputDevice, utils::GainPercent};
 
 #[macro_export]
 macro_rules! impl_storage {

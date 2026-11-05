@@ -20,6 +20,29 @@ use voice_box_shared::utils::{wide_null, win_try_create_named_mutex};
 
 pub const VOICE_BOX_SINGLE_INSTANCE: &str = r"Global\VoiceBoxSingleInstance";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GainPercent(u16);
+
+impl GainPercent {
+    pub const MAX_VALUE: u16 = 200;
+
+    pub fn new(value: u16) -> Self {
+        Self(value.min(Self::MAX_VALUE))
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn as_u16(&self) -> u16 {
+        self.0
+    }
+
+    pub fn as_f32_gain(&self) -> f32 {
+        self.0 as f32 / 100.0
+    }
+}
+
 pub struct ComGuard(PhantomData<Rc<()>>);
 impl ComGuard {
     pub fn mta() -> anyhow::Result<Self> {

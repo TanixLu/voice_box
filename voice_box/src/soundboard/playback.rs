@@ -16,8 +16,8 @@ use crate::{
     devices,
     hotkeys::{HeldKeys, Hotkey},
     i18n::{Details, Message, Text, UserContext},
-    settings::GainPercent,
     soundboard::{decoder::SoundDecoder, sound::SoundId},
+    utils::GainPercent,
 };
 
 /// Runtime output choices only; no GUI preferences or persistence behavior.

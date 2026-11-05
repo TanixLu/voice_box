@@ -1,4 +1,4 @@
-use voice_box_shared::apo_cfg::{ApoCfg, GainDb};
+use voice_box_shared::{apo_cfg::ApoCfg, utils::GainDb};
 
 use crate::{
     audio::session::{Activity, AudioSession},

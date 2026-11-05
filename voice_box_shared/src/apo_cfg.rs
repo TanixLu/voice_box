@@ -4,33 +4,8 @@ use std::io::{self, Read};
 
 use crate::{
     field_name,
-    utils::apo_cfg_path,
-    utils::{WriteMode, write_file_with_parents},
+    utils::{GainDb, WriteMode, apo_cfg_path, write_file_with_parents},
 };
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct GainDb(i8);
-
-impl GainDb {
-    pub const MIN_VALUE: i8 = -60;
-    pub const MAX_VALUE: i8 = 60;
-
-    pub fn new(value: i8) -> Self {
-        Self(value.clamp(Self::MIN_VALUE, Self::MAX_VALUE))
-    }
-
-    pub fn as_i8(&self) -> i8 {
-        self.0
-    }
-
-    pub fn as_f32_gain(&self) -> f32 {
-        if self.0 == Self::MIN_VALUE {
-            0.0
-        } else {
-            10.0_f32.powf(self.0 as f32 / 20.0)
-        }
-    }
-}
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct ApoCfg {

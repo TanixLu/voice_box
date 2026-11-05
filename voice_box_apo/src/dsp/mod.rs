@@ -5,9 +5,8 @@ mod limiter;
 
 use ul_unas_rs::{ALGORITHM_DELAY, Denoiser, FRAME_SIZE, SAMPLE_RATE};
 
-use voice_box_shared::{
-    audio::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
-    resample::Resampler,
+use voice_box_shared::utils::{
+    MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, Resampler, SampleFormat,
 };
 
 use crate::{

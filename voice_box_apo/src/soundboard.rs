@@ -20,8 +20,8 @@ use windows::Win32::System::Memory::{
 
 use voice_box_shared::{
     apo_cfg::ApoCfg,
-    audio::{MAX_CHANNELS, PeakLimiter, SampleFormat},
     pcm_transport::{PCM_SAMPLE_RATE, PcmReader, Slot, pcm_frame},
+    utils::{MAX_CHANNELS, PeakLimiter, SampleFormat},
 };
 
 use crate::{

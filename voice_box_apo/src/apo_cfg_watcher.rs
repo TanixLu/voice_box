@@ -33,8 +33,8 @@ use windows::{
 };
 
 use voice_box_shared::{
-    apo_cfg::{ApoCfg, GainDb},
-    utils::{apo_cfg_path, data_dir, wide_null},
+    apo_cfg::ApoCfg,
+    utils::{GainDb, apo_cfg_path, data_dir, wide_null},
 };
 
 use crate::{etw, worker};
