@@ -45,11 +45,11 @@ impl Resampler {
             FixedAsync::Input,
         )
         .expect("UNREACHABLE: validated rates and fixed parameters should create a resampler");
-        // Preserve the fractional part truncated by Rubato's output_delay().
-        // Its interpolation index advances before the first output sample.
+        // Account for Rubato's sinc-table phase offset and initial index advance.
         let sinc_len = parameters.sinc_len.next_multiple_of(8);
-        let fractional = sinc_len as f64 * ratio / 2.0 - engine.output_delay() as f64;
-        let delay_seconds = (engine.output_delay() as f64 + fractional - 1.0) / output_rate;
+        let delay_seconds = (sinc_len as f64 / 2.0 - 1.0 / parameters.oversampling_factor as f64)
+            / input_rate
+            - 1.0 / output_rate;
         Self {
             input: vec![0.0; engine.input_frames_max()],
             output: vec![0.0; engine.output_frames_max()],
