@@ -50,7 +50,6 @@ impl HighPass {
     }
 }
 
-#[inline]
 fn flush_small(value: f64) -> f64 {
     if value.abs() < STATE_FLOOR {
         0.0

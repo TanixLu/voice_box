@@ -4,8 +4,6 @@ mod storage;
 
 use anyhow::ensure;
 
-use voice_box_shared::pcm_transport::GainPercent;
-
 use crate::{
     database,
     hotkeys::Hotkey,
@@ -24,6 +22,29 @@ pub enum BindingTarget {
 pub struct OutputDevice {
     pub id: String,
     pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GainPercent(u16);
+
+impl GainPercent {
+    pub const MAX_VALUE: u16 = 200;
+
+    pub fn new(value: u16) -> Self {
+        Self(value.min(Self::MAX_VALUE))
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn as_u16(&self) -> u16 {
+        self.0
+    }
+
+    pub fn as_f32_gain(&self) -> f32 {
+        self.0 as f32 / 100.0
+    }
 }
 
 macro_rules! define_settings {
@@ -48,10 +69,9 @@ define_settings! {
     theme_preference: egui::ThemePreference = egui::ThemePreference::System;
     startup_enabled: bool = false;
     playback_microphone_output_device: Option<OutputDevice> = None;
+    playback_microphone_output_gain_percent: GainPercent = GainPercent::new(100);
     playback_speaker_output_device: Option<OutputDevice> = None;
     playback_speaker_output_gain_percent: GainPercent = GainPercent::new(100);
-    playback_microphone_output_gain_percent: GainPercent = GainPercent::new(100);
-    playback_include_microphone_audio: bool = true;
     playback_auto_hold_hotkey: Option<Hotkey> = None;
     playback_stop_hotkey: Option<Hotkey> = None;
     playback_random_hotkey: Option<Hotkey> = None;

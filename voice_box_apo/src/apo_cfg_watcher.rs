@@ -5,7 +5,7 @@ use std::{
     path::Path,
     sync::{
         Arc, Mutex, MutexGuard,
-        atomic::{AtomicU16, Ordering},
+        atomic::{AtomicU32, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -39,21 +39,28 @@ use voice_box_shared::{
 
 use crate::{etw, worker};
 
-const DENOISING_ENABLED_MASK: u16 = 0x0100;
-const GAIN_DB_MASK: u16 = 0x00FF;
+const DENOISING_ENABLED_MASK: u32 = 0x0100;
+const GAIN_DB_MASK: u32 = 0x00FF;
+const INCLUDE_MICROPHONE_MASK: u32 = 1 << 9;
 
-fn apo_cfg_to_bits(apo_config: ApoCfg) -> u16 {
+fn apo_cfg_to_bits(apo_config: ApoCfg) -> u32 {
     (if apo_config.denoising_enabled {
         DENOISING_ENABLED_MASK
     } else {
         0
-    }) | (apo_config.gain_db.as_i8() as u16 & GAIN_DB_MASK)
+    }) | (apo_config.gain_db.as_i8() as u32 & GAIN_DB_MASK)
+        | if apo_config.playback_include_microphone_audio {
+            INCLUDE_MICROPHONE_MASK
+        } else {
+            0
+        }
 }
 
-fn bits_to_apo_cfg(bits: u16) -> ApoCfg {
+fn bits_to_apo_cfg(bits: u32) -> ApoCfg {
     ApoCfg {
         denoising_enabled: (bits & DENOISING_ENABLED_MASK) != 0,
         gain_db: GainDb::new((bits & GAIN_DB_MASK) as i8),
+        playback_include_microphone_audio: (bits & INCLUDE_MICROPHONE_MASK) != 0,
     }
 }
 
@@ -80,7 +87,7 @@ pub struct GetEffectsListEventSlots {
 }
 
 pub struct RtConfig {
-    atomic_bits: AtomicU16,
+    atomic_bits: AtomicU32,
     // Only APO configuration updates and COM discovery touch this mutex. RT loads bits alone.
     get_effects_list_event_slots: Mutex<GetEffectsListEventSlots>,
 }
@@ -88,7 +95,7 @@ pub struct RtConfig {
 impl Default for RtConfig {
     fn default() -> Self {
         Self {
-            atomic_bits: AtomicU16::new(apo_cfg_to_bits(ApoCfg::default())),
+            atomic_bits: AtomicU32::new(apo_cfg_to_bits(ApoCfg::default())),
             get_effects_list_event_slots: Mutex::new(GetEffectsListEventSlots {
                 get_effects_list_event: None,
                 get_controllable_effects_list_event: None,

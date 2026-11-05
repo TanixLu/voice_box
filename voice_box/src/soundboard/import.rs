@@ -12,7 +12,7 @@ use std::{
 use anyhow::ensure;
 use rusqlite::{Connection, TransactionBehavior};
 
-use voice_box_shared::pcm_transport::SAMPLE_RATE;
+use voice_box_shared::pcm_transport::PCM_SAMPLE_RATE;
 
 use crate::{
     database,
@@ -145,7 +145,7 @@ fn validate_file(source: &Path) -> anyhow::Result<ValidatedFile> {
         file,
         source: source.to_owned(),
         name,
-        duration_secs: frames as f64 / f64::from(SAMPLE_RATE),
+        duration_secs: frames as f64 / f64::from(PCM_SAMPLE_RATE),
         length: metadata.len(),
     })
 }

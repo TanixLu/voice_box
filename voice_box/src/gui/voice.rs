@@ -25,6 +25,7 @@ impl VoicePanel {
         self.saved = config;
     }
     pub fn config_ui(&mut self, ui: &mut egui::Ui, busy: bool) -> Option<ApoCfg> {
+        let defaults = ApoCfg::default();
         let mut save_requested = false;
         ui.strong(Text::VoiceConfig.text());
         ui.add_enabled_ui(!busy, |ui| {
@@ -90,6 +91,10 @@ impl VoicePanel {
             if changed {
                 self.config.gain_db = GainDb::new(gain_db);
             }
+            ui.checkbox(
+                &mut self.config.playback_include_microphone_audio,
+                Text::IncludeMicrophoneAudio.text(),
+            );
         });
         ui.horizontal_wrapped(|ui| {
             let dirty = self.config != self.saved;
@@ -107,12 +112,12 @@ impl VoicePanel {
             }
             if trailing_button(
                 ui,
-                !busy && self.config != ApoCfg::default(),
+                !busy && self.config != defaults,
                 Text::RestoreDefaults.text(),
             )
             .clicked()
             {
-                self.config = ApoCfg::default();
+                self.config = defaults;
             }
         });
         if self.config != self.saved {

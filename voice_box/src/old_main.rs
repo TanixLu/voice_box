@@ -33,8 +33,6 @@ use voice_box_shared::utils::wide_null;
 
 use crate::i18n::Text;
 
-const SINGLE_INSTANCE_MUTEX: &str = r"Global\VoiceBoxSingleInstance";
-
 fn startup_mode(arguments: &[std::ffi::OsString]) -> anyhow::Result<bool> {
     match arguments {
         [] => Ok(false),
@@ -48,8 +46,7 @@ fn run(start_in_tray: bool) -> anyhow::Result<()> {
         unsafe { IsUserAnAdmin() }.as_bool(),
         Text::AdministratorRequired
     );
-    let single_instance = single_instance::SingleInstance::new(SINGLE_INSTANCE_MUTEX)?;
-    anyhow::ensure!(single_instance.is_single(), Text::AnotherInstance);
+    anyhow::ensure!(single::is_single_instance()?, Text::AnotherInstance);
     apo_cfg_writer::init()?;
     logging::init()?;
     let settings = settings::Settings::load()?;

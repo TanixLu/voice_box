@@ -20,7 +20,7 @@ use windows::Win32::{
 };
 use windows_core::{BOOL, GUID, HRESULT};
 
-use voice_box_shared::{plugin, utils::transport_path};
+use voice_box_shared::{plugin, utils::transport_name};
 
 use crate::{
     com::{EFFECT_ID_DENOISE, object_from},
@@ -64,14 +64,14 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
         return APOERR_INVALID_APO_CLSID;
     }
 
-    let (version, mode, discovery_only, soundboard_path) =
+    let (version, mode, discovery_only, soundboard_name) =
         if size as usize == core::mem::size_of::<APOInitSystemEffects3>() {
             let init = unsafe { ptr::read_unaligned(data.cast::<APOInitSystemEffects3>()) };
             (
                 3,
                 init.AudioProcessingMode,
                 init.InitializeForDiscoveryOnly.as_bool(),
-                soundboard_path(init.pAPOEndpointProperties.as_ref()),
+                soundboard_name(init.pAPOEndpointProperties.as_ref()),
             )
         } else if size as usize == core::mem::size_of::<APOInitSystemEffects2>() {
             let init = unsafe { ptr::read_unaligned(data.cast::<APOInitSystemEffects2>()) };
@@ -79,7 +79,7 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
                 2,
                 init.AudioProcessingMode,
                 init.InitializeForDiscoveryOnly.as_bool(),
-                soundboard_path(init.pAPOEndpointProperties.as_ref()),
+                soundboard_name(init.pAPOEndpointProperties.as_ref()),
             )
         } else {
             apo_log!(
@@ -91,7 +91,7 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
         };
 
     unsafe {
-        (*object).soundboard_path = soundboard_path;
+        (*object).soundboard_name = soundboard_name;
         if mode != AUDIO_SIGNALPROCESSINGMODE_RAW {
             // Discovery objects also expose live effect lists and change events.
             // They watch APO configuration but still cannot allocate/process a DSP graph.
@@ -123,9 +123,9 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
     S_OK
 }
 
-fn soundboard_path(
+fn soundboard_name(
     store: Option<&windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore>,
-) -> Option<std::path::PathBuf> {
+) -> Option<String> {
     use windows::Win32::{
         Media::Audio::PKEY_AudioEndpoint_GUID,
         System::Com::StructuredStorage::{PropVariantClear, PropVariantToStringAlloc},
@@ -141,7 +141,7 @@ fn soundboard_path(
     unsafe {
         CoTaskMemFree(Some(text.0.cast()));
     }
-    transport_path(&guid.ok()?).ok()
+    transport_name(&guid.ok()?).ok()
 }
 
 fn processing_mode_name(mode: &GUID) -> &'static str {

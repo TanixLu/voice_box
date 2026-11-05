@@ -257,10 +257,10 @@ pub unsafe extern "system" fn lock_for_process(
         *(*object).injection.get() = None;
         (*object).injection_stop = None;
         if (*object).effect_enabled.load(Ordering::Relaxed)
-            && let Some(path) = (*object).soundboard_path.clone()
+            && let Some(name) = (*object).soundboard_name.clone()
         {
             match crate::soundboard::Injection::start(
-                path,
+                name,
                 f64::from(input_format.fFramesPerSecond),
                 input_format.dwSamplesPerFrame as usize,
                 sample_format,
@@ -408,7 +408,7 @@ pub unsafe extern "system" fn process(
             )
         };
         if let Some(injection) = unsafe { &mut *(*object).injection.get() } {
-            injection.mix(buffer);
+            injection.mix(buffer, &apo_config);
         }
         // The DSP materializes every frame, including startup padding and mute.
         // Keep these packets valid even when all samples are zero: legacy capture

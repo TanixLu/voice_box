@@ -8,7 +8,7 @@ use crate::{
     utils::{WriteMode, write_file_with_parents},
 };
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct GainDb(i8);
 
 impl GainDb {
@@ -17,11 +17,6 @@ impl GainDb {
 
     pub fn new(value: i8) -> Self {
         Self(value.clamp(Self::MIN_VALUE, Self::MAX_VALUE))
-    }
-
-    pub fn parse(s: &str) -> Result<Self, std::num::ParseIntError> {
-        let value = s.parse::<i8>()?;
-        Ok(Self::new(value))
     }
 
     pub fn as_i8(&self) -> i8 {
@@ -37,10 +32,21 @@ impl GainDb {
     }
 }
 
-#[derive(Default, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ApoCfg {
     pub denoising_enabled: bool,
     pub gain_db: GainDb,
+    pub playback_include_microphone_audio: bool,
+}
+
+impl Default for ApoCfg {
+    fn default() -> Self {
+        Self {
+            denoising_enabled: false,
+            gain_db: GainDb::new(0),
+            playback_include_microphone_audio: true,
+        }
+    }
 }
 
 impl ApoCfg {
@@ -75,8 +81,12 @@ impl ApoCfg {
                     cfg.denoising_enabled = v;
                 }
             } else if key == field_name!(cfg, gain_db) {
-                if let Ok(v) = GainDb::parse(value) {
-                    cfg.gain_db = v;
+                if let Ok(v) = value.parse() {
+                    cfg.gain_db = GainDb::new(v);
+                }
+            } else if key == field_name!(cfg, playback_include_microphone_audio) {
+                if let Ok(v) = value.parse() {
+                    cfg.playback_include_microphone_audio = v;
                 }
             }
         }
@@ -85,11 +95,13 @@ impl ApoCfg {
 
     pub fn save(&self) -> anyhow::Result<()> {
         let bytes = format!(
-            "{}={}\n{}={}\n",
+            "{}={}\n{}={}\n{}={}\n",
             field_name!(self, denoising_enabled),
             self.denoising_enabled,
             field_name!(self, gain_db),
             self.gain_db.as_i8(),
+            field_name!(self, playback_include_microphone_audio),
+            self.playback_include_microphone_audio,
         )
         .into_bytes();
         if bytes.len() > Self::MAX_CFG_BYTES {

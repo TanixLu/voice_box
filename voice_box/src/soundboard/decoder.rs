@@ -11,7 +11,7 @@ use symphonia::core::{
 
 use voice_box_shared::{
     audio::{MAX_SAMPLE_RATE, MIN_SAMPLE_RATE},
-    pcm_transport::{SAMPLE_RATE, sanitize_sample},
+    pcm_transport::{PCM_SAMPLE_RATE, sanitize_sample},
     resample::Resampler,
 };
 
@@ -61,11 +61,11 @@ impl SoundDecoder {
         let duration_secs = track.num_frames.map(|n| n as f64 / f64::from(rate));
         let id = track.id;
         let resamplers = [
-            Resampler::new(f64::from(rate), f64::from(SAMPLE_RATE)),
-            Resampler::new(f64::from(rate), f64::from(SAMPLE_RATE)),
+            Resampler::new(f64::from(rate), f64::from(PCM_SAMPLE_RATE)),
+            Resampler::new(f64::from(rate), f64::from(PCM_SAMPLE_RATE)),
         ];
         let delay_frames_remaining =
-            (resamplers[0].delay_seconds().max(0.0) * f64::from(SAMPLE_RATE)).round() as usize;
+            (resamplers[0].delay_seconds().max(0.0) * f64::from(PCM_SAMPLE_RATE)).round() as usize;
         Ok(Self {
             format,
             decoder,
@@ -102,8 +102,9 @@ impl SoundDecoder {
         loop {
             if self.eof
                 && self.output_frames
-                    >= (self.input_frames as f64 * f64::from(SAMPLE_RATE) / f64::from(self.rate))
-                        .round() as usize
+                    >= (self.input_frames as f64 * f64::from(PCM_SAMPLE_RATE)
+                        / f64::from(self.rate))
+                    .round() as usize
             {
                 return Ok(None);
             }

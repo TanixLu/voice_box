@@ -10,7 +10,6 @@ mod logging;
 mod registry;
 mod settings;
 mod setup;
-mod single;
 mod soundboard;
 mod startup;
 mod static_data;
@@ -22,9 +21,8 @@ use tracing::{error, info};
 
 use crate::{
     i18n::{LanguagePreference, Message, Text, set_language},
-    single::is_single_instance,
     startup::silent_start,
-    utils::{win_is_admin, win_popup_error},
+    utils::{is_single_instance, win_is_admin, win_popup_error},
 };
 
 fn main() {

@@ -371,7 +371,6 @@ impl Soundboard {
                 .map(|device| device.id.clone()),
             microphone_gain_percent: self.settings.playback_microphone_output_gain_percent,
             speaker_gain_percent: self.settings.playback_speaker_output_gain_percent,
-            include_microphone: self.settings.playback_include_microphone_audio,
             hold_hotkey: self.settings.playback_auto_hold_hotkey,
             repeat: self.settings.playback_repeat,
         }

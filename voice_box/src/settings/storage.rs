@@ -6,10 +6,12 @@ use rusqlite::{
     Connection, ToSql, Transaction, params,
     types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, Value, ValueRef},
 };
-use voice_box_shared::pcm_transport::GainPercent;
 
 pub use crate::impl_storage;
-use crate::{i18n::LanguagePreference, settings::OutputDevice};
+use crate::{
+    i18n::LanguagePreference,
+    settings::{GainPercent, OutputDevice},
+};
 
 #[macro_export]
 macro_rules! impl_storage {

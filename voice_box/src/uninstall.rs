@@ -33,9 +33,8 @@ use voice_box_shared::{
 use crate::{
     i18n::{Message, Text, UserContext, current_language},
     setup,
-    single::SINGLE_INSTANCE_MUTEX,
     static_data::UNINSTALL_CLEANUP_SCRIPT,
-    utils::ComGuard,
+    utils::{ComGuard, VOICE_BOX_SINGLE_INSTANCE},
 };
 
 // The GUI is already elevated; only self-deletion needs a separate process.
@@ -112,7 +111,7 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
         .env("VOICEBOX_UNINSTALL_READY", event_name)
         .env("VOICEBOX_UNINSTALL_COMPLETE", complete_name)
         .env("VOICEBOX_UNINSTALL_CANCEL", cancel_name)
-        .env("VOICEBOX_SINGLE_INSTANCE_MUTEX", SINGLE_INSTANCE_MUTEX)
+        .env("VOICEBOX_SINGLE_INSTANCE_MUTEX", VOICE_BOX_SINGLE_INSTANCE)
         .env(
             "VOICEBOX_UNINSTALL_PROCESS_ID",
             std::process::id().to_string(),

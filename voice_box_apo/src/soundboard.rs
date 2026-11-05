@@ -3,12 +3,11 @@
 use std::{
     f64::consts::PI,
     mem::size_of,
-    path::PathBuf,
     ptr::NonNull,
     sync::{
         Arc,
         atomic::{
-            AtomicBool, AtomicU64,
+            AtomicBool, AtomicU16, AtomicU64,
             Ordering::{Acquire, Relaxed, Release},
         },
     },
@@ -20,8 +19,9 @@ use windows::Win32::System::Memory::{
 };
 
 use voice_box_shared::{
+    apo_cfg::ApoCfg,
     audio::{MAX_CHANNELS, SampleFormat},
-    pcm_transport::{Clock, GainPercent, Mapping, SAMPLE_RATE, Slot},
+    pcm_transport::{PCM_SAMPLE_RATE, PcmReader, Slot, pcm_frame},
 };
 
 use crate::{
@@ -38,10 +38,8 @@ const PHASES: usize = 256;
 struct Storage {
     frames: [Slot; FRAMES],
     kernels: [[f32; TAPS]; PHASES],
-    generation: AtomicU64,
+    generation: AtomicU16,
     deadline: AtomicU64,
-    gain_percent: AtomicU64,
-    include_microphone: AtomicBool,
 }
 struct Resident {
     pointer: NonNull<Storage>,
@@ -89,7 +87,7 @@ impl Resident {
             .pages = Some(pages);
         Ok(resident)
     }
-    fn sample(&self, position: f64, generation: u64, direct: bool) -> [f32; 2] {
+    fn sample(&self, position: f64, generation: u16, direct: bool) -> [f32; 2] {
         let base = position.floor() as u64;
         if direct {
             return self.frames[base as usize % FRAMES].read(base, generation);
@@ -117,7 +115,7 @@ impl Drop for Resident {
 }
 
 fn kernels(rate: f64) -> Box<[[f32; TAPS]]> {
-    let cutoff = (rate / f64::from(SAMPLE_RATE)).min(1.0) * 0.90;
+    let cutoff = (rate / f64::from(PCM_SAMPLE_RATE)).min(1.0) * 0.90;
     (0..PHASES)
         .map(|phase| {
             let mut row = [0.0; TAPS];
@@ -144,7 +142,6 @@ fn kernels(rate: f64) -> Box<[[f32; TAPS]]> {
 
 pub struct Injection {
     state: Arc<Resident>,
-    clock: Clock,
     position: f64,
     step: f64,
     channels: usize,
@@ -155,24 +152,22 @@ pub struct Injection {
 }
 impl Injection {
     pub fn start(
-        path: PathBuf,
+        name: String,
         rate: f64,
         channels: usize,
         format: SampleFormat,
     ) -> anyhow::Result<Self> {
-        let clock = Clock::new()?;
         let state = Resident::new(rate)?;
         let background = Arc::clone(&state);
         let stop = Arc::new(AtomicBool::new(false));
         let background_stop = Arc::clone(&stop);
         worker::spawn("VoiceBoxSoundboard", move || {
-            receive(path, &background, &background_stop, clock)
+            receive(name, &background, &background_stop)
         })?;
         Ok(Self {
             state,
-            clock,
             position: 0.0,
-            step: f64::from(SAMPLE_RATE) / rate,
+            step: f64::from(PCM_SAMPLE_RATE) / rate,
             channels,
             format,
             limiter_gain: 1.0,
@@ -183,30 +178,26 @@ impl Injection {
     pub fn cancellation(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.stop)
     }
-    pub fn mix(&mut self, buffer: &mut [u8]) {
-        let now = self.clock.frame();
+    pub fn mix(&mut self, buffer: &mut [u8], config: &ApoCfg) {
+        let now = pcm_frame();
         let generation = self.state.generation.load(Acquire);
         if self.position == 0.0
-            || (self.position - now as f64).abs() > f64::from(SAMPLE_RATE) * 0.02
+            || (self.position - now as f64).abs() > f64::from(PCM_SAMPLE_RATE) * 0.02
         {
             self.position = now as f64;
         }
-        let live = generation != 0 && now < self.state.deadline.load(Acquire);
-        let gain_percent = GainPercent::from_u64_bits(self.state.gain_percent.load(Relaxed));
-        let gain = gain_percent.as_f32_gain();
-        let mute_microphone =
-            live && !gain_percent.is_zero() && !self.state.include_microphone.load(Relaxed);
+        let injection_active = generation != 0 && now < self.state.deadline.load(Acquire);
+        let mute_microphone = injection_active && !config.playback_include_microphone_audio;
         let bytes = self.format.bytes();
         let mut values = [0.0_f32; MAX_CHANNELS];
         for frame in buffer.chunks_exact_mut(bytes * self.channels) {
-            let stereo = if live {
+            let sound_samples = if injection_active {
                 self.state
                     .sample(self.position, generation, self.step == 1.0)
             } else {
                 [0.0; 2]
             };
             self.position += self.step;
-            let sound_samples = [stereo[0] * gain, stereo[1] * gain];
             // Preserve native bypass sample bytes exactly whenever the music and
             // limiter tail are both absent. No extra delay is added to the mic.
             if !mute_microphone && sound_samples == [0.0; 2] && self.limiter_gain == 1.0 {
@@ -255,25 +246,25 @@ impl Drop for Injection {
     }
 }
 
-fn receive(path: PathBuf, state: &Resident, stop: &AtomicBool, clock: Clock) {
+fn receive(name: String, state: &Resident, stop: &AtomicBool) {
     let mut mapping = None;
     let mut retry_at = 0;
     let mut cursor = 0;
     let mut previous = 0;
     while !stop.load(Relaxed) {
-        let now = clock.frame();
+        let now = pcm_frame();
         if mapping.is_none() && now >= retry_at {
-            mapping = Mapping::open(&path, false).ok();
+            mapping = PcmReader::open(&name).ok();
             // Discover a new transport before playback's 100 ms startup lead ends.
-            retry_at = now + u64::from(SAMPLE_RATE) / 100;
+            retry_at = now + u64::from(PCM_SAMPLE_RATE) / 100;
         }
         if let Some(mapping) = &mapping {
-            let (generation, end, gain_percent, include_microphone) = mapping.status(now);
+            let (generation, end) = mapping.status(now);
             if generation != previous || cursor < now.saturating_sub(480) {
                 state.generation.store(0, Relaxed);
                 cursor = now.saturating_sub(480);
             }
-            if generation != 0 && !gain_percent.is_zero() {
+            if generation != 0 {
                 // Bound work even for malformed shared headers. Each reader owns
                 // its own cursor; recording clients never consume one another's PCM.
                 let end = end.min(now + 2880);
@@ -283,16 +274,12 @@ fn receive(path: PathBuf, state: &Resident, stop: &AtomicBool, clock: Clock) {
                     cursor += 1;
                 }
             }
-            state
-                .gain_percent
-                .store(gain_percent.to_u64_bits(), Relaxed);
-            state.include_microphone.store(include_microphone, Relaxed);
-            // Deadline and generation publish the copied frames and scalar metadata.
+            // Deadline and generation publish the copied frames.
             state.deadline.store(
                 if generation == 0 {
                     0
                 } else {
-                    end.min(now + u64::from(SAMPLE_RATE) / 2)
+                    end.min(now + u64::from(PCM_SAMPLE_RATE) / 2)
                 },
                 Release,
             );

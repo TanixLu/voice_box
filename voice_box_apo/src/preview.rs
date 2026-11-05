@@ -32,6 +32,7 @@ pub unsafe extern "system" fn VoiceBoxPreviewProcess(
     let config = ApoCfg {
         gain_db: GainDb::new(gain_db),
         denoising_enabled: denoising != 0,
+        ..ApoCfg::default()
     };
     let Some(samples) = (frames as usize).checked_mul(channels as usize) else {
         return E_INVALIDARG;

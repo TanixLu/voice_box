@@ -23,9 +23,3 @@ checksum = "6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a"
 path = "LICENSE-LIBM-MIT"
 license = "MIT"
 checksum = "9eff396a99bafd208e7126602420d6864f6066c08b84485a5b032320a9c01997"
-
-[single-instance.clarify]
-license = "MIT"
-[[single-instance.clarify.git]]
-path = "LICENSE"
-checksum = "0f6934ae137e8dc014384bf1adb46dbc95453f56a269c54bb2d552a810fb6e96"

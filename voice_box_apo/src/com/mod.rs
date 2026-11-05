@@ -61,7 +61,7 @@ struct ApoCom {
     resident_pages: Option<super::memory::LockedPages>,
     config: Arc<super::apo_cfg_watcher::RtConfig>,
     apo_cfg_watcher: Option<super::apo_cfg_watcher::ApoCfgWatcher>,
-    soundboard_path: Option<std::path::PathBuf>,
+    soundboard_name: Option<String>,
     injection: UnsafeCell<Option<super::soundboard::Injection>>,
     injection_stop: Option<Arc<AtomicBool>>,
     inner_unknown: InterfaceHeader<IUnknown_Vtbl>,
@@ -330,7 +330,7 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
             resident_pages: None,
             config: Arc::new(super::apo_cfg_watcher::RtConfig::default()),
             apo_cfg_watcher: None,
-            soundboard_path: None,
+            soundboard_name: None,
             injection: UnsafeCell::new(None),
             injection_stop: None,
             inner_unknown: InterfaceHeader {

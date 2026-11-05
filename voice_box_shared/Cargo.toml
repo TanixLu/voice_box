@@ -11,11 +11,13 @@ rubato = { version = "5.0", default-features = false }
 windows = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Media_Audio_Apo",
     "Win32_System_Com",
     "Win32_System_Memory",
     "Win32_System_Performance",
     "Win32_System_SystemInformation",
+    "Win32_System_Threading",
     "Win32_UI_Shell",
 ] }
 windows-core.workspace = true

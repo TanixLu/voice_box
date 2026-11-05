@@ -33,6 +33,8 @@ pub struct Monitor {
     _com_guard: ComGuard,
 }
 impl Monitor {
+    pub const MAX_CURSOR_DRIFT_FRAMES: u64 = 960; // 20 ms at 48 kHz.
+
     pub fn open(device_id: Option<&str>) -> anyhow::Result<Self> {
         let _com_guard = ComGuard::mta()?;
         let enumerator = enumerator()?;
@@ -82,7 +84,7 @@ impl Monitor {
         let padding = unsafe { self.stream.client.GetCurrentPadding()? };
         let capacity = unsafe { self.stream.client.GetBufferSize()? };
         let expected = now + u64::from(padding);
-        if self.cursor == 0 || self.cursor.abs_diff(expected) > 960 {
+        if self.cursor == 0 || self.cursor.abs_diff(expected) > Self::MAX_CURSOR_DRIFT_FRAMES {
             self.cursor = expected;
         }
         let frames = capacity.saturating_sub(padding);

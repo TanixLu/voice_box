@@ -1,12 +1,10 @@
 //! A settings draft and its presentation; effects are handled by the parent panel.
 
-use voice_box_shared::pcm_transport::GainPercent;
-
 use crate::{
     devices::{Microphone, Speaker},
     gui::widgets::{ButtonIcon, hint, hotkey_editor, icon_button, trailing_button, warning},
     i18n::{Message, Text},
-    settings::{BindingTarget, OutputDevice, Settings},
+    settings::{BindingTarget, GainPercent, OutputDevice, Settings},
 };
 
 #[derive(Default)]
@@ -40,6 +38,10 @@ impl SoundSettings {
     }
     pub fn draft_mut(&mut self) -> Option<&mut Settings> {
         self.draft.as_mut()
+    }
+
+    fn is_dirty(&self, settings: &Settings) -> bool {
+        self.draft.as_ref().is_some_and(|draft| draft != settings)
     }
     pub fn set_devices(&mut self, microphones: Vec<Microphone>, speakers: Vec<Speaker>) {
         self.microphones = microphones
@@ -139,10 +141,6 @@ impl SoundSettings {
                         );
                         ui.add_space(8.0);
                         ui.checkbox(
-                            &mut settings.playback_include_microphone_audio,
-                            Text::IncludeMicrophoneAudio.text(),
-                        );
-                        ui.checkbox(
                             &mut settings.playback_show_overlay,
                             Text::ShowOverlay.text(),
                         );
@@ -179,10 +177,7 @@ impl SoundSettings {
                         }
                     });
                 ui.add_space(12.0);
-                let dirty = self
-                    .draft
-                    .as_ref()
-                    .is_some_and(|settings| *settings != *current);
+                let dirty = self.is_dirty(current);
                 ui.horizontal_wrapped(|ui| {
                     save = ui
                         .add_enabled(dirty, egui::Button::new(Text::SaveChanges.text()))
@@ -194,24 +189,14 @@ impl SoundSettings {
                         self.draft = Some(current.clone());
                         clear_message = true;
                     }
-                    if trailing_button(
-                        ui,
-                        self.draft
-                            .as_ref()
-                            .is_some_and(|settings| *settings != defaults),
-                        Text::RestoreDefaults.text(),
-                    )
-                    .clicked()
+                    if trailing_button(ui, self.is_dirty(&defaults), Text::RestoreDefaults.text())
+                        .clicked()
                     {
                         self.draft = Some(defaults.clone());
                         clear_message = true;
                     }
                 });
-                if self
-                    .draft
-                    .as_ref()
-                    .is_some_and(|settings| *settings != *current)
-                {
+                if self.is_dirty(current) {
                     warning(ui, Text::UnsavedSoundSettings.text());
                 } else {
                     hint(ui, Text::SoundSettingsApplied.text());
