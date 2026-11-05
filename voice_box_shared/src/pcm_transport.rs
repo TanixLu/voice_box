@@ -40,7 +40,6 @@ use crate::utils::{wide_null, win_qpf, win_try_create_named_mutex};
 
 pub const PCM_SAMPLE_RATE: u32 = 48_000;
 
-// Version the protocol as well as its layout: older writers do not maintain seq.
 const MAGIC: u64 = u64::from_le_bytes(*b"VoiceBox");
 pub const DECODE_AHEAD_FRAMES: u64 = 12_000; // 250 ms of decoded audio, bounded independently of file length.
 const BUFFER_CAPACITY_FRAMES: usize = 32_768;
