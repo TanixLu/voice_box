@@ -40,12 +40,14 @@ use windows::{
 use crate::utils::{finite_sample, wide_null, win_qpf, win_try_create_named_mutex};
 
 pub const PCM_SAMPLE_RATE: u32 = 48_000;
-pub const MAX_CURSOR_DRIFT_FRAMES: u64 = PCM_SAMPLE_RATE as u64 / 50;
+pub const PCM_CHANNELS: usize = 2;
+pub type PcmFrame = [f32; PCM_CHANNELS];
+pub const PCM_MAX_CURSOR_DRIFT_FRAMES: u64 = PCM_SAMPLE_RATE as u64 / 50;
 
 const MAGIC: u64 = u64::from_le_bytes(*b"VoiceBox");
-pub const DECODE_AHEAD_FRAMES: u64 = 12_000; // 250 ms of decoded audio, bounded independently of file length.
+pub const PCM_DECODE_AHEAD_FRAMES: u64 = 12_000; // 250 ms of decoded audio, bounded independently of file length.
 const BUFFER_CAPACITY_FRAMES: usize = 32_768;
-const MAPPING_SIZE: usize = size_of::<Header>() + BUFFER_CAPACITY_FRAMES * size_of::<Slot>();
+const MAPPING_SIZE: usize = size_of::<Header>() + BUFFER_CAPACITY_FRAMES * size_of::<PcmSlot>();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct HeaderState(u64);
@@ -156,14 +158,14 @@ impl Header {
 
 #[repr(C, align(8))]
 #[derive(Default)]
-pub struct Slot {
+pub struct PcmSlot {
     stamp: AtomicU64,
     stereo: AtomicU64,
 }
-impl Slot {
+impl PcmSlot {
     // Each slot has one writer. Tags must not be reused while a reader could
     // still be validating an earlier write with the same tag.
-    pub fn write(&self, frame: u64, generation: u16, samples: [f32; 2]) {
+    pub fn write(&self, frame: u64, generation: u16, samples: PcmFrame) {
         self.stamp.store(0, Relaxed);
         let bits = u64::from(samples[0].to_bits()) | (u64::from(samples[1].to_bits()) << 32);
         // Release the invalidation with the samples, so an overwritten payload
@@ -171,16 +173,16 @@ impl Slot {
         self.stereo.store(bits, Release);
         self.stamp.store(make_stamp(frame, generation), Release);
     }
-    pub fn read(&self, frame: u64, generation: u16) -> [f32; 2] {
+    pub fn read(&self, frame: u64, generation: u16) -> PcmFrame {
         let expected = make_stamp(frame, generation);
         // Reading the tag acquires its samples; reading newer samples acquires
         // their preceding stamp invalidation. Both edges are needed.
         if generation == 0 || load_acquire_readonly(&self.stamp) != expected {
-            return [0.0; 2];
+            return PcmFrame::default();
         }
         let bits = load_acquire_readonly(&self.stereo);
         if self.stamp.load(Relaxed) != expected {
-            return [0.0; 2];
+            return PcmFrame::default();
         }
         [
             finite_sample(f32::from_bits(bits as u32)),
@@ -234,14 +236,14 @@ impl Mapping {
     fn header(&self) -> &Header {
         unsafe { &*self.view.Value.cast::<Header>() }
     }
-    fn slot(&self, frame: u64) -> &Slot {
+    fn slot(&self, frame: u64) -> &PcmSlot {
         unsafe {
             &*self
                 .view
                 .Value
                 .cast::<u8>()
                 .add(size_of::<Header>())
-                .cast::<Slot>()
+                .cast::<PcmSlot>()
                 .add(frame as usize % BUFFER_CAPACITY_FRAMES)
         }
     }
@@ -316,7 +318,7 @@ impl PcmWriter {
         result.stop();
         Ok(result)
     }
-    pub fn write(&mut self, frame: u64, generation: u16, samples: [f32; 2]) {
+    pub fn write(&mut self, frame: u64, generation: u16, samples: PcmFrame) {
         self.mapping.slot(frame).write(frame, generation, samples);
     }
     pub fn next_generation(&mut self) -> u16 {
@@ -347,7 +349,7 @@ impl PcmReader {
         mapping.validate()?;
         Ok(Self { mapping })
     }
-    pub fn read(&self, frame: u64, generation: u16) -> [f32; 2] {
+    pub fn read(&self, frame: u64, generation: u16) -> PcmFrame {
         self.mapping.slot(frame).read(frame, generation)
     }
     pub fn status(&self, now: u64) -> (u16, u64) {

@@ -12,6 +12,7 @@ use std::{
 
 use anyhow::ensure;
 use atomic_write_file::AtomicWriteFile;
+use num_traits::Float;
 use rubato::{
     Adjustable as _, Async, FixedAsync, Resampler as _, Resizable as _,
     SincInterpolationParameters, SincInterpolationType, Slip, WindowFunction,
@@ -31,6 +32,8 @@ use windows::Win32::{
     UI::Shell::{FOLDERID_ProgramData, KF_FLAG_DEFAULT, SHGetKnownFolderPath},
 };
 use windows_core::{GUID, HRESULT, Interface as _, PCWSTR};
+
+use crate::pcm_transport::{PCM_CHANNELS, PcmFrame};
 
 #[macro_export]
 macro_rules! field_name {
@@ -264,6 +267,15 @@ pub fn finite_sample(value: f32) -> f32 {
     if value.is_finite() { value } else { 0.0 }
 }
 
+/// Replace non-finite samples with silence and clamp to the normalized range.
+pub fn clamp_sample<T: Float>(value: T) -> T {
+    if value.is_finite() {
+        value.clamp(-T::one(), T::one())
+    } else {
+        T::zero()
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum SampleFormat {
     Pcm { bytes: u8, valid_bits: u8 },
@@ -317,19 +329,11 @@ impl SampleFormat {
                 f64::from(input) / (1_i64 << (valid_bits - 1)) as f64
             }
         };
-        if value.is_finite() {
-            value.clamp(-1.0, 1.0)
-        } else {
-            0.0
-        }
+        clamp_sample(value)
     }
 
     pub fn encode(self, sample: &mut [u8], value: f64) {
-        let value = if value.is_finite() {
-            value.clamp(-1.0, 1.0)
-        } else {
-            0.0
-        };
+        let value = clamp_sample(value);
         match self {
             Self::Float32 => sample.copy_from_slice(&(value as f32).to_le_bytes()),
             Self::Float64 => sample.copy_from_slice(&value.to_le_bytes()),
@@ -468,8 +472,8 @@ impl Resampler {
 /// Bounded clock-drift correction after nominal-rate conversion, for stereo effects only.
 pub struct RateMatcher {
     engine: Slip<f32>,
-    input: Vec<f32>,
-    output: Vec<f32>,
+    input: Vec<PcmFrame>,
+    output: Vec<PcmFrame>,
     sample_rate: f64,
     filtered_error: f64,
 }
@@ -480,11 +484,11 @@ impl RateMatcher {
     const MAX_RATIO_OFFSET: f64 = 0.002;
 
     pub fn new(sample_rate: f64, max_output_frames: usize) -> Self {
-        let engine = Slip::new(max_output_frames.max(4), 2, FixedAsync::Output)
+        let engine = Slip::new(max_output_frames.max(4), PCM_CHANNELS, FixedAsync::Output)
             .expect("UNREACHABLE: stereo Slip with at least four frames should be valid");
         Self {
-            input: vec![0.0; engine.input_frames_max() * 2],
-            output: vec![0.0; engine.output_frames_max() * 2],
+            input: vec![PcmFrame::default(); engine.input_frames_max()],
+            output: vec![PcmFrame::default(); engine.output_frames_max()],
             engine,
             sample_rate,
             filtered_error: 0.0,
@@ -497,13 +501,13 @@ impl RateMatcher {
     }
 
     /// `error_seconds` is source read position minus expected position.
-    /// Calls `read` once per consumed input frame; returns interleaved stereo.
+    /// Calls `read` once per consumed input frame; returns stereo frames.
     pub fn process(
         &mut self,
         frames: usize,
         error_seconds: f64,
-        mut read: impl FnMut() -> [f32; 2],
-    ) -> &[f32] {
+        mut read: impl FnMut() -> PcmFrame,
+    ) -> &[PcmFrame] {
         if frames == 0 {
             return &self.output[..0];
         }
@@ -511,10 +515,10 @@ impl RateMatcher {
         let alpha = -(-duration / Self::FILTER_SECONDS).exp_m1();
         self.filtered_error += alpha * (error_seconds - self.filtered_error);
         if frames < 4 {
-            for frame in self.output[..frames * 2].as_chunks_mut::<2>().0 {
+            for frame in &mut self.output[..frames] {
                 *frame = read();
             }
-            return &self.output[..frames * 2];
+            return &self.output[..frames];
         }
         let ratio = (1.0 + self.filtered_error / Self::CORRECTION_SECONDS)
             .clamp(1.0 - Self::MAX_RATIO_OFFSET, 1.0 + Self::MAX_RATIO_OFFSET);
@@ -525,17 +529,18 @@ impl RateMatcher {
             .set_resample_ratio(ratio, false)
             .expect("UNREACHABLE: bounded drift ratio should fit Slip's range");
         let input_frames = self.engine.input_frames_next();
-        for frame in self.input[..input_frames * 2].as_chunks_mut::<2>().0 {
+        for frame in &mut self.input[..input_frames] {
             *frame = read();
         }
-        let input = InterleavedSlice::new(&self.input, 2, input_frames)
+        let input = InterleavedSlice::new(self.input.as_flattened(), PCM_CHANNELS, input_frames)
             .expect("UNREACHABLE: input view should fit the prepared buffer");
-        let mut output = InterleavedSlice::new_mut(&mut self.output, 2, frames)
-            .expect("UNREACHABLE: output view should fit the prepared buffer");
+        let mut output =
+            InterleavedSlice::new_mut(self.output.as_flattened_mut(), PCM_CHANNELS, frames)
+                .expect("UNREACHABLE: output view should fit the prepared buffer");
         self.engine
             .process_into_buffer(&input, &mut output, None)
             .expect("UNREACHABLE: prepared buffers should satisfy Slip requirements");
-        &self.output[..frames * 2]
+        &self.output[..frames]
     }
 }
 

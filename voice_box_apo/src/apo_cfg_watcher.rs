@@ -399,8 +399,10 @@ fn notifications_require_reload(mut bytes: &[u8], file_name: &[u16]) -> bool {
             }
         };
         if name
-            .chunks_exact(2)
-            .map(|pair| ascii_lower(u16::from_le_bytes([pair[0], pair[1]])))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| ascii_lower(u16::from_le_bytes(pair)))
             .eq(file_name.iter().copied().map(ascii_lower))
         {
             return true;

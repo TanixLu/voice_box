@@ -10,7 +10,7 @@ use symphonia::core::{
 };
 
 use voice_box_shared::{
-    pcm_transport::PCM_SAMPLE_RATE,
+    pcm_transport::{PCM_CHANNELS, PCM_SAMPLE_RATE, PcmFrame},
     utils::{MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, Resampler, finite_sample},
 };
 
@@ -22,10 +22,10 @@ pub struct SoundDecoder {
     track_id: u32,
     rate: u32,
     channels: usize,
-    resamplers: [Resampler; 2],
+    resamplers: [Resampler; PCM_CHANNELS],
     delay_frames_remaining: usize,
     samples: Vec<f32>,
-    output: VecDeque<[f32; 2]>,
+    output: VecDeque<PcmFrame>,
     input_frames: usize,
     output_frames: usize,
     eof: bool,
@@ -51,7 +51,7 @@ impl SoundDecoder {
             .count();
         ensure!(
             (MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&f64::from(rate))
-                && (1..=2).contains(&channels),
+                && (1..=PCM_CHANNELS).contains(&channels),
             Text::SupportedAudioRange
         );
         let decoder = symphonia::default::get_codecs()
@@ -59,10 +59,8 @@ impl SoundDecoder {
             .user_context(Text::CreateAudioDecoder)?;
         let duration_secs = track.num_frames.map(|n| n as f64 / f64::from(rate));
         let id = track.id;
-        let resamplers = [
-            Resampler::new(f64::from(rate), f64::from(PCM_SAMPLE_RATE)),
-            Resampler::new(f64::from(rate), f64::from(PCM_SAMPLE_RATE)),
-        ];
+        let resamplers: [_; PCM_CHANNELS] =
+            std::array::from_fn(|_| Resampler::new(f64::from(rate), f64::from(PCM_SAMPLE_RATE)));
         let delay_frames_remaining =
             (resamplers[0].delay_seconds().max(0.0) * f64::from(PCM_SAMPLE_RATE)).round() as usize;
         Ok(Self {
@@ -81,7 +79,7 @@ impl SoundDecoder {
             duration_secs,
         })
     }
-    fn push(&mut self, frame: [f32; 2]) {
+    fn push(&mut self, frame: PcmFrame) {
         for (r, sample) in self.resamplers.iter_mut().zip(frame) {
             r.push(sample);
         }
@@ -97,7 +95,7 @@ impl SoundDecoder {
             }
         }
     }
-    pub fn next_frame(&mut self) -> anyhow::Result<Option<[f32; 2]>> {
+    pub fn next_frame(&mut self) -> anyhow::Result<Option<PcmFrame>> {
         loop {
             if self.eof
                 && self.output_frames
@@ -124,7 +122,7 @@ impl SoundDecoder {
                 // its padding to the musical duration.
                 let padding = (self.rate / 20) as usize + self.resamplers[0].input_chunk_size();
                 for _ in 0..padding {
-                    self.push([0.0; 2]);
+                    self.push(PcmFrame::default());
                 }
                 continue;
             };
@@ -149,7 +147,7 @@ impl SoundDecoder {
             self.input_frames += self.samples.len() / self.channels;
             for i in (0..self.samples.len()).step_by(self.channels) {
                 let l = finite_sample(self.samples[i]);
-                let r = if self.channels == 2 {
+                let r = if self.channels == PCM_CHANNELS {
                     finite_sample(self.samples[i + 1])
                 } else {
                     l

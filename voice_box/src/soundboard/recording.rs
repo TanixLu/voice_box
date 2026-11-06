@@ -13,6 +13,8 @@ use std::{
 
 use anyhow::ensure;
 
+use voice_box_shared::pcm_transport::{PCM_CHANNELS, PcmFrame};
+
 use crate::{
     audio::{capture::Recording, loopback, playback::playback},
     i18n::{Details, Message, Text, UserContext},
@@ -366,8 +368,9 @@ fn write_wave(
     audio: &Recording,
     selection: Selection,
 ) -> anyhow::Result<()> {
-    let samples = &audio.samples[selection.start * 2..selection.end * 2];
-    let bytes = u32::try_from(samples.len() * 4)?;
+    let frames = &audio.samples.as_chunks::<PCM_CHANNELS>().0[selection.range()];
+    let bytes = u32::try_from(size_of_val(frames))?;
+    let frame_bytes = size_of::<PcmFrame>() as u16;
     // IEEE float WAV with a fact chunk preserves recorded samples without quantization.
     output.write_all(b"RIFF")?;
     output.write_all(&(bytes + 50).to_le_bytes())?;
@@ -376,16 +379,16 @@ fn write_wave(
     output.write_all(&3_u16.to_le_bytes())?;
     output.write_all(&audio.channels.to_le_bytes())?;
     output.write_all(&audio.sample_rate.to_le_bytes())?;
-    output.write_all(&(audio.sample_rate * 8).to_le_bytes())?;
-    output.write_all(&8_u16.to_le_bytes())?;
+    output.write_all(&(audio.sample_rate * u32::from(frame_bytes)).to_le_bytes())?;
+    output.write_all(&frame_bytes.to_le_bytes())?;
     output.write_all(&32_u16.to_le_bytes())?;
     output.write_all(&0_u16.to_le_bytes())?;
     output.write_all(b"fact")?;
     output.write_all(&4_u32.to_le_bytes())?;
-    output.write_all(&u32::try_from(selection.end - selection.start)?.to_le_bytes())?;
+    output.write_all(&u32::try_from(frames.len())?.to_le_bytes())?;
     output.write_all(b"data")?;
     output.write_all(&bytes.to_le_bytes())?;
-    for sample in samples {
+    for sample in frames.as_flattened() {
         output.write_all(&sample.to_le_bytes())?;
     }
     Ok(())
@@ -400,15 +403,15 @@ fn save_clip(
     let name = name.trim();
     ensure!(is_valid_name(name), Text::InvalidRecordingName);
     ensure!(
-        audio.channels == 2 && audio.sample_rate == 48_000,
+        audio.channels as usize == PCM_CHANNELS && audio.sample_rate == 48_000,
         Text::InvalidRecordingFormat
     );
     ensure!(
-        selection.start < selection.end && selection.end <= audio.samples.len() / 2,
+        selection.start < selection.end && selection.end <= audio.samples.len() / PCM_CHANNELS,
         Text::InvalidSelection
     );
     // The float WAV header is 58 bytes; encode directly into the buffered BLOB writer.
-    let length = 58 + (selection.end - selection.start) as u64 * 8;
+    let length = 58 + (selection.end - selection.start) as u64 * size_of::<PcmFrame>() as u64;
     let duration_secs = (selection.end - selection.start) as f64 / f64::from(audio.sample_rate);
     insert_sound(connection, name, duration_secs, length, |output| {
         write_wave(output, audio, selection)

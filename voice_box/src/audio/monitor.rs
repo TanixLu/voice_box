@@ -1,4 +1,8 @@
-use std::time::{Duration, Instant};
+use std::{
+    mem::MaybeUninit,
+    slice,
+    time::{Duration, Instant},
+};
 
 use anyhow::ensure;
 use wasapi::{SampleType, WaveFormat};
@@ -11,7 +15,7 @@ use windows::{
 };
 
 use voice_box_shared::{
-    pcm_transport::{MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE},
+    pcm_transport::{PCM_CHANNELS, PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame},
     utils::{PeakLimiter, RateMatcher, wide_null},
 };
 
@@ -54,7 +58,7 @@ impl Monitor {
             32,
             &SampleType::Float,
             PCM_SAMPLE_RATE as usize,
-            2,
+            PCM_CHANNELS,
             Some(3),
         );
         let stream = Stream::with_buffer(client, &format, true, 200_000)?;
@@ -79,7 +83,7 @@ impl Monitor {
             _com_guard,
         })
     }
-    pub fn fill(&mut self, now: u64, sample: impl Fn(u64) -> [f32; 2]) -> anyhow::Result<()> {
+    pub fn fill(&mut self, now: u64, sample: impl Fn(u64) -> PcmFrame) -> anyhow::Result<()> {
         if self.started {
             // Buffer padding can stay constant during normal playback. The
             // device clock detects stalls even when WASAPI keeps returning Ok.
@@ -97,13 +101,21 @@ impl Monitor {
         let padding = unsafe { self.stream.client.GetCurrentPadding()? };
         let capacity = unsafe { self.stream.client.GetBufferSize()? };
         let expected = now + u64::from(padding);
-        if self.cursor == 0 || self.cursor.abs_diff(expected) > MAX_CURSOR_DRIFT_FRAMES {
+        if self.cursor == 0 || self.cursor.abs_diff(expected) > PCM_MAX_CURSOR_DRIFT_FRAMES {
             self.cursor = expected;
             self.matcher.reset();
         }
         let frames = capacity.saturating_sub(padding);
         if frames > 0 {
-            let data = unsafe { self.render.GetBuffer(frames)? }.cast::<f32>();
+            // WASAPI render memory need not contain initialized samples.
+            let data = unsafe {
+                slice::from_raw_parts_mut(
+                    self.render
+                        .GetBuffer(frames)?
+                        .cast::<MaybeUninit<PcmFrame>>(),
+                    frames as usize,
+                )
+            };
             let error = (i128::from(self.cursor) - i128::from(expected)) as f64
                 / f64::from(PCM_SAMPLE_RATE);
             let output = self.matcher.process(frames as usize, error, || {
@@ -111,12 +123,9 @@ impl Monitor {
                 self.cursor += 1;
                 stereo
             });
-            for (i, mut stereo) in output.as_chunks::<2>().0.iter().copied().enumerate() {
+            for (destination, mut stereo) in data.iter_mut().zip(output.iter().copied()) {
                 self.limiter.process_frame(&mut stereo);
-                unsafe {
-                    data.add(i * 2).write(stereo[0]);
-                    data.add(i * 2 + 1).write(stereo[1]);
-                }
+                destination.write(stereo);
             }
             unsafe {
                 self.render.ReleaseBuffer(frames, 0)?;

@@ -8,7 +8,8 @@ use anyhow::ensure;
 
 use voice_box_shared::{
     pcm_transport::{
-        DECODE_AHEAD_FRAMES, MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmWriter, pcm_frame,
+        PCM_DECODE_AHEAD_FRAMES, PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame, PcmWriter,
+        pcm_frame,
     },
     utils::transport_name,
 };
@@ -62,7 +63,7 @@ pub struct PlaybackOutcome {
 struct PlaybackBuffer {
     base: u64,
     played_until: u64,
-    samples: VecDeque<[f32; 2]>,
+    samples: VecDeque<PcmFrame>,
 }
 
 impl PlaybackBuffer {
@@ -71,7 +72,7 @@ impl PlaybackBuffer {
             base,
             played_until: base,
             samples: VecDeque::with_capacity(
-                (DECODE_AHEAD_FRAMES + MAX_CURSOR_DRIFT_FRAMES) as usize,
+                (PCM_DECODE_AHEAD_FRAMES + PCM_MAX_CURSOR_DRIFT_FRAMES) as usize,
             ),
         }
     }
@@ -91,7 +92,7 @@ impl PlaybackBuffer {
         self.played_until = self.played_until.max(now);
         // Retained history must not count toward progress or delay completion.
         let discard = now
-            .saturating_sub(MAX_CURSOR_DRIFT_FRAMES)
+            .saturating_sub(PCM_MAX_CURSOR_DRIFT_FRAMES)
             .saturating_sub(self.base)
             .min(self.samples.len() as u64);
         self.samples.drain(..discard as usize);
@@ -102,18 +103,19 @@ impl PlaybackBuffer {
             } else {
                 // A short underrun leaves a hole before newly decoded PCM.
                 // Keep older samples at their original timestamps for the speaker.
-                self.samples.resize((now - self.base) as usize, [0.0; 2]);
+                self.samples
+                    .resize((now - self.base) as usize, PcmFrame::default());
             }
         }
         played
     }
 
-    fn sample(&self, frame: u64) -> [f32; 2] {
+    fn sample(&self, frame: u64) -> PcmFrame {
         frame
             .checked_sub(self.base)
             .and_then(|offset| self.samples.get(offset as usize))
             .copied()
-            .unwrap_or([0.0; 2])
+            .unwrap_or_default()
     }
 }
 
@@ -277,7 +279,7 @@ pub fn run(
             decoded = 0;
             eof = false;
         }
-        let fill_end = (now + DECODE_AHEAD_FRAMES).min(pending.end() + 2400);
+        let fill_end = (now + PCM_DECODE_AHEAD_FRAMES).min(pending.end() + 2400);
         while !eof && pending.end() < fill_end {
             // Decode at most 50 ms per pass so stop/configuration stay responsive.
             match decoder.next_frame()? {
@@ -356,7 +358,7 @@ pub fn run(
         } else {
             monitor = None;
         }
-        if eof && pending.end().saturating_add(MAX_CURSOR_DRIFT_FRAMES) <= now {
+        if eof && pending.end().saturating_add(PCM_MAX_CURSOR_DRIFT_FRAMES) <= now {
             break "completed";
         }
         if progress.elapsed() >= Duration::from_millis(100) {

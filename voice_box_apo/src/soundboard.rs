@@ -20,7 +20,10 @@ use windows::Win32::System::Memory::{
 
 use voice_box_shared::{
     apo_cfg::ApoCfg,
-    pcm_transport::{MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmReader, Slot, pcm_frame},
+    pcm_transport::{
+        PCM_CHANNELS, PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame, PcmReader, PcmSlot,
+        pcm_frame,
+    },
     utils::{MAX_CHANNELS, PeakLimiter, RateMatcher, SampleFormat},
 };
 
@@ -36,7 +39,7 @@ const PHASES: usize = 256;
 
 #[repr(C)]
 struct Storage {
-    frames: [Slot; FRAMES],
+    frames: [PcmSlot; FRAMES],
     kernels: [[f32; TAPS]; PHASES],
     generation: AtomicU16,
     deadline: AtomicU64,
@@ -87,13 +90,13 @@ impl Resident {
             .pages = Some(pages);
         Ok(resident)
     }
-    fn sample(&self, position: f64, generation: u16, direct: bool) -> [f32; 2] {
+    fn sample(&self, position: f64, generation: u16, direct: bool) -> PcmFrame {
         let base = position.floor() as u64;
         if direct {
             return self.frames[base as usize % FRAMES].read(base, generation);
         }
         let phase = ((position.fract() * PHASES as f64) as usize).min(PHASES - 1);
-        let mut output = [0.0; 2];
+        let mut output = PcmFrame::default();
         for (i, &coefficient) in self.kernels[phase].iter().enumerate() {
             let frame = base
                 .saturating_add(i as u64)
@@ -201,7 +204,7 @@ impl Injection {
                 || (generation == self.generation && self.position < deadline));
         if injection_active
             && (generation != self.generation
-                || (self.position - now as f64).abs() > MAX_CURSOR_DRIFT_FRAMES as f64)
+                || (self.position - now as f64).abs() > PCM_MAX_CURSOR_DRIFT_FRAMES as f64)
         {
             self.position = now as f64;
             self.matcher.reset();
@@ -222,12 +225,11 @@ impl Injection {
         let mute_microphone = injection_active && !config.playback_include_microphone_audio;
         let mut values = [0.0_f32; MAX_CHANNELS];
         for (index, frame) in buffer.chunks_exact_mut(frame_bytes).enumerate() {
-            let sound_samples =
-                sound.map_or([0.0; 2], |sound| [sound[index * 2], sound[index * 2 + 1]]);
+            let sound_samples = sound.map_or(PcmFrame::default(), |sound| sound[index]);
             for (i, sample) in frame.chunks_exact(bytes).enumerate() {
                 let sound_sample = if self.channels == 1 {
-                    (sound_samples[0] + sound_samples[1]) * 0.5
-                } else if i < 2 {
+                    (sound_samples[0] + sound_samples[1]) / PCM_CHANNELS as f32
+                } else if i < PCM_CHANNELS {
                     sound_samples[i]
                 } else {
                     0.0

@@ -19,6 +19,11 @@ use windows::Win32::{
     },
 };
 
+use voice_box_shared::{
+    pcm_transport::{PCM_CHANNELS, PcmFrame},
+    utils::clamp_sample,
+};
+
 use crate::{
     audio::{Stream, capture::Recording, enumerator},
     i18n::{Text, UserContext},
@@ -27,7 +32,6 @@ use crate::{
 
 pub const MAX_RECORD_SECONDS: u32 = 600;
 const RATE: u32 = 48_000;
-const CHANNELS: usize = 2;
 
 fn clock_hns(frequency: i64) -> anyhow::Result<u64> {
     let mut counter = 0;
@@ -41,20 +45,16 @@ fn timestamp_frame(timestamp: u64, origin: u64) -> usize {
         as usize
 }
 
-fn place_packet(samples: &mut Vec<f32>, start: usize, frames: usize, data: Option<&[f32]>) {
-    let end = (start + frames) * CHANNELS;
-    samples.resize(samples.len().max(end), 0.0);
-    let destination = &mut samples[start * CHANNELS..end];
+fn place_packet(samples: &mut Vec<f32>, start: usize, frames: usize, data: Option<&[PcmFrame]>) {
+    let end = start + frames;
+    samples.resize(samples.len().max(end * PCM_CHANNELS), 0.0);
+    let destination = &mut samples.as_chunks_mut::<PCM_CHANNELS>().0[start..end];
     if let Some(data) = data {
         for (output, &input) in destination.iter_mut().zip(data) {
-            *output = if input.is_finite() {
-                input.clamp(-1.0, 1.0)
-            } else {
-                0.0
-            };
+            *output = input.map(clamp_sample);
         }
     } else {
-        destination.fill(0.0);
+        destination.fill(PcmFrame::default());
     }
 }
 
@@ -64,7 +64,14 @@ pub fn capture(stop: &AtomicBool, started: &dyn Fn()) -> anyhow::Result<Recordin
         .user_context(Text::DefaultSpeakerMissing)?;
     let client = unsafe { device.Activate::<IAudioClient>(CLSCTX_ALL, None)? };
     // Let the shared audio engine convert/downmix the endpoint's native format.
-    let format = WaveFormat::new(32, 32, &SampleType::Float, RATE as usize, CHANNELS, Some(3));
+    let format = WaveFormat::new(
+        32,
+        32,
+        &SampleType::Float,
+        RATE as usize,
+        PCM_CHANNELS,
+        Some(3),
+    );
     let stream = Stream::loopback(client, &format).user_context(Text::CaptureSpeaker)?;
     let capture: IAudioCaptureClient = unsafe { stream.client.GetService()? };
     let mut frequency = 0;
@@ -77,7 +84,7 @@ pub fn capture(stop: &AtomicBool, started: &dyn Fn()) -> anyhow::Result<Recordin
     let max_frames = RATE as usize * MAX_RECORD_SECONDS as usize;
     let mut recording = Recording {
         sample_rate: RATE,
-        channels: CHANNELS as u16,
+        channels: PCM_CHANNELS as u16,
         channel_mask: 3,
         samples: Vec::new(),
     };
@@ -119,7 +126,7 @@ pub fn capture(stop: &AtomicBool, started: &dyn Fn()) -> anyhow::Result<Recordin
                 let packet = if silent {
                     None
                 } else {
-                    Some(unsafe { slice::from_raw_parts(data.cast::<f32>(), count * CHANNELS) })
+                    Some(unsafe { slice::from_raw_parts(data.cast::<PcmFrame>(), count) })
                 };
                 place_packet(&mut recording.samples, start, count, packet);
             }
@@ -131,7 +138,7 @@ pub fn capture(stop: &AtomicBool, started: &dyn Fn()) -> anyhow::Result<Recordin
         }
         if let Some(elapsed_frames) = stopped_at {
             // Loopback may deliver no packets while all applications are silent.
-            recording.samples.resize(elapsed_frames * CHANNELS, 0.0);
+            recording.samples.resize(elapsed_frames * PCM_CHANNELS, 0.0);
             break;
         }
         stream.event.wait()?;

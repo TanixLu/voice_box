@@ -3614,6 +3614,7 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "atomic-write-file",
+ "num-traits",
  "rubato",
  "windows",
  "windows-core",
