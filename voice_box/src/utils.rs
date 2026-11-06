@@ -30,7 +30,7 @@ impl GainPercent {
         Self(value.min(Self::MAX_VALUE))
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub fn is_mute(&self) -> bool {
         self.0 == 0
     }
 

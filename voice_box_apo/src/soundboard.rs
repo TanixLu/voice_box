@@ -1,4 +1,4 @@
-//! Background IPC reader plus resident, bounded-work post-denoise mixing.
+//! Background IPC reader and resident host-rate playback for the shared DSP mixer.
 
 use std::{
     f64::consts::PI,
@@ -19,12 +19,12 @@ use windows::Win32::System::Memory::{
 };
 
 use voice_box_shared::{
-    apo_cfg::ApoCfg,
+    dsp::RateMatcher,
     pcm_transport::{
-        PCM_CHANNELS, PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame, PcmReader, PcmSlot,
-        pcm_frame, pcm_frame_with_frequency,
+        PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame, PcmReader, PcmSlot, pcm_frame,
+        pcm_frame_with_frequency,
     },
-    utils::{MAX_CHANNELS, PeakLimiter, RateMatcher, SampleFormat, win_qpf},
+    utils::win_qpf,
 };
 
 use crate::{
@@ -150,19 +150,10 @@ pub struct Injection {
     generation: u16,
     matcher: Resident<RateMatcher>,
     step: f64,
-    channels: usize,
-    format: SampleFormat,
-    limiter: PeakLimiter,
     stop: Arc<AtomicBool>,
 }
 impl Injection {
-    pub fn start(
-        name: String,
-        rate: f64,
-        channels: usize,
-        format: SampleFormat,
-        max_frames: usize,
-    ) -> anyhow::Result<Self> {
+    pub fn start(name: String, rate: f64, max_frames: usize) -> anyhow::Result<Self> {
         let clock_frequency = win_qpf();
         let state = SoundboardState::new(rate)?;
         let matcher = Resident::new(|| Ok(RateMatcher::new(rate, max_frames)))?;
@@ -179,9 +170,6 @@ impl Injection {
             generation: 0,
             matcher,
             step: f64::from(PCM_SAMPLE_RATE) / rate,
-            channels,
-            format,
-            limiter: PeakLimiter::new(rate),
             stop,
         })
     }
@@ -191,12 +179,9 @@ impl Injection {
     pub fn reset(&mut self) {
         self.generation = 0;
     }
-    pub fn mix(&mut self, buffer: &mut [u8], config: &ApoCfg) {
-        let bytes = self.format.bytes();
-        let frame_bytes = bytes * self.channels;
-        let frames = buffer.len() / frame_bytes;
+    pub fn read(&mut self, frames: usize) -> Option<&[PcmFrame]> {
         if frames == 0 {
-            return;
+            return None;
         }
         let now = pcm_frame_with_frequency(self.clock_frequency);
         let generation = self.state.generation.load(Acquire);
@@ -213,7 +198,7 @@ impl Injection {
             self.matcher.reset();
         }
         self.generation = if injection_active { generation } else { 0 };
-        let sound = if injection_active {
+        if injection_active {
             let error = (self.position - now as f64) / f64::from(PCM_SAMPLE_RATE);
             Some(self.matcher.process(frames, error, || {
                 let stereo = self
@@ -224,32 +209,6 @@ impl Injection {
             }))
         } else {
             None
-        };
-        let mute_microphone = injection_active && !config.playback_include_microphone_audio;
-        let mut values = [0.0_f32; MAX_CHANNELS];
-        for (index, frame) in buffer.chunks_exact_mut(frame_bytes).enumerate() {
-            let sound_samples = sound.map_or(PcmFrame::default(), |sound| sound[index]);
-            for (i, sample) in frame.chunks_exact(bytes).enumerate() {
-                let sound_sample = if self.channels == 1 {
-                    (sound_samples[0] + sound_samples[1]) / PCM_CHANNELS as f32
-                } else if i < PCM_CHANNELS {
-                    sound_samples[i]
-                } else {
-                    0.0
-                };
-                let microphone = if mute_microphone {
-                    0.0
-                } else {
-                    self.format.decode(sample) as f32
-                };
-                values[i] = microphone + sound_sample;
-            }
-            // Always limit the mixed output, including microphone-only frames.
-            // The speech lookahead limiter remains in the enhancement chain before this.
-            self.limiter.process_frame(&mut values[..self.channels]);
-            for (sample, &value) in frame.chunks_exact_mut(bytes).zip(&values[..self.channels]) {
-                self.format.encode(sample, f64::from(value));
-            }
         }
     }
 }

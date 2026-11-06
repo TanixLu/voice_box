@@ -1,147 +1,77 @@
-//! Single-threaded, preallocated UL-UNAS audio processing, independent of COM.
+//! Preallocated audio processing with capture-time gain envelopes.
+//! Audio and gain share a delay line; mute never resets buffers or stops models.
 
+mod channel;
+mod delay;
+mod enhancement;
 mod high_pass;
 mod limiter;
+mod ramp;
+mod rate_matcher;
+mod resampler;
+mod sample;
 
-use ul_unas_rs::{ALGORITHM_DELAY, Denoiser, FRAME_SIZE, SAMPLE_RATE};
-
-use crate::{
-    dsp::{high_pass::HighPass, limiter::Limiter},
-    utils::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, Resampler, SampleFormat},
+pub use self::{
+    limiter::ZeroLatencyLimiter,
+    rate_matcher::RateMatcher,
+    resampler::Resampler,
+    sample::{SampleFormat, clamp_sample, finite_sample},
 };
 
-struct Channel {
-    denoiser: Box<Denoiser>,
-    high_pass: HighPass,
-    input_resampler: Resampler,
-    output_resampler: Resampler,
-    input: [f32; FRAME_SIZE],
-    output: [f32; FRAME_SIZE],
-    pending: usize,
-    queue: Vec<f32>,
-    read: usize,
-    write: usize,
-    queued: usize,
-    prefill: usize,
+use self::{delay::FrameDelay, enhancement::Enhancement, limiter::LookaheadLimiter, ramp::Ramp};
+use crate::{apo_cfg::ApoCfg, pcm_transport::PcmFrame};
+
+pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
+pub const MAX_SAMPLE_RATE: f64 = 192_000.0;
+pub const MAX_CHANNELS: usize = 32;
+
+const RAMP_SECONDS: f64 = 0.020;
+
+/// A continuous float pipeline through the single final limiter.
+struct ProcessingChain {
+    enhancement: Enhancement,
+    delay: FrameDelay,
+    gain: Ramp,
+    limiter: LookaheadLimiter,
 }
 
-impl Channel {
-    fn new(sample_rate: f64) -> Self {
-        let rate = f64::from(SAMPLE_RATE);
-        let input_resampler = Resampler::new(sample_rate, rate);
-        let output_resampler = Resampler::new(rate, sample_rate);
-        let prefill = ((FRAME_SIZE + output_resampler.input_chunk_size()) as f64 * sample_rate
-            / rate)
-            .ceil() as usize
-            + input_resampler.input_chunk_size()
-            + 2;
-        let mut channel = Self {
-            denoiser: Box::new(Denoiser::new()),
-            high_pass: HighPass::new(rate),
-            input_resampler,
-            output_resampler,
-            input: [0.0; FRAME_SIZE],
-            output: [0.0; FRAME_SIZE],
-            pending: 0,
-            queue: vec![0.0; 2 * prefill + 8],
-            read: 0,
-            write: prefill,
-            queued: prefill,
-            prefill,
-        };
-        channel.reset();
-        channel
-    }
-
-    fn delay_frames(&self, sample_rate: f64) -> f64 {
-        self.prefill as f64
-            + ALGORITHM_DELAY as f64 * sample_rate / f64::from(SAMPLE_RATE)
-            + (self.input_resampler.delay_seconds() + self.output_resampler.delay_seconds())
-                * sample_rate
-    }
-
-    fn reset(&mut self) {
-        self.denoiser.reset();
-        self.high_pass.reset();
-        self.input_resampler.reset();
-        self.output_resampler.reset();
-        self.input.fill(0.0);
-        self.output.fill(0.0);
-        self.pending = 0;
-        self.queue.fill(0.0);
-        self.read = 0;
-        self.write = self.prefill;
-        self.queued = self.prefill;
-    }
-
-    fn process_sample(&mut self, input: f32) -> f32 {
-        self.input_resampler.push(input);
-        while let Some(sample) = self.input_resampler.next_sample() {
-            self.input[self.pending] = self.high_pass.process_sample(sample);
-            self.pending += 1;
-            if self.pending == FRAME_SIZE {
-                self.denoiser.process(&self.input, &mut self.output);
-                self.pending = 0;
-                for &sample in &self.output {
-                    self.output_resampler
-                        .push(if sample.is_finite() { sample } else { 0.0 });
-                    while let Some(sample) = self.output_resampler.next_sample() {
-                        debug_assert!(self.queued < self.queue.len());
-                        self.queue[self.write] = sample;
-                        self.write = (self.write + 1) % self.queue.len();
-                        self.queued += 1;
-                    }
-                }
-            }
-        }
-        debug_assert!(self.queued > 0);
-        if self.queued == 0 {
-            return 0.0;
-        }
-        let sample = self.queue[self.read];
-        self.read = (self.read + 1) % self.queue.len();
-        self.queued -= 1;
-        sample
-    }
-}
-
-/// The complete enhancement chain, allocated before processing starts.
-struct Enhancement {
-    channels: Vec<Channel>,
-    limiter: Limiter,
-    latency_frames: usize,
-}
-
-impl Enhancement {
-    fn new(sample_rate: f64, channels: usize) -> Self {
-        let channels: Vec<_> = (0..channels).map(|_| Channel::new(sample_rate)).collect();
-        let limiter = Limiter::new(sample_rate, channels.len());
-        let latency_frames = (channels[0].delay_frames(sample_rate)
-            + limiter.latency_frames() as f64)
-            .ceil() as usize;
+impl ProcessingChain {
+    fn new(sample_rate: f64, channels: usize, config: &ApoCfg) -> Self {
+        let enhancement = Enhancement::new(sample_rate, channels, config.denoising_enabled);
+        let delay = FrameDelay::new(enhancement.latency_frames(), channels);
         Self {
-            channels,
-            limiter,
-            latency_frames,
+            enhancement,
+            delay,
+            gain: Ramp::new(
+                config.gain_db.as_f32_gain(),
+                (sample_rate * RAMP_SECONDS).ceil() as usize,
+            ),
+            limiter: LookaheadLimiter::new(sample_rate, channels),
         }
     }
 
-    fn reset(&mut self) {
-        for channel in &mut self.channels {
-            channel.reset();
-        }
+    fn latency_frames(&self) -> usize {
+        self.enhancement.latency_frames() + self.limiter.latency_frames()
+    }
+
+    fn reset(&mut self, config: &ApoCfg) {
+        self.enhancement.reset(config.denoising_enabled);
+        self.delay.reset();
+        self.gain.reset(config.gain_db.as_f32_gain());
         self.limiter.reset();
     }
 
-    fn process_frame(&mut self, input: &[u8], format: SampleFormat, gain: f32, output: &mut [f32]) {
-        for ((sample, channel), value) in input
-            .chunks_exact(format.bytes())
-            .zip(&mut self.channels)
-            .zip(output.iter_mut())
-        {
-            *value = channel.process_sample(format.decode(sample) as f32) * gain;
+    fn configure(&mut self, config: &ApoCfg) {
+        self.gain.set_target(config.gain_db.as_f32_gain());
+        self.enhancement.set_enabled(config.denoising_enabled);
+    }
+
+    fn process_microphone(&mut self, samples: &mut [f32], enhanced: &mut [f32]) {
+        let wet = self.enhancement.process_frame(samples, enhanced);
+        let gain = self.delay.process_frame(samples, self.gain.next());
+        for (dry, &enhanced) in samples.iter_mut().zip(enhanced.iter()) {
+            *dry = (*dry * (1.0 - wet) + enhanced * wet) * gain;
         }
-        self.limiter.process_frame(output);
     }
 }
 
@@ -150,13 +80,8 @@ impl Enhancement {
 pub struct AudioProcessor {
     format: SampleFormat,
     frame_bytes: usize,
-    enhancement: Option<Enhancement>,
-    bypass: Vec<u8>,
-    bypass_position: usize,
-    warmup: usize,
+    chain: Option<ProcessingChain>,
     latency_hns: i64,
-    muted: bool,
-    enabled: bool,
 }
 
 impl AudioProcessor {
@@ -165,6 +90,7 @@ impl AudioProcessor {
         channels: usize,
         sample_rate: f64,
         process_effect: bool,
+        config: &ApoCfg,
     ) -> windows::core::Result<Self> {
         if !(1..=MAX_CHANNELS).contains(&channels)
             || !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sample_rate)
@@ -174,35 +100,23 @@ impl AudioProcessor {
             ));
         }
         let frame_bytes = channels * format.bytes();
-        let enhancement = process_effect.then(|| Enhancement::new(sample_rate, channels));
-        let latency_frames = enhancement
-            .as_ref()
-            .map_or(0, |effect| effect.latency_frames);
-        let mut state = Self {
+        // RAW-mode instances keep only format metadata and introduce no delay.
+        let chain = process_effect.then(|| ProcessingChain::new(sample_rate, channels, config));
+        let latency_frames = chain.as_ref().map_or(0, ProcessingChain::latency_frames);
+        Ok(Self {
             format,
             frame_bytes,
-            enhancement,
-            bypass: Vec::new(),
-            bypass_position: 0,
-            warmup: 0,
+            chain,
             latency_hns: (latency_frames as f64 / sample_rate * 10_000_000.0).ceil() as i64,
-            muted: false,
-            enabled: false,
-        };
-        // Preserve native sample bytes, including Float64 precision and PCM
-        // padding bits. Bypass introduces only the host's fixed processing delay.
-        state.bypass = vec![state.silence_byte(); latency_frames * frame_bytes];
-        Ok(state)
+        })
     }
 
-    pub fn reset(&mut self) {
-        if let Some(effect) = &mut self.enhancement {
-            effect.reset();
+    /// Discard pending audio and controls and start a stream with this config.
+    /// An enabled denoiser resumes fully wet after its buffers have warmed up.
+    pub fn reset(&mut self, config: &ApoCfg) {
+        if let Some(chain) = &mut self.chain {
+            chain.reset(config);
         }
-        let silence = self.silence_byte();
-        self.bypass.fill(silence);
-        self.bypass_position = 0;
-        self.warmup = self.latency_frames();
     }
 
     pub fn silence_byte(&self) -> u8 {
@@ -222,71 +136,56 @@ impl AudioProcessor {
     }
 
     pub fn latency_frames(&self) -> usize {
-        self.enhancement
+        self.chain
             .as_ref()
-            .map_or(0, |effect| effect.latency_frames)
+            .map_or(0, ProcessingChain::latency_frames)
     }
 
-    pub fn process_with_config(&mut self, buffer: &mut [u8], gain: f32, enabled: bool) {
+    /// Mix host-rate stereo playback before limiting and encoding exactly once.
+    /// Microphone gain travels with input audio and takes effect at the output
+    /// after `latency_frames()`. A zero gain does not stop the denoiser.
+    /// `buffer` must contain complete frames; playback, when present, has one
+    /// stereo frame per buffer frame. No playback means microphone-only output.
+    pub fn process_with_config(
+        &mut self,
+        buffer: &mut [u8],
+        config: &ApoCfg,
+        playback: Option<&[PcmFrame]>,
+    ) {
         let format = self.format;
-        if gain == 0.0 {
-            buffer.fill(self.silence_byte());
-            if !self.muted {
-                self.reset();
-                self.muted = true;
-            }
-            return;
-        }
-        self.muted = false;
-        let Some(effect) = &mut self.enhancement else {
-            apply_gain(buffer, format, gain);
+        let Some(chain) = &mut self.chain else {
             return;
         };
-        if self.enabled != enabled {
-            if enabled {
-                // Restart all DSP state before re-entering the enhancement
-                // path; no old filter, model or limiter history is resumed.
-                effect.reset();
-                self.warmup = effect.latency_frames;
-            }
-            self.enabled = enabled;
-        }
+        debug_assert!(buffer.len().is_multiple_of(self.frame_bytes));
+        debug_assert!(playback.is_none_or(|sound| sound.len() == buffer.len() / self.frame_bytes));
+        chain.configure(config);
+        let channels = chain.enhancement.channels();
         let mut samples = [0.0; MAX_CHANNELS];
-        let samples = &mut samples[..effect.channels.len()];
-        for frame in buffer.chunks_exact_mut(self.frame_bytes) {
-            if enabled {
-                effect.process_frame(frame, format, gain, samples);
+        let samples = &mut samples[..channels];
+        let mut enhanced = [0.0; MAX_CHANNELS];
+        let enhanced = &mut enhanced[..channels];
+        for (index, frame) in buffer.chunks_exact_mut(self.frame_bytes).enumerate() {
+            for (sample, value) in frame.chunks_exact(format.bytes()).zip(samples.iter_mut()) {
+                *value = format.decode(sample) as f32;
             }
-            let delayed =
-                &mut self.bypass[self.bypass_position..self.bypass_position + self.frame_bytes];
-            frame.swap_with_slice(delayed);
-            self.bypass_position += self.frame_bytes;
-            if self.bypass_position == self.bypass.len() {
-                self.bypass_position = 0;
-            }
-            if enabled && self.warmup == 0 {
-                for (sample, &output) in frame.chunks_exact_mut(format.bytes()).zip(samples.iter())
-                {
-                    format.encode(sample, f64::from(output));
+            chain.process_microphone(samples, enhanced);
+            if let Some(playback) = playback {
+                if !config.playback_include_microphone_audio {
+                    samples.fill(0.0);
                 }
-            } else {
-                // Keep the aligned bypass audible while newly enabled DSP fills
-                // its buffers. Disabled DSP is never called.
-                apply_gain(frame, format, gain);
-                self.warmup = self.warmup.saturating_sub(1);
+                let stereo = playback[index];
+                if channels == 1 {
+                    samples[0] += stereo[0] * 0.5 + stereo[1] * 0.5;
+                } else {
+                    for (value, sound) in samples.iter_mut().zip(stereo) {
+                        *value += sound;
+                    }
+                }
+            }
+            chain.limiter.process_frame(samples);
+            for (sample, &value) in frame.chunks_exact_mut(format.bytes()).zip(samples.iter()) {
+                format.encode(sample, f64::from(value));
             }
         }
-    }
-}
-
-fn apply_gain(buffer: &mut [u8], format: SampleFormat, gain: f32) {
-    if gain == 1.0 {
-        // Leave all sample bytes untouched instead of decoding, narrowing or
-        // re-quantizing them.
-        return;
-    }
-    for sample in buffer.chunks_exact_mut(format.bytes()) {
-        let output = format.decode(sample) * f64::from(gain);
-        format.encode(sample, output);
     }
 }

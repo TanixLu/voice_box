@@ -1,4 +1,6 @@
-//! Linked-channel sample-peak limiting after resampling and user gain.
+//! Linked-channel sample-peak limiters with and without lookahead.
+
+use super::sample::finite_sample;
 
 const LOOKAHEAD_SECONDS: f64 = 0.002;
 const RELEASE_SECONDS: f64 = 0.050;
@@ -6,7 +8,7 @@ const RELEASE_SECONDS: f64 = 0.050;
 const CEILING: f32 = 0.891_250_9;
 const TINY: f32 = 1.0e-20;
 
-pub struct Limiter {
+pub struct LookaheadLimiter {
     channels: usize,
     delay_frames: usize,
     delay: Vec<f32>,
@@ -20,7 +22,7 @@ pub struct Limiter {
     release_step: f64,
 }
 
-impl Limiter {
+impl LookaheadLimiter {
     /// Formats and resource bounds have already been validated by AudioProcessor.
     pub fn new(sample_rate: f64, channels: usize) -> Self {
         debug_assert!(sample_rate.is_finite() && sample_rate > 0.0 && channels > 0);
@@ -119,6 +121,42 @@ impl Limiter {
         self.window_position += 1;
         if self.window_position == self.window_frames {
             self.window_position = 0;
+        }
+    }
+}
+
+/// Linked-channel output limiting with immediate attack and no added latency.
+pub struct ZeroLatencyLimiter {
+    gain: f64,
+    release_step: f64,
+}
+
+impl ZeroLatencyLimiter {
+    pub fn new(sample_rate: f64) -> Self {
+        Self {
+            gain: 1.0,
+            release_step: -(-1.0 / (sample_rate * RELEASE_SECONDS)).exp_m1(),
+        }
+    }
+
+    pub fn process_frame(&mut self, frame: &mut [f32]) {
+        let mut peak = 0.0_f32;
+        for sample in frame.iter_mut() {
+            *sample = finite_sample(*sample);
+            peak = peak.max(sample.abs());
+        }
+        let safe_gain = if peak > CEILING {
+            f64::from(CEILING) / f64::from(peak)
+        } else {
+            1.0
+        };
+        self.gain = (self.gain + (1.0 - self.gain) * self.release_step).min(safe_gain);
+        if safe_gain == 1.0 && (1.0 - self.gain) < 1e-5 {
+            self.gain = 1.0;
+        }
+        for sample in frame {
+            // The clamp only guards rounding; the linked gain controls peaks.
+            *sample = ((f64::from(*sample) * self.gain) as f32).clamp(-CEILING, CEILING);
         }
     }
 }

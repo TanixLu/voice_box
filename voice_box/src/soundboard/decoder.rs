@@ -10,8 +10,8 @@ use symphonia::core::{
 };
 
 use voice_box_shared::{
+    dsp::{MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, Resampler, finite_sample},
     pcm_transport::{PCM_CHANNELS, PCM_SAMPLE_RATE, PcmFrame},
-    utils::{MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, Resampler, finite_sample},
 };
 
 use crate::i18n::{Text, UserContext};

@@ -15,8 +15,9 @@ use windows::{
 };
 
 use voice_box_shared::{
+    dsp::{RateMatcher, ZeroLatencyLimiter},
     pcm_transport::{PCM_CHANNELS, PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame},
-    utils::{PeakLimiter, RateMatcher, wide_null},
+    utils::wide_null,
 };
 
 use crate::{
@@ -38,7 +39,7 @@ pub struct Monitor {
     last_position: u64,
     last_progress: Instant,
     matcher: RateMatcher,
-    limiter: PeakLimiter,
+    limiter: ZeroLatencyLimiter,
     _com_guard: ComGuard,
 }
 impl Monitor {
@@ -79,7 +80,7 @@ impl Monitor {
             last_position: 0,
             last_progress: Instant::now(),
             matcher: RateMatcher::new(f64::from(PCM_SAMPLE_RATE), capacity as usize),
-            limiter: PeakLimiter::new(f64::from(PCM_SAMPLE_RATE)),
+            limiter: ZeroLatencyLimiter::new(f64::from(PCM_SAMPLE_RATE)),
             _com_guard,
         })
     }

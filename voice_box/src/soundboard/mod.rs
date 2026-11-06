@@ -323,11 +323,11 @@ impl Soundboard {
         let Some(sound) = self.library.sounds.get(index) else {
             return;
         };
-        if self.settings.playback_speaker_output_gain_percent.is_zero()
+        if self.settings.playback_speaker_output_gain_percent.is_mute()
             && self
                 .settings
                 .playback_microphone_output_gain_percent
-                .is_zero()
+                .is_mute()
         {
             self.set_error(Text::OutputsMuted.into());
             return;

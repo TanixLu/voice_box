@@ -6,11 +6,8 @@ use anyhow::ensure;
 
 use voice_box_shared::{
     apo_cfg::ApoCfg,
-    dsp::AudioProcessor,
-    utils::{
-        MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, PREVIEW_MAX_RECORD_SECONDS,
-        PREVIEW_MAX_SAMPLES, SampleFormat,
-    },
+    dsp::{AudioProcessor, MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
+    utils::{PREVIEW_MAX_RECORD_SECONDS, PREVIEW_MAX_SAMPLES},
 };
 
 use crate::{
@@ -31,15 +28,15 @@ pub fn process(recording: &Recording, config: &ApoCfg) -> anyhow::Result<Vec<f32
                 <= recording.sample_rate as usize * PREVIEW_MAX_RECORD_SECONDS as usize,
         Text::InvalidRecordingData
     );
-    let gain = config.gain_db.as_f32_gain();
-    if gain == 0.0 {
+    if config.gain_db.is_mute() {
         return Ok(vec![0.0; samples.len()]);
     }
     let mut processor = AudioProcessor::new(
         SampleFormat::Float32,
         channels,
         f64::from(recording.sample_rate),
-        config.denoising_enabled,
+        true,
+        config,
     )
     .user_context(Text::ProcessPreview)?;
     // Drain the resamplers, model, FIFO and limiter, then remove the latency
@@ -54,7 +51,7 @@ pub fn process(recording: &Recording, config: &ApoCfg) -> anyhow::Result<Vec<f32
             buffer.len() * size_of::<f32>(),
         )
     };
-    processor.process_with_config(bytes, gain, config.denoising_enabled);
+    processor.process_with_config(bytes, config, None);
     buffer.copy_within(delay_samples.., 0);
     buffer.truncate(samples.len());
     Ok(buffer)

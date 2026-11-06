@@ -20,8 +20,8 @@ use windows::Win32::{
 };
 
 use voice_box_shared::{
+    dsp::clamp_sample,
     pcm_transport::{PCM_CHANNELS, PcmFrame},
-    utils::clamp_sample,
 };
 
 use crate::{

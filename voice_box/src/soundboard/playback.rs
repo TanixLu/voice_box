@@ -226,7 +226,7 @@ pub fn run(
                 }
                 generation = 0;
             }
-            if !next.microphone_gain_percent.is_zero() && generation == 0 {
+            if !next.microphone_gain_percent.is_mute() && generation == 0 {
                 let result = (|| -> anyhow::Result<()> {
                     if mapping.is_none() {
                         let guid =
@@ -247,7 +247,7 @@ pub fn run(
                     let error = Message::MicrophoneOutputFailed {
                         error: Details::new(error),
                     };
-                    if next.speaker_gain_percent.is_zero() {
+                    if next.speaker_gain_percent.is_mute() {
                         return Err(anyhow::anyhow!(error));
                     }
                     tracing::warn!("{error}");
@@ -262,7 +262,7 @@ pub fn run(
                 pending.reset(now + 4800);
             }
         }
-        if settings.microphone_gain_percent.is_zero() && settings.speaker_gain_percent.is_zero() {
+        if settings.microphone_gain_percent.is_mute() && settings.speaker_gain_percent.is_mute() {
             break "outputs_muted";
         }
         if settings.hold_hotkey != held_binding {
@@ -323,7 +323,7 @@ pub fn run(
             }
             mapping.publish(generation, pending.end(), now);
         }
-        if !settings.speaker_gain_percent.is_zero() && !monitor_failed {
+        if !settings.speaker_gain_percent.is_mute() && !monitor_failed {
             let result = (|| -> anyhow::Result<()> {
                 if monitor.is_none() {
                     monitor = Some(Monitor::open(settings.speaker_device.as_deref())?);
@@ -342,7 +342,7 @@ pub fn run(
                     })
             })();
             if let Err(error) = result {
-                if settings.microphone_gain_percent.is_zero() {
+                if settings.microphone_gain_percent.is_mute() {
                     return Err(error.user_context(Text::SpeakerPlaybackFailed));
                 }
                 monitor = None;

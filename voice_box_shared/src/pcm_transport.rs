@@ -37,7 +37,10 @@ use windows::{
     core::{PCWSTR, w},
 };
 
-use crate::utils::{finite_sample, wide_null, win_qpf, win_try_create_named_mutex};
+use crate::{
+    dsp::finite_sample,
+    utils::{wide_null, win_qpf, win_try_create_named_mutex},
+};
 
 pub const PCM_SAMPLE_RATE: u32 = 48_000;
 pub const PCM_CHANNELS: usize = 2;

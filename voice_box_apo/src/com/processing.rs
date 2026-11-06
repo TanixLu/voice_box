@@ -245,6 +245,7 @@ pub unsafe extern "system" fn lock_for_process(
             input_format.dwSamplesPerFrame as usize,
             f64::from(input_format.fFramesPerSecond),
             unsafe { (*object).effect_enabled.load(Ordering::Relaxed) },
+            &unsafe { (*object).config.load() },
         )
     }) {
         Ok(dsp) => dsp,
@@ -272,8 +273,6 @@ pub unsafe extern "system" fn lock_for_process(
             match crate::soundboard::Injection::start(
                 name,
                 f64::from(input_format.fFramesPerSecond),
-                input_format.dwSamplesPerFrame as usize,
-                sample_format,
                 max_input_frames as usize,
             ) {
                 Ok(injection) => {
@@ -404,8 +403,9 @@ pub unsafe extern "system" fn process(
     } else {
         return;
     }
+    let apo_config = unsafe { (*object).config.load() };
     if unsafe { (*object).reset_requested.swap(false, Ordering::Relaxed) } {
-        dsp.reset();
+        dsp.reset(&apo_config);
         if let Some(injection) = unsafe { &mut *(*object).injection.get() } {
             injection.reset();
         }
@@ -413,16 +413,10 @@ pub unsafe extern "system" fn process(
     let mut output_flags = input.u32BufferFlags;
     if unsafe { (*object).effect_enabled.load(Ordering::Relaxed) } {
         let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
-        let config = unsafe { &(*object).config };
-        let apo_config = config.load();
-        dsp.process_with_config(
-            buffer,
-            apo_config.gain_db.as_f32_gain(),
-            apo_config.denoising_enabled,
-        );
-        if let Some(injection) = unsafe { &mut *(*object).injection.get() } {
-            injection.mix(buffer, &apo_config);
-        }
+        let playback = unsafe { &mut *(*object).injection.get() }
+            .as_mut()
+            .and_then(|injection| injection.read(input.u32ValidFrameCount as usize));
+        dsp.process_with_config(buffer, &apo_config, playback);
         // The DSP materializes every frame, including startup padding and mute.
         // Keep these packets valid even when all samples are zero: legacy capture
         // clients can stop recording when initial packets are BUFFER_SILENT.

@@ -17,9 +17,9 @@ use windows::{
     core::{Interface, PCWSTR},
 };
 
-use voice_box_shared::utils::{
-    MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, PREVIEW_MAX_RECORD_SECONDS,
-    PREVIEW_MAX_SAMPLES, SampleFormat, wide_null,
+use voice_box_shared::{
+    dsp::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
+    utils::{PREVIEW_MAX_RECORD_SECONDS, PREVIEW_MAX_SAMPLES, wide_null},
 };
 
 use crate::{
