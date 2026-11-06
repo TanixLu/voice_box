@@ -214,18 +214,19 @@ pub unsafe extern "system" fn lock_for_process(
         );
     };
     let resident_pages = if unsafe { (*object).resident_pages.is_none() } {
-        let mut ranges = crate::memory::image_ranges();
-        ranges.push((object as usize, size_of::<ApoCom>()));
-        let config = unsafe { (*object).config.as_ref() };
-        ranges.push((config as *const _ as usize, size_of_val(config)));
-        match crate::memory::LockedPages::new(ranges) {
+        match crate::memory::image_ranges().and_then(|mut ranges| {
+            ranges.push((object as usize, size_of::<ApoCom>()));
+            let config = unsafe { (*object).config.as_ref() };
+            ranges.push((config as *const _ as usize, size_of_val(config)));
+            crate::memory::LockedPages::new(ranges)
+        }) {
             Ok(pages) => Some(pages),
             Err(error) => {
                 return log_lock_failure(
                     object,
                     input_count,
                     output_count,
-                    "cannot lock processing code and control data",
+                    "cannot query or lock processing code and control data",
                     error.code(),
                 );
             }

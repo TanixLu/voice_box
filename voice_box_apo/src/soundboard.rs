@@ -22,9 +22,9 @@ use voice_box_shared::{
     apo_cfg::ApoCfg,
     pcm_transport::{
         PCM_CHANNELS, PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame, PcmReader, PcmSlot,
-        pcm_frame,
+        pcm_frame, pcm_frame_with_frequency,
     },
-    utils::{MAX_CHANNELS, PeakLimiter, RateMatcher, SampleFormat},
+    utils::{MAX_CHANNELS, PeakLimiter, RateMatcher, SampleFormat, win_qpf},
 };
 
 use crate::{
@@ -145,6 +145,7 @@ fn kernels(rate: f64) -> Box<[[f32; TAPS]]> {
 
 pub struct Injection {
     state: Arc<Resident>,
+    clock_frequency: i64,
     position: f64,
     generation: u16,
     matcher: crate::memory::Resident<RateMatcher>,
@@ -162,6 +163,7 @@ impl Injection {
         format: SampleFormat,
         max_frames: usize,
     ) -> anyhow::Result<Self> {
+        let clock_frequency = win_qpf();
         let state = Resident::new(rate)?;
         let matcher = crate::memory::Resident::new(|| RateMatcher::new(rate, max_frames), true)?;
         let background = Arc::clone(&state);
@@ -172,6 +174,7 @@ impl Injection {
         })?;
         Ok(Self {
             state,
+            clock_frequency,
             position: 0.0,
             generation: 0,
             matcher,
@@ -195,7 +198,7 @@ impl Injection {
         if frames == 0 {
             return;
         }
-        let now = pcm_frame();
+        let now = pcm_frame_with_frequency(self.clock_frequency);
         let generation = self.state.generation.load(Acquire);
         let deadline = self.state.deadline.load(Acquire) as f64;
         // Let a lagging source finish its tail after its scheduled QPC end.

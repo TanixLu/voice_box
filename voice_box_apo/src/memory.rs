@@ -87,14 +87,24 @@ fn capture<T>(create: impl FnOnce() -> T) -> (T, Capture) {
     (value, allocations)
 }
 
-/// Any page leases drop before the value, while all its allocations still exist.
-/// Only constructed and destroyed on non-real-time control threads.
+/// A value whose construction-time allocations can be kept resident.
+///
+/// Only constructed and destroyed on non-real-time control threads. Page leases
+/// drop before the value, while all captured allocations must still exist.
 pub struct Resident<T> {
     _pages: Option<LockedPages>,
     value: Box<T>,
 }
 
 impl<T> Resident<T> {
+    /// When locking pages, create every required heap allocation inside `create`,
+    /// on this thread, through the DLL's Rust allocator. Existing allocations,
+    /// other threads' allocations and direct native allocations are not captured.
+    ///
+    /// Until this resident is dropped, mutation through `DerefMut` or interior
+    /// mutability must preserve all captured allocations and their sizes. Do not
+    /// grow, shrink, replace or free buffers, or add allocations used by RT code;
+    /// page leases are not updated after construction.
     pub fn new(create: impl FnOnce() -> T, lock_pages: bool) -> windows::core::Result<Self> {
         let (value, pages) = if lock_pages {
             let (value, allocations) = capture(|| Box::new(create()));
@@ -274,14 +284,17 @@ impl Drop for LockedPages {
 
 /// Include the loaded image's readable code/data, notably the denoiser's static
 /// weights and Rubato's vtables. These aren't visible to allocation capture.
-pub fn image_ranges() -> Vec<(usize, usize)> {
+pub fn image_ranges() -> windows::core::Result<Vec<(usize, usize)>> {
     let mut info = MEMORY_BASIC_INFORMATION::default();
-    unsafe {
+    let queried = unsafe {
         VirtualQuery(
             Some(image_ranges as *const () as *const c_void),
             &mut info,
             size_of_val(&info),
-        );
+        )
+    };
+    if queried == 0 {
+        return Err(windows::core::Error::from_thread());
     }
     let base = info.AllocationBase;
     let mut address = base as usize;
@@ -300,7 +313,10 @@ pub fn image_ranges() -> Vec<(usize, usize)> {
                 size_of_val(&info),
             )
         };
-        if queried == 0 || info.AllocationBase != base {
+        if queried == 0 {
+            return Err(windows::core::Error::from_thread());
+        }
+        if info.AllocationBase != base {
             break;
         }
         if info.State == MEM_COMMIT
@@ -311,5 +327,5 @@ pub fn image_ranges() -> Vec<(usize, usize)> {
         }
         address += info.RegionSize;
     }
-    ranges
+    Ok(ranges)
 }
