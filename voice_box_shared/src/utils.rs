@@ -13,8 +13,9 @@ use std::{
 use anyhow::ensure;
 use atomic_write_file::AtomicWriteFile;
 use rubato::{
-    Async, FixedAsync, Resampler as _, SincInterpolationParameters, SincInterpolationType,
-    WindowFunction, audioadapter_buffers::direct::SequentialSlice,
+    Adjustable as _, Async, FixedAsync, Resampler as _, Resizable as _,
+    SincInterpolationParameters, SincInterpolationType, Slip, WindowFunction,
+    audioadapter_buffers::direct::{InterleavedSlice, SequentialSlice},
 };
 use windows::Win32::{
     Foundation::{ERROR_ALREADY_EXISTS, GetLastError},
@@ -48,6 +49,10 @@ pub const COPYRIGHT: &str = "Copyright (C) 2026 Tanix";
 pub const PREVIEW_PROCESS_SYMBOL: &[u8] = b"VoiceBoxPreviewProcess\0";
 pub const PREVIEW_MAX_RECORD_SECONDS: u32 = 60;
 pub const PREVIEW_MAX_SAMPLES: usize = 16 * 1024 * 1024;
+
+pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
+pub const MAX_SAMPLE_RATE: f64 = 192_000.0;
+pub const MAX_CHANNELS: usize = 32;
 
 // The GUI and APO DLL share this signature. No Rust objects or allocations
 // cross the DLL boundary; input/output contain frames * channels samples.
@@ -254,53 +259,9 @@ impl GainDb {
     }
 }
 
-pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
-pub const MAX_SAMPLE_RATE: f64 = 192_000.0;
-pub const MAX_CHANNELS: usize = 32;
-
 /// Reject invalid samples without clipping floating-point processing headroom.
 pub fn finite_sample(value: f32) -> f32 {
     if value.is_finite() { value } else { 0.0 }
-}
-
-/// Linked-channel output limiting with immediate attack and no added latency.
-pub struct PeakLimiter {
-    gain: f64,
-    release_step: f64,
-}
-
-impl PeakLimiter {
-    // -1 dBFS, rounded down to leave room for f32 rounding.
-    const CEILING: f32 = 0.891_250_9;
-
-    pub fn new(sample_rate: f64) -> Self {
-        Self {
-            gain: 1.0,
-            release_step: -(-1.0 / (sample_rate * 0.05)).exp_m1(),
-        }
-    }
-
-    pub fn process_frame(&mut self, frame: &mut [f32]) {
-        let mut peak = 0.0_f32;
-        for sample in frame.iter_mut() {
-            *sample = finite_sample(*sample);
-            peak = peak.max(sample.abs());
-        }
-        let safe_gain = if peak > Self::CEILING {
-            f64::from(Self::CEILING) / f64::from(peak)
-        } else {
-            1.0
-        };
-        self.gain = (self.gain + (1.0 - self.gain) * self.release_step).min(safe_gain);
-        if safe_gain == 1.0 && (1.0 - self.gain) < 1e-5 {
-            self.gain = 1.0;
-        }
-        for sample in frame {
-            // The clamp only guards rounding; the linked gain controls peaks.
-            *sample =
-                ((f64::from(*sample) * self.gain) as f32).clamp(-Self::CEILING, Self::CEILING);
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -501,5 +462,119 @@ impl Resampler {
         let sample = self.output[self.read];
         self.read += 1;
         Some(sample)
+    }
+}
+
+/// Bounded clock-drift correction after nominal-rate conversion, for stereo effects only.
+pub struct RateMatcher {
+    engine: Slip<f32>,
+    input: Vec<f32>,
+    output: Vec<f32>,
+    sample_rate: f64,
+    filtered_error: f64,
+}
+
+impl RateMatcher {
+    const FILTER_SECONDS: f64 = 0.5;
+    const CORRECTION_SECONDS: f64 = 5.0;
+    const MAX_RATIO_OFFSET: f64 = 0.002;
+
+    pub fn new(sample_rate: f64, max_output_frames: usize) -> Self {
+        let engine = Slip::new(max_output_frames.max(4), 2, FixedAsync::Output)
+            .expect("UNREACHABLE: stereo Slip with at least four frames should be valid");
+        Self {
+            input: vec![0.0; engine.input_frames_max() * 2],
+            output: vec![0.0; engine.output_frames_max() * 2],
+            engine,
+            sample_rate,
+            filtered_error: 0.0,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.filtered_error = 0.0;
+        self.engine.reset();
+    }
+
+    /// `error_seconds` is source read position minus expected position.
+    /// Calls `read` once per consumed input frame; returns interleaved stereo.
+    pub fn process(
+        &mut self,
+        frames: usize,
+        error_seconds: f64,
+        mut read: impl FnMut() -> [f32; 2],
+    ) -> &[f32] {
+        if frames == 0 {
+            return &self.output[..0];
+        }
+        let duration = frames as f64 / self.sample_rate;
+        let alpha = -(-duration / Self::FILTER_SECONDS).exp_m1();
+        self.filtered_error += alpha * (error_seconds - self.filtered_error);
+        if frames < 4 {
+            for frame in self.output[..frames * 2].as_chunks_mut::<2>().0 {
+                *frame = read();
+            }
+            return &self.output[..frames * 2];
+        }
+        let ratio = (1.0 + self.filtered_error / Self::CORRECTION_SECONDS)
+            .clamp(1.0 - Self::MAX_RATIO_OFFSET, 1.0 + Self::MAX_RATIO_OFFSET);
+        self.engine
+            .set_chunk_size(frames)
+            .expect("UNREACHABLE: output block should fit the prepared maximum");
+        self.engine
+            .set_resample_ratio(ratio, false)
+            .expect("UNREACHABLE: bounded drift ratio should fit Slip's range");
+        let input_frames = self.engine.input_frames_next();
+        for frame in self.input[..input_frames * 2].as_chunks_mut::<2>().0 {
+            *frame = read();
+        }
+        let input = InterleavedSlice::new(&self.input, 2, input_frames)
+            .expect("UNREACHABLE: input view should fit the prepared buffer");
+        let mut output = InterleavedSlice::new_mut(&mut self.output, 2, frames)
+            .expect("UNREACHABLE: output view should fit the prepared buffer");
+        self.engine
+            .process_into_buffer(&input, &mut output, None)
+            .expect("UNREACHABLE: prepared buffers should satisfy Slip requirements");
+        &self.output[..frames * 2]
+    }
+}
+
+/// Linked-channel output limiting with immediate attack and no added latency.
+pub struct PeakLimiter {
+    gain: f64,
+    release_step: f64,
+}
+
+impl PeakLimiter {
+    // -1 dBFS, rounded down to leave room for f32 rounding.
+    const CEILING: f32 = 0.891_250_9;
+
+    pub fn new(sample_rate: f64) -> Self {
+        Self {
+            gain: 1.0,
+            release_step: -(-1.0 / (sample_rate * 0.05)).exp_m1(),
+        }
+    }
+
+    pub fn process_frame(&mut self, frame: &mut [f32]) {
+        let mut peak = 0.0_f32;
+        for sample in frame.iter_mut() {
+            *sample = finite_sample(*sample);
+            peak = peak.max(sample.abs());
+        }
+        let safe_gain = if peak > Self::CEILING {
+            f64::from(Self::CEILING) / f64::from(peak)
+        } else {
+            1.0
+        };
+        self.gain = (self.gain + (1.0 - self.gain) * self.release_step).min(safe_gain);
+        if safe_gain == 1.0 && (1.0 - self.gain) < 1e-5 {
+            self.gain = 1.0;
+        }
+        for sample in frame {
+            // The clamp only guards rounding; the linked gain controls peaks.
+            *sample =
+                ((f64::from(*sample) * self.gain) as f32).clamp(-Self::CEILING, Self::CEILING);
+        }
     }
 }

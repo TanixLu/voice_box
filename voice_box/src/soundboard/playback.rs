@@ -7,7 +7,9 @@ use std::{
 use anyhow::ensure;
 
 use voice_box_shared::{
-    pcm_transport::{DECODE_AHEAD_FRAMES, PCM_SAMPLE_RATE, PcmWriter, pcm_frame},
+    pcm_transport::{
+        DECODE_AHEAD_FRAMES, MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmWriter, pcm_frame,
+    },
     utils::transport_name,
 };
 
@@ -69,7 +71,7 @@ impl PlaybackBuffer {
             base,
             played_until: base,
             samples: VecDeque::with_capacity(
-                (DECODE_AHEAD_FRAMES + Monitor::MAX_CURSOR_DRIFT_FRAMES) as usize,
+                (DECODE_AHEAD_FRAMES + MAX_CURSOR_DRIFT_FRAMES) as usize,
             ),
         }
     }
@@ -89,7 +91,7 @@ impl PlaybackBuffer {
         self.played_until = self.played_until.max(now);
         // Retained history must not count toward progress or delay completion.
         let discard = now
-            .saturating_sub(Monitor::MAX_CURSOR_DRIFT_FRAMES)
+            .saturating_sub(MAX_CURSOR_DRIFT_FRAMES)
             .saturating_sub(self.base)
             .min(self.samples.len() as u64);
         self.samples.drain(..discard as usize);
@@ -171,7 +173,9 @@ pub fn run(
     let mut configure = Some(settings.clone());
     let reason = 'playback: loop {
         let mut now = pcm_frame();
-        played += pending.advance(now);
+        // Keep the EOF timestamp fixed while lagging outputs finish reading.
+        let advance_to = if eof { now.min(pending.end()) } else { now };
+        played += pending.advance(advance_to);
         // Coalesce rapid requests before decoding or touching WASAPI. A stop
         // cancels pending replacements; the controller retains later requests.
         let replacement = match drain_commands(commands, &mut configure) {
@@ -352,7 +356,7 @@ pub fn run(
         } else {
             monitor = None;
         }
-        if eof && pending.end() <= now {
+        if eof && pending.end().saturating_add(MAX_CURSOR_DRIFT_FRAMES) <= now {
             break "completed";
         }
         if progress.elapsed() >= Duration::from_millis(100) {

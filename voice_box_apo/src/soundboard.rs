@@ -20,8 +20,8 @@ use windows::Win32::System::Memory::{
 
 use voice_box_shared::{
     apo_cfg::ApoCfg,
-    pcm_transport::{PCM_SAMPLE_RATE, PcmReader, Slot, pcm_frame},
-    utils::{MAX_CHANNELS, PeakLimiter, SampleFormat},
+    pcm_transport::{MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmReader, Slot, pcm_frame},
+    utils::{MAX_CHANNELS, PeakLimiter, RateMatcher, SampleFormat},
 };
 
 use crate::{
@@ -143,6 +143,8 @@ fn kernels(rate: f64) -> Box<[[f32; TAPS]]> {
 pub struct Injection {
     state: Arc<Resident>,
     position: f64,
+    generation: u16,
+    matcher: crate::memory::Resident<RateMatcher>,
     step: f64,
     channels: usize,
     format: SampleFormat,
@@ -155,8 +157,10 @@ impl Injection {
         rate: f64,
         channels: usize,
         format: SampleFormat,
+        max_frames: usize,
     ) -> anyhow::Result<Self> {
         let state = Resident::new(rate)?;
+        let matcher = crate::memory::Resident::new(|| RateMatcher::new(rate, max_frames), true)?;
         let background = Arc::clone(&state);
         let stop = Arc::new(AtomicBool::new(false));
         let background_stop = Arc::clone(&stop);
@@ -166,6 +170,8 @@ impl Injection {
         Ok(Self {
             state,
             position: 0.0,
+            generation: 0,
+            matcher,
             step: f64::from(PCM_SAMPLE_RATE) / rate,
             channels,
             format,
@@ -176,26 +182,48 @@ impl Injection {
     pub fn cancellation(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.stop)
     }
+    pub fn reset(&mut self) {
+        self.generation = 0;
+    }
     pub fn mix(&mut self, buffer: &mut [u8], config: &ApoCfg) {
+        let bytes = self.format.bytes();
+        let frame_bytes = bytes * self.channels;
+        let frames = buffer.len() / frame_bytes;
+        if frames == 0 {
+            return;
+        }
         let now = pcm_frame();
         let generation = self.state.generation.load(Acquire);
-        if self.position == 0.0
-            || (self.position - now as f64).abs() > f64::from(PCM_SAMPLE_RATE) * 0.02
+        let deadline = self.state.deadline.load(Acquire) as f64;
+        // Let a lagging source finish its tail after its scheduled QPC end.
+        let injection_active = generation != 0
+            && ((now as f64) < deadline
+                || (generation == self.generation && self.position < deadline));
+        if injection_active
+            && (generation != self.generation
+                || (self.position - now as f64).abs() > MAX_CURSOR_DRIFT_FRAMES as f64)
         {
             self.position = now as f64;
+            self.matcher.reset();
         }
-        let injection_active = generation != 0 && now < self.state.deadline.load(Acquire);
+        self.generation = if injection_active { generation } else { 0 };
+        let sound = if injection_active {
+            let error = (self.position - now as f64) / f64::from(PCM_SAMPLE_RATE);
+            Some(self.matcher.process(frames, error, || {
+                let stereo = self
+                    .state
+                    .sample(self.position, generation, self.step == 1.0);
+                self.position += self.step;
+                stereo
+            }))
+        } else {
+            None
+        };
         let mute_microphone = injection_active && !config.playback_include_microphone_audio;
-        let bytes = self.format.bytes();
         let mut values = [0.0_f32; MAX_CHANNELS];
-        for frame in buffer.chunks_exact_mut(bytes * self.channels) {
-            let sound_samples = if injection_active {
-                self.state
-                    .sample(self.position, generation, self.step == 1.0)
-            } else {
-                [0.0; 2]
-            };
-            self.position += self.step;
+        for (index, frame) in buffer.chunks_exact_mut(frame_bytes).enumerate() {
+            let sound_samples =
+                sound.map_or([0.0; 2], |sound| [sound[index * 2], sound[index * 2 + 1]]);
             for (i, sample) in frame.chunks_exact(bytes).enumerate() {
                 let sound_sample = if self.channels == 1 {
                     (sound_samples[0] + sound_samples[1]) * 0.5

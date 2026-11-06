@@ -264,6 +264,7 @@ pub unsafe extern "system" fn lock_for_process(
                 f64::from(input_format.fFramesPerSecond),
                 input_format.dwSamplesPerFrame as usize,
                 sample_format,
+                max_input_frames as usize,
             ) {
                 Ok(injection) => {
                     (*object).injection_stop = Some(injection.cancellation());
@@ -394,6 +395,9 @@ pub unsafe extern "system" fn process(
     }
     if unsafe { (*object).reset_requested.swap(false, Ordering::Relaxed) } {
         unsafe { (&mut *(*object).dsp.get()).reset() };
+        if let Some(injection) = unsafe { &mut *(*object).injection.get() } {
+            injection.reset();
+        }
     }
     let mut output_flags = input.u32BufferFlags;
     if unsafe { (*object).effect_enabled.load(Ordering::Relaxed) } {

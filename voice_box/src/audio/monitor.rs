@@ -11,8 +11,8 @@ use windows::{
 };
 
 use voice_box_shared::{
-    pcm_transport::PCM_SAMPLE_RATE,
-    utils::{PeakLimiter, wide_null},
+    pcm_transport::{MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE},
+    utils::{PeakLimiter, RateMatcher, wide_null},
 };
 
 use crate::{
@@ -33,12 +33,11 @@ pub struct Monitor {
     cursor: u64,
     last_position: u64,
     last_progress: Instant,
+    matcher: RateMatcher,
     limiter: PeakLimiter,
     _com_guard: ComGuard,
 }
 impl Monitor {
-    pub const MAX_CURSOR_DRIFT_FRAMES: u64 = 960; // 20 ms at 48 kHz.
-
     pub fn open(device_id: Option<&str>) -> anyhow::Result<Self> {
         let _com_guard = ComGuard::mta()?;
         let enumerator = enumerator()?;
@@ -61,10 +60,11 @@ impl Monitor {
         let stream = Stream::with_buffer(client, &format, true, 200_000)?;
         let render = unsafe { stream.client.GetService()? };
         let clock = unsafe { stream.client.GetService()? };
+        let capacity = unsafe { stream.client.GetBufferSize()? };
         let id = unsafe { device.GetId()? };
         let endpoint_id = unsafe { id.to_string() };
         unsafe { CoTaskMemFree(Some(id.0.cast())) };
-        tracing::info!(endpoint_id = ?endpoint_id, buffer_frames = unsafe { stream.client.GetBufferSize()? },
+        tracing::info!(endpoint_id = ?endpoint_id, buffer_frames = capacity,
             "Speaker playback stream opened (shared mode)");
         Ok(Self {
             render,
@@ -74,6 +74,7 @@ impl Monitor {
             cursor: 0,
             last_position: 0,
             last_progress: Instant::now(),
+            matcher: RateMatcher::new(f64::from(PCM_SAMPLE_RATE), capacity as usize),
             limiter: PeakLimiter::new(f64::from(PCM_SAMPLE_RATE)),
             _com_guard,
         })
@@ -96,14 +97,21 @@ impl Monitor {
         let padding = unsafe { self.stream.client.GetCurrentPadding()? };
         let capacity = unsafe { self.stream.client.GetBufferSize()? };
         let expected = now + u64::from(padding);
-        if self.cursor == 0 || self.cursor.abs_diff(expected) > Self::MAX_CURSOR_DRIFT_FRAMES {
+        if self.cursor == 0 || self.cursor.abs_diff(expected) > MAX_CURSOR_DRIFT_FRAMES {
             self.cursor = expected;
+            self.matcher.reset();
         }
         let frames = capacity.saturating_sub(padding);
         if frames > 0 {
             let data = unsafe { self.render.GetBuffer(frames)? }.cast::<f32>();
-            for i in 0..frames as usize {
-                let mut stereo = sample(self.cursor + i as u64);
+            let error = (i128::from(self.cursor) - i128::from(expected)) as f64
+                / f64::from(PCM_SAMPLE_RATE);
+            let output = self.matcher.process(frames as usize, error, || {
+                let stereo = sample(self.cursor);
+                self.cursor += 1;
+                stereo
+            });
+            for (i, mut stereo) in output.as_chunks::<2>().0.iter().copied().enumerate() {
                 self.limiter.process_frame(&mut stereo);
                 unsafe {
                     data.add(i * 2).write(stereo[0]);
@@ -113,7 +121,6 @@ impl Monitor {
             unsafe {
                 self.render.ReleaseBuffer(frames, 0)?;
             }
-            self.cursor += u64::from(frames);
         }
         if !self.started {
             unsafe {
