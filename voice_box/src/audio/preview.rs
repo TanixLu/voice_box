@@ -1,98 +1,61 @@
-//! Use the installed APO DLL for offline preview, unloading after processing.
+//! Process and align recordings with the same DSP used by the real-time APO.
 
-use std::fs;
+use std::{mem::size_of, slice};
 
-use anyhow::{anyhow, ensure};
-use windows::{
-    Win32::{
-        Foundation::{FreeLibrary, HMODULE},
-        System::LibraryLoader::{
-            GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32,
-            LoadLibraryExW,
-        },
-    },
-    core::{PCSTR, PCWSTR},
-};
+use anyhow::ensure;
 
 use voice_box_shared::{
     apo_cfg::ApoCfg,
-    utils::{PREVIEW_PROCESS_SYMBOL, PreviewProcessFn, apo_dll_path, wide_null},
+    dsp::AudioProcessor,
+    utils::{
+        MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, PREVIEW_MAX_RECORD_SECONDS,
+        PREVIEW_MAX_SAMPLES, SampleFormat,
+    },
 };
 
 use crate::{
     audio::capture::Recording,
     i18n::{Text, UserContext},
-    static_data::apo_dll_bytes,
 };
 
-struct PreviewDll(HMODULE);
-
-impl PreviewDll {
-    fn load() -> anyhow::Result<Self> {
-        let apo_dll_path = apo_dll_path();
-        // The unversioned ABI requires the installed DLL to match this EXE.
-        ensure!(
-            fs::read(&apo_dll_path)
-                .user_context(Text::ReadPreviewComponent)?
-                .as_slice()
-                == apo_dll_bytes(),
-            Text::PreviewComponentOutdated
-        );
-        let path = wide_null(&apo_dll_path);
-        let module = unsafe {
-            LoadLibraryExW(
-                PCWSTR(path.as_ptr()),
-                None,
-                LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
-            )
-        }
-        .user_context(Text::LoadPreviewComponent)?;
-        Ok(Self(module))
-    }
-
-    fn resolve_process_function(&self) -> anyhow::Result<PreviewProcessFn> {
-        let address = unsafe { GetProcAddress(self.0, PCSTR(PREVIEW_PROCESS_SYMBOL.as_ptr())) }
-            .ok_or_else(|| anyhow!(Text::PreviewInterfaceMissing))?;
-        // Matching DLL bytes above ensure this shared signature is compatible.
-        Ok(unsafe {
-            std::mem::transmute::<unsafe extern "system" fn() -> isize, PreviewProcessFn>(address)
-        })
-    }
-}
-
-impl Drop for PreviewDll {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = FreeLibrary(self.0);
-        }
-    }
-}
-
 pub fn process(recording: &Recording, config: &ApoCfg) -> anyhow::Result<Vec<f32>> {
+    let channels = usize::from(recording.channels);
+    let samples = &recording.samples;
     ensure!(
-        recording.channels > 0
-            && !recording.samples.is_empty()
-            && recording
-                .samples
-                .len()
-                .is_multiple_of(recording.channels as usize),
+        (MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&f64::from(recording.sample_rate))
+            && (1..=MAX_CHANNELS).contains(&channels)
+            && !samples.is_empty()
+            && samples.len().is_multiple_of(channels)
+            && samples.len() <= PREVIEW_MAX_SAMPLES
+            && samples.len() / channels
+                <= recording.sample_rate as usize * PREVIEW_MAX_RECORD_SECONDS as usize,
         Text::InvalidRecordingData
     );
-    let dll = PreviewDll::load()?;
-    let process = dll.resolve_process_function()?;
-    let mut output = vec![0.0; recording.samples.len()];
-    unsafe {
-        process(
-            recording.sample_rate,
-            u32::from(recording.channels),
-            u32::try_from(recording.samples.len() / recording.channels as usize)?,
-            config.gain_db.as_i8(),
-            u32::from(config.denoising_enabled),
-            recording.samples.as_ptr(),
-            output.as_mut_ptr(),
-        )
-        .ok()
+    let gain = config.gain_db.as_f32_gain();
+    if gain == 0.0 {
+        return Ok(vec![0.0; samples.len()]);
     }
+    let mut processor = AudioProcessor::new(
+        SampleFormat::Float32,
+        channels,
+        f64::from(recording.sample_rate),
+        config.denoising_enabled,
+    )
     .user_context(Text::ProcessPreview)?;
-    Ok(output)
+    // Drain the resamplers, model, FIFO and limiter, then remove the latency
+    // so original and processed playback have the same length and start point.
+    let delay_samples = processor.latency_frames() * channels;
+    let mut buffer = samples.to_vec();
+    buffer.resize(samples.len() + delay_samples, 0.0);
+    // The float buffer is initialized and exclusively borrowed for this call.
+    let bytes = unsafe {
+        slice::from_raw_parts_mut(
+            buffer.as_mut_ptr().cast::<u8>(),
+            buffer.len() * size_of::<f32>(),
+        )
+    };
+    processor.process_with_config(bytes, gain, config.denoising_enabled);
+    buffer.copy_within(delay_samples.., 0);
+    buffer.truncate(samples.len());
+    Ok(buffer)
 }

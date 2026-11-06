@@ -34,10 +34,6 @@ catalog! {
     PreviewIncomplete => ("Preview did not complete. Please try again.", "试听操作未完成，请重试。");
     Recording => ("Recording…", "正在录音…");
     Playing => ("Playing…", "正在播放…");
-    ReadPreviewComponent => ("Cannot read the preview component. Install or update the plugin first", "无法读取试听组件，请先安装或更新插件");
-    PreviewComponentOutdated => ("The installed preview component does not match this application. Update the plugin first", "已安装的试听组件与当前程序不一致，请先更新插件");
-    LoadPreviewComponent => ("Failed to load the preview component. Install or update the plugin first", "加载试听组件失败，请先安装或更新插件");
-    PreviewInterfaceMissing => ("The preview component is missing its processing interface. Update VoiceBox", "试听组件缺少处理接口，请更新 VoiceBox");
     InvalidRecordingData => ("Invalid recording data", "录音数据无效");
     ProcessPreview => ("Failed to process the preview recording", "处理试听录音失败");
     OpenPlaybackDevice => ("Failed to open the playback device", "开启播放设备失败");

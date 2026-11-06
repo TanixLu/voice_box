@@ -12,6 +12,8 @@ use windows::Win32::{
 };
 use windows_core::{HRESULT, Interface};
 
+use voice_box_shared::dsp::AudioProcessor;
+
 use crate::{
     com::{
         ApoCom, DspAccess,
@@ -22,6 +24,7 @@ use crate::{
         object_from,
     },
     etw::{self, apo_log},
+    memory::Resident,
 };
 
 pub unsafe extern "system" fn reset(this: *mut c_void) -> HRESULT {
@@ -234,24 +237,30 @@ pub unsafe extern "system" fn lock_for_process(
     } else {
         None
     };
-    if let Err(error) = unsafe {
-        (&mut *(*object).dsp.get()).prepare(
+    // Capture all DSP allocations before publishing the prepared state.
+    // A failed construction or page lock leaves the previous state intact.
+    let dsp = match Resident::new(|| {
+        AudioProcessor::new(
             sample_format,
             input_format.dwSamplesPerFrame as usize,
             f64::from(input_format.fFramesPerSecond),
-            (*object).effect_enabled.load(Ordering::Relaxed),
-            true,
+            unsafe { (*object).effect_enabled.load(Ordering::Relaxed) },
         )
-    } {
-        return log_lock_failure(
-            object,
-            input_count,
-            output_count,
-            "cannot allocate or lock speech enhancement state",
-            error.code(),
-        );
-    }
+    }) {
+        Ok(dsp) => dsp,
+        Err(error) => {
+            return log_lock_failure(
+                object,
+                input_count,
+                output_count,
+                "cannot allocate or lock speech enhancement state",
+                error.code(),
+            );
+        }
+    };
+    let latency_hns = dsp.latency_hns();
     unsafe {
+        *(*object).dsp.get() = Some(dsp);
         if let Some(pages) = resident_pages {
             (*object).resident_pages = Some(pages);
         }
@@ -278,9 +287,7 @@ pub unsafe extern "system" fn lock_for_process(
                 ),
             }
         }
-        (*object)
-            .latency_hns
-            .store((&*(*object).dsp.get()).latency_hns(), Ordering::Relaxed);
+        (*object).latency_hns.store(latency_hns, Ordering::Relaxed);
         (*object)
             .input_channels
             .store(input_format.dwSamplesPerFrame, Ordering::Relaxed);
@@ -319,9 +326,9 @@ pub unsafe extern "system" fn unlock_for_process(this: *mut c_void) -> HRESULT {
         stop.store(true, Ordering::Relaxed);
     }
     // Unlock is non-RT. Normally no callback remains; if one is still exiting,
-    // retain its storage until the next prepare or final destruction.
+    // retain its storage until the next lock or final destruction.
     if let Some(_access) = unsafe { DspAccess::try_acquire(&(*object).dsp_in_use) } {
-        unsafe { *(*object).dsp.get() = Default::default() };
+        unsafe { *(*object).dsp.get() = None };
     }
     apo_log!(
         etw::INFO,
@@ -364,6 +371,9 @@ pub unsafe extern "system" fn process(
     if !unsafe { (*object).locked.load(Ordering::Relaxed) } {
         return;
     }
+    let Some(dsp) = (unsafe { &mut *(*object).dsp.get() }) else {
+        return;
+    };
     if input.u32ValidFrameCount > unsafe { (*object).max_input_frames.load(Ordering::Relaxed) }
         || input.u32ValidFrameCount > unsafe { (*object).max_output_frames.load(Ordering::Relaxed) }
     {
@@ -375,7 +385,7 @@ pub unsafe extern "system" fn process(
     if output.pBuffer == 0 {
         return;
     }
-    let bytes_per_frame = unsafe { (&*(*object).dsp.get()).frame_bytes() };
+    let bytes_per_frame = dsp.frame_bytes();
     let Some(bytes) = (input.u32ValidFrameCount as usize).checked_mul(bytes_per_frame) else {
         return;
     };
@@ -389,13 +399,13 @@ pub unsafe extern "system" fn process(
             unsafe { ptr::copy(source, destination, bytes) };
         }
     } else if input.u32BufferFlags == BUFFER_SILENT {
-        let silence = unsafe { (&*(*object).dsp.get()).silence_byte() };
+        let silence = dsp.silence_byte();
         unsafe { ptr::write_bytes(destination, silence, bytes) };
     } else {
         return;
     }
     if unsafe { (*object).reset_requested.swap(false, Ordering::Relaxed) } {
-        unsafe { (&mut *(*object).dsp.get()).reset() };
+        dsp.reset();
         if let Some(injection) = unsafe { &mut *(*object).injection.get() } {
             injection.reset();
         }
@@ -405,13 +415,11 @@ pub unsafe extern "system" fn process(
         let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
         let config = unsafe { &(*object).config };
         let apo_config = config.load();
-        unsafe {
-            (&mut *(*object).dsp.get()).process_with_config(
-                buffer,
-                apo_config.gain_db.as_f32_gain(),
-                apo_config.denoising_enabled,
-            )
-        };
+        dsp.process_with_config(
+            buffer,
+            apo_config.gain_db.as_f32_gain(),
+            apo_config.denoising_enabled,
+        );
         if let Some(injection) = unsafe { &mut *(*object).injection.get() } {
             injection.mix(buffer, &apo_config);
         }

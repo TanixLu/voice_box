@@ -1,4 +1,4 @@
-//! Cancellable background recording, DLL preview and playback.
+//! Cancellable background recording, offline preview and playback.
 
 use std::{
     sync::{

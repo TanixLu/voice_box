@@ -3602,7 +3602,6 @@ name = "voice_box_apo"
 version = "1.0.0"
 dependencies = [
  "anyhow",
- "ul_unas_rs",
  "voice_box_shared",
  "windows",
  "windows-core",
@@ -3616,6 +3615,7 @@ dependencies = [
  "atomic-write-file",
  "num-traits",
  "rubato",
+ "ul_unas_rs",
  "windows",
  "windows-core",
 ]

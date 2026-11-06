@@ -5,13 +5,9 @@ mod limiter;
 
 use ul_unas_rs::{ALGORITHM_DELAY, Denoiser, FRAME_SIZE, SAMPLE_RATE};
 
-use voice_box_shared::utils::{
-    MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, Resampler, SampleFormat,
-};
-
 use crate::{
     dsp::{high_pass::HighPass, limiter::Limiter},
-    memory::Resident,
+    utils::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, Resampler, SampleFormat},
 };
 
 struct Channel {
@@ -109,7 +105,7 @@ impl Channel {
     }
 }
 
-/// The complete enhancement chain, prepared during LockForProcess.
+/// The complete enhancement chain, allocated before processing starts.
 struct Enhancement {
     channels: Vec<Channel>,
     limiter: Limiter,
@@ -149,70 +145,9 @@ impl Enhancement {
     }
 }
 
-#[derive(Default)]
+/// A prepared processor with fixed allocations. Construct and drop off the
+/// real-time thread; processing and reset never resize its buffers.
 pub struct AudioProcessor {
-    state: Option<Resident<ProcessorState>>,
-}
-
-impl AudioProcessor {
-    pub fn prepare(
-        &mut self,
-        format: SampleFormat,
-        channels: usize,
-        sample_rate: f64,
-        process_effect: bool,
-        lock_pages: bool,
-    ) -> windows::core::Result<()> {
-        if !(1..=MAX_CHANNELS).contains(&channels)
-            || !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sample_rate)
-        {
-            return Err(windows::core::Error::from_hresult(
-                windows::Win32::Foundation::E_INVALIDARG,
-            ));
-        }
-        // Real-time use locks every live allocation, including dependency-owned
-        // scratch buffers; offline preview needs no page residency.
-        // Publish only after all locks succeed; a failed relock preserves state.
-        let prepared = Resident::new(
-            || ProcessorState::new(format, channels, sample_rate, process_effect),
-            lock_pages,
-        )?;
-        self.state = Some(prepared);
-        Ok(())
-    }
-
-    pub fn reset(&mut self) {
-        if let Some(state) = &mut self.state {
-            state.reset();
-        }
-    }
-
-    pub fn silence_byte(&self) -> u8 {
-        self.state.as_ref().map_or(0, |state| state.silence_byte())
-    }
-
-    pub fn frame_bytes(&self) -> usize {
-        self.state.as_ref().map_or(0, |state| state.frame_bytes())
-    }
-
-    pub fn latency_hns(&self) -> i64 {
-        self.state.as_ref().map_or(0, |state| state.latency_hns())
-    }
-
-    pub fn latency_frames(&self) -> usize {
-        self.state
-            .as_ref()
-            .map_or(0, |state| state.latency_frames())
-    }
-
-    pub fn process_with_config(&mut self, buffer: &mut [u8], gain: f32, enabled: bool) -> bool {
-        self.state
-            .as_mut()
-            .is_none_or(|state| state.process_with_config(buffer, gain, enabled))
-    }
-}
-
-struct ProcessorState {
     format: SampleFormat,
     frame_bytes: usize,
     enhancement: Option<Enhancement>,
@@ -224,8 +159,20 @@ struct ProcessorState {
     enabled: bool,
 }
 
-impl ProcessorState {
-    fn new(format: SampleFormat, channels: usize, sample_rate: f64, process_effect: bool) -> Self {
+impl AudioProcessor {
+    pub fn new(
+        format: SampleFormat,
+        channels: usize,
+        sample_rate: f64,
+        process_effect: bool,
+    ) -> windows::core::Result<Self> {
+        if !(1..=MAX_CHANNELS).contains(&channels)
+            || !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sample_rate)
+        {
+            return Err(windows::core::Error::from_hresult(
+                windows::Win32::Foundation::E_INVALIDARG,
+            ));
+        }
         let frame_bytes = channels * format.bytes();
         let enhancement = process_effect.then(|| Enhancement::new(sample_rate, channels));
         let latency_frames = enhancement
@@ -245,7 +192,7 @@ impl ProcessorState {
         // Preserve native sample bytes, including Float64 precision and PCM
         // padding bits. Bypass introduces only the host's fixed processing delay.
         state.bypass = vec![state.silence_byte(); latency_frames * frame_bytes];
-        state
+        Ok(state)
     }
 
     pub fn reset(&mut self) {
@@ -280,7 +227,7 @@ impl ProcessorState {
             .map_or(0, |effect| effect.latency_frames)
     }
 
-    pub fn process_with_config(&mut self, buffer: &mut [u8], gain: f32, enabled: bool) -> bool {
+    pub fn process_with_config(&mut self, buffer: &mut [u8], gain: f32, enabled: bool) {
         let format = self.format;
         if gain == 0.0 {
             buffer.fill(self.silence_byte());
@@ -288,11 +235,12 @@ impl ProcessorState {
                 self.reset();
                 self.muted = true;
             }
-            return true;
+            return;
         }
         self.muted = false;
         let Some(effect) = &mut self.enhancement else {
-            return apply_gain(buffer, format, gain);
+            apply_gain(buffer, format, gain);
+            return;
         };
         if self.enabled != enabled {
             if enabled {
@@ -303,7 +251,6 @@ impl ProcessorState {
             }
             self.enabled = enabled;
         }
-        let mut silent = true;
         let mut samples = [0.0; MAX_CHANNELS];
         let samples = &mut samples[..effect.channels.len()];
         for frame in buffer.chunks_exact_mut(self.frame_bytes) {
@@ -321,30 +268,25 @@ impl ProcessorState {
                 for (sample, &output) in frame.chunks_exact_mut(format.bytes()).zip(samples.iter())
                 {
                     format.encode(sample, f64::from(output));
-                    silent &= output == 0.0;
                 }
             } else {
                 // Keep the aligned bypass audible while newly enabled DSP fills
                 // its buffers. Disabled DSP is never called.
-                silent &= apply_gain(frame, format, gain);
+                apply_gain(frame, format, gain);
                 self.warmup = self.warmup.saturating_sub(1);
             }
         }
-        silent
     }
 }
 
-fn apply_gain(buffer: &mut [u8], format: SampleFormat, gain: f32) -> bool {
+fn apply_gain(buffer: &mut [u8], format: SampleFormat, gain: f32) {
     if gain == 1.0 {
-        // BUFFER_VALID is also valid for zero-filled audio. Leave all sample
-        // bytes untouched instead of decoding, narrowing or re-quantizing them.
-        return buffer.is_empty();
+        // Leave all sample bytes untouched instead of decoding, narrowing or
+        // re-quantizing them.
+        return;
     }
-    let mut silent = true;
     for sample in buffer.chunks_exact_mut(format.bytes()) {
         let output = format.decode(sample) * f64::from(gain);
         format.encode(sample, output);
-        silent &= output == 0.0;
     }
-    silent
 }

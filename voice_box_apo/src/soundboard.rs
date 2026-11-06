@@ -29,7 +29,7 @@ use voice_box_shared::{
 
 use crate::{
     etw::{self, apo_log},
-    memory::LockedPages,
+    memory::{LockedPages, Resident},
     worker,
 };
 
@@ -44,21 +44,21 @@ struct Storage {
     generation: AtomicU16,
     deadline: AtomicU64,
 }
-struct Resident {
+struct SoundboardState {
     pointer: NonNull<Storage>,
     pages: Option<LockedPages>,
 }
 // The allocation is owned through Arc. Samples and metadata are atomic; filter
 // coefficients are immutable after construction, and freeing needs exclusive Drop.
-unsafe impl Send for Resident {}
-unsafe impl Sync for Resident {}
-impl std::ops::Deref for Resident {
+unsafe impl Send for SoundboardState {}
+unsafe impl Sync for SoundboardState {}
+impl std::ops::Deref for SoundboardState {
     type Target = Storage;
     fn deref(&self) -> &Storage {
         unsafe { self.pointer.as_ref() }
     }
 }
-impl Resident {
+impl SoundboardState {
     fn new(rate: f64) -> anyhow::Result<Arc<Self>> {
         // A dedicated page allocation prevents unlocking a shared heap page that
         // another APO instance still relies on. All fields have valid zero bits.
@@ -75,7 +75,7 @@ impl Resident {
         unsafe {
             (*pointer.as_ptr()).kernels.copy_from_slice(&kernels(rate));
         }
-        let mut resident = Arc::new(Self {
+        let mut state = Arc::new(Self {
             pointer,
             pages: None,
         });
@@ -83,12 +83,12 @@ impl Resident {
         // for both in the same quota and page-reference registry as the DSP.
         let pages = LockedPages::new([
             (pointer.as_ptr() as usize, size_of::<Storage>()),
-            (Arc::as_ptr(&resident) as usize, size_of::<Self>()),
+            (Arc::as_ptr(&state) as usize, size_of::<Self>()),
         ])?;
-        Arc::get_mut(&mut resident)
+        Arc::get_mut(&mut state)
             .expect("UNREACHABLE: newly created soundboard state should be uniquely owned")
             .pages = Some(pages);
-        Ok(resident)
+        Ok(state)
     }
     fn sample(&self, position: f64, generation: u16, direct: bool) -> PcmFrame {
         let base = position.floor() as u64;
@@ -108,7 +108,7 @@ impl Resident {
         output
     }
 }
-impl Drop for Resident {
+impl Drop for SoundboardState {
     fn drop(&mut self) {
         self.pages.take();
         unsafe {
@@ -144,11 +144,11 @@ fn kernels(rate: f64) -> Box<[[f32; TAPS]]> {
 }
 
 pub struct Injection {
-    state: Arc<Resident>,
+    state: Arc<SoundboardState>,
     clock_frequency: i64,
     position: f64,
     generation: u16,
-    matcher: crate::memory::Resident<RateMatcher>,
+    matcher: Resident<RateMatcher>,
     step: f64,
     channels: usize,
     format: SampleFormat,
@@ -164,8 +164,8 @@ impl Injection {
         max_frames: usize,
     ) -> anyhow::Result<Self> {
         let clock_frequency = win_qpf();
-        let state = Resident::new(rate)?;
-        let matcher = crate::memory::Resident::new(|| RateMatcher::new(rate, max_frames), true)?;
+        let state = SoundboardState::new(rate)?;
+        let matcher = Resident::new(|| Ok(RateMatcher::new(rate, max_frames)))?;
         let background = Arc::clone(&state);
         let stop = Arc::new(AtomicBool::new(false));
         let background_stop = Arc::clone(&stop);
@@ -259,7 +259,7 @@ impl Drop for Injection {
     }
 }
 
-fn receive(name: String, state: &Resident, stop: &AtomicBool) {
+fn receive(name: String, state: &SoundboardState, stop: &AtomicBool) {
     let mut mapping = None;
     let mut retry_at = 0;
     let mut cursor = 0;

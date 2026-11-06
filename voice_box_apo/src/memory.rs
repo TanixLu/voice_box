@@ -87,17 +87,17 @@ fn capture<T>(create: impl FnOnce() -> T) -> (T, Capture) {
     (value, allocations)
 }
 
-/// A value whose construction-time allocations can be kept resident.
+/// A value whose construction-time allocations are kept resident.
 ///
 /// Only constructed and destroyed on non-real-time control threads. Page leases
 /// drop before the value, while all captured allocations must still exist.
 pub struct Resident<T> {
-    _pages: Option<LockedPages>,
+    _pages: LockedPages,
     value: Box<T>,
 }
 
 impl<T> Resident<T> {
-    /// When locking pages, create every required heap allocation inside `create`,
+    /// Create every required heap allocation inside `create`,
     /// on this thread, through the DLL's Rust allocator. Existing allocations,
     /// other threads' allocations and direct native allocations are not captured.
     ///
@@ -105,13 +105,10 @@ impl<T> Resident<T> {
     /// mutability must preserve all captured allocations and their sizes. Do not
     /// grow, shrink, replace or free buffers, or add allocations used by RT code;
     /// page leases are not updated after construction.
-    pub fn new(create: impl FnOnce() -> T, lock_pages: bool) -> windows::core::Result<Self> {
-        let (value, pages) = if lock_pages {
-            let (value, allocations) = capture(|| Box::new(create()));
-            (value, Some(LockedPages::new(allocations)?))
-        } else {
-            (Box::new(create()), None)
-        };
+    pub fn new(create: impl FnOnce() -> windows::core::Result<T>) -> windows::core::Result<Self> {
+        let (value, allocations) = capture(|| create().map(Box::new));
+        let value = value?;
+        let pages = LockedPages::new(allocations)?;
         Ok(Self {
             _pages: pages,
             value,

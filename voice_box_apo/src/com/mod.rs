@@ -29,6 +29,8 @@ use windows::Win32::{
 };
 use windows_core::{GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface};
 
+use voice_box_shared::dsp::AudioProcessor;
+
 use crate::{
     com::{
         effects::{
@@ -40,8 +42,8 @@ use crate::{
             get_latency, identity_frames, lock_for_process, process, reset, unlock_for_process,
         },
     },
-    dsp::AudioProcessor,
     etw::{self, apo_log},
+    memory::Resident,
 };
 
 const EFFECT_ID_DENOISE: GUID = AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION;
@@ -84,7 +86,7 @@ struct ApoCom {
     max_input_frames: AtomicU32,
     max_output_frames: AtomicU32,
     latency_hns: AtomicI64,
-    dsp: UnsafeCell<AudioProcessor>,
+    dsp: UnsafeCell<Option<Resident<AudioProcessor>>>,
 }
 
 // Non-real-time control operations are serialized. Access to UnsafeCell is exclusive
@@ -368,7 +370,7 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
             max_input_frames: AtomicU32::new(0),
             max_output_frames: AtomicU32::new(0),
             latency_hns: AtomicI64::new(0),
-            dsp: UnsafeCell::new(AudioProcessor::default()),
+            dsp: UnsafeCell::new(None),
         })
     };
     let object = unsafe { &mut *raw };

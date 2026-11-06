@@ -21,7 +21,7 @@ pub struct Limiter {
 }
 
 impl Limiter {
-    /// Formats and resource bounds have already been validated by prepare.
+    /// Formats and resource bounds have already been validated by AudioProcessor.
     pub fn new(sample_rate: f64, channels: usize) -> Self {
         debug_assert!(sample_rate.is_finite() && sample_rate > 0.0 && channels > 0);
         let delay_frames = (sample_rate * LOOKAHEAD_SECONDS).ceil() as usize;
