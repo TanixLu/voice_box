@@ -55,8 +55,6 @@ pub unsafe extern "system" fn get_registration_properties(
 
 pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *const u8) -> HRESULT {
     let object = unsafe { object_from(this) };
-    let _control =
-        unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
     if unsafe { (*object).initialized.load(Ordering::Relaxed) } {
         return APOERR_ALREADY_INITIALIZED;
     }
@@ -71,6 +69,7 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
         return APOERR_INVALID_APO_CLSID;
     }
 
+    // Endpoint property reads may reenter this APO, so keep them outside the control lock.
     let (version, mode, discovery_only, soundboard_name) =
         if size as usize == core::mem::size_of::<APOInitSystemEffects3>() {
             let init = unsafe { ptr::read_unaligned(data.cast::<APOInitSystemEffects3>()) };
@@ -99,6 +98,13 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
 
     // Cache the frequency before real-time processing.
     let _ = win_qpf();
+
+    let _control =
+        unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
+    // A concurrent or reentrant call may have initialized the instance in the meantime.
+    if unsafe { (*object).initialized.load(Ordering::Relaxed) } {
+        return APOERR_ALREADY_INITIALIZED;
+    }
 
     unsafe {
         (*object).soundboard_name = soundboard_name;
