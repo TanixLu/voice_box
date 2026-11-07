@@ -15,9 +15,7 @@ use voice_box_shared::{
     dsp::{RandomAccessResampler, RateMatcher},
     pcm_transport::{
         PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame, PcmReader, PcmSlot, pcm_frame,
-        pcm_frame_with_frequency,
     },
-    utils::win_qpf,
 };
 
 use crate::{
@@ -40,7 +38,6 @@ impl SoundboardState {
 }
 pub struct Injection {
     state: Arc<LockedAllocation<SoundboardState>>,
-    clock_frequency: i64,
     position: f64,
     generation: u16,
     resampler: Resident<RandomAccessResampler>,
@@ -49,7 +46,6 @@ pub struct Injection {
 }
 impl Injection {
     pub fn start(name: String, rate: f64, max_frames: usize) -> anyhow::Result<Self> {
-        let clock_frequency = win_qpf();
         // SoundboardState contains only atomics with valid all-zero values.
         let state = unsafe { LockedAllocation::<SoundboardState>::new_zeroed()? };
         let resampler =
@@ -63,7 +59,6 @@ impl Injection {
         })?;
         Ok(Self {
             state,
-            clock_frequency,
             position: 0.0,
             generation: 0,
             resampler,
@@ -81,7 +76,7 @@ impl Injection {
         if frames == 0 {
             return None;
         }
-        let now = pcm_frame_with_frequency(self.clock_frequency);
+        let now = pcm_frame();
         let generation = self.state.generation.load(Acquire);
         let deadline = self.state.deadline.load(Acquire) as f64;
         // Let a lagging source finish its tail after its scheduled QPC end.

@@ -22,7 +22,7 @@ use windows_core::{BOOL, GUID, HRESULT};
 
 use voice_box_shared::{
     pcm_transport::pcm_transport_name,
-    utils::{APO_CLSID, apo_registration_properties},
+    utils::{APO_CLSID, apo_registration_properties, win_qpf},
 };
 
 use crate::{
@@ -92,6 +92,9 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
             );
             return E_INVALIDARG;
         };
+
+    // Cache the frequency before real-time processing.
+    let _ = win_qpf();
 
     unsafe {
         (*object).soundboard_name = soundboard_name;

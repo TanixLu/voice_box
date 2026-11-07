@@ -207,16 +207,11 @@ fn make_stamp(frame: u64, generation: u16) -> u64 {
     (frame << 16) | (generation as u64)
 }
 pub fn pcm_frame() -> u64 {
-    pcm_frame_with_frequency(win_qpf())
-}
-
-/// Use a positive frequency obtained during setup, without lazy initialization.
-pub fn pcm_frame_with_frequency(frequency: i64) -> u64 {
     let mut ticks = 0;
     if unsafe { QueryPerformanceCounter(&mut ticks) }.is_err() {
         0
     } else {
-        (i128::from(ticks.max(0)) * i128::from(PCM_SAMPLE_RATE) / i128::from(frequency)) as u64
+        (i128::from(ticks.max(0)) * i128::from(PCM_SAMPLE_RATE) / i128::from(win_qpf())) as u64
     }
 }
 
