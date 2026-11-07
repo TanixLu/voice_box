@@ -94,6 +94,13 @@ struct ApoCom {
     dsp: UnsafeCell<Option<Resident<AudioProcessor>>>,
 }
 
+impl Drop for ApoCom {
+    fn drop(&mut self) {
+        // The detached configuration watcher may outlive this COM instance.
+        self.config.clear_effects_events();
+    }
+}
+
 struct DspAccess<'a>(&'a AtomicBool);
 
 impl<'a> DspAccess<'a> {

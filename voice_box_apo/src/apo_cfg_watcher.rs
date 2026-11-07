@@ -175,6 +175,14 @@ impl RtConfig {
     ) -> windows::core::Result<bool> {
         self.subscribe_effects_list_aux(event, true)
     }
+
+    pub fn clear_effects_events(&self) {
+        // store() holds this same lock while signalling, so no notification can
+        // be sent through these subscriptions after they have been cleared.
+        let mut slots = self.lock_slots();
+        slots.get_effects_list_event = None;
+        slots.get_controllable_effects_list_event = None;
+    }
 }
 
 pub struct ApoCfgWatcher {

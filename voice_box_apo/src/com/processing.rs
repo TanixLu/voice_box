@@ -95,10 +95,7 @@ pub unsafe extern "system" fn lock_for_process(
     };
     log_connection_format("LockForProcess input", &input_format);
     log_connection_format("LockForProcess output", &output_format);
-    if !is_supported_format(&input_format)
-        || !is_supported_format(&output_format)
-        || !formats_match(&input_format, &output_format)
-    {
+    if !is_supported_format(&input_format) || !formats_match(&input_format, &output_format) {
         return fail(
             "unsupported or mismatched input/output format",
             APOERR_INVALID_CONNECTION_FORMAT,
@@ -286,9 +283,6 @@ pub unsafe extern "system" fn process(
         return;
     };
     if input.u32ValidFrameCount > unsafe { (*object).max_input_frames.load(Ordering::Relaxed) } {
-        return;
-    }
-    if input.u32BufferFlags == BUFFER_INVALID {
         return;
     }
     if output.pBuffer == 0 {
