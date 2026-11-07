@@ -84,7 +84,6 @@ struct ApoCom {
     processed_frames: AtomicU64,
     input_channels: AtomicU32,
     max_input_frames: AtomicU32,
-    max_output_frames: AtomicU32,
     latency_hns: AtomicI64,
     dsp: UnsafeCell<Option<Resident<AudioProcessor>>>,
 }
@@ -368,7 +367,6 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
             processed_frames: AtomicU64::new(0),
             input_channels: AtomicU32::new(0),
             max_input_frames: AtomicU32::new(0),
-            max_output_frames: AtomicU32::new(0),
             latency_hns: AtomicI64::new(0),
             dsp: UnsafeCell::new(None),
         })

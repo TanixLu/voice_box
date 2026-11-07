@@ -31,9 +31,13 @@ unsafe fn negotiate_format(
         return E_POINTER;
     }
     let requested_format = match unsafe { read_format(requested) } {
-        Ok(format) if is_supported_format(&format) => format,
+        Ok(format) => format,
         _ => return APOERR_FORMAT_NOT_SUPPORTED,
     };
+    log_connection_format("Format negotiation requested", &requested_format);
+    if !is_supported_format(&requested_format) {
+        return APOERR_FORMAT_NOT_SUPPORTED;
+    }
     // This APO processes in place and cannot convert between formats. If the
     // other end is already fixed, suggest that format instead of accepting a
     // pair which LockForProcess would later reject.
@@ -41,9 +45,13 @@ unsafe fn negotiate_format(
         (requested, requested_format, S_OK)
     } else {
         let opposite_format = match unsafe { read_format(opposite) } {
-            Ok(format) if is_supported_format(&format) => format,
+            Ok(format) => format,
             _ => return APOERR_FORMAT_NOT_SUPPORTED,
         };
+        log_connection_format("Format negotiation opposite", &opposite_format);
+        if !is_supported_format(&opposite_format) {
+            return APOERR_FORMAT_NOT_SUPPORTED;
+        }
         if formats_match(&requested_format, &opposite_format) {
             (requested, requested_format, S_OK)
         } else {
@@ -135,14 +143,6 @@ pub fn log_connection_format(label: &str, format: &UNCOMPRESSEDAUDIOFORMAT) {
     );
 }
 
-unsafe fn log_media_format(label: &str, raw: *mut c_void) {
-    if raw.is_null() {
-        apo_log!(etw::VERBOSE, etw::FORMAT, "{label} unspecified");
-    } else if let Ok(format) = unsafe { read_format(raw) } {
-        log_connection_format(label, &format);
-    }
-}
-
 pub unsafe extern "system" fn is_input_format_supported(
     this: *mut c_void,
     opposite: *mut c_void,
@@ -150,10 +150,6 @@ pub unsafe extern "system" fn is_input_format_supported(
     supported: *mut *mut c_void,
 ) -> HRESULT {
     let object = unsafe { object_from(this) };
-    unsafe {
-        log_media_format("IsInputFormatSupported requested", requested);
-        log_media_format("IsInputFormatSupported opposite", opposite);
-    }
     let result = unsafe { negotiate_format(object, opposite, requested, supported) };
     apo_log!(
         etw::VERBOSE,
@@ -175,10 +171,6 @@ pub unsafe extern "system" fn is_output_format_supported(
     // asks GetInputChannelCount. Registration requires samples-per-frame to
     // match, so the accepted output format also gives us the input channel
     // count in that call order.
-    unsafe {
-        log_media_format("IsOutputFormatSupported requested", requested);
-        log_media_format("IsOutputFormatSupported opposite", opposite);
-    }
     let result = unsafe { negotiate_format(object, opposite, requested, supported) };
     apo_log!(
         etw::VERBOSE,

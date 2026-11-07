@@ -295,9 +295,6 @@ pub unsafe extern "system" fn lock_for_process(
         (*object)
             .max_input_frames
             .store(max_input_frames, Ordering::Relaxed);
-        (*object)
-            .max_output_frames
-            .store(max_output_frames, Ordering::Relaxed);
         (*object).reset_requested.store(false, Ordering::Relaxed);
         (*object).locked.store(true, Ordering::Relaxed);
     }
@@ -327,7 +324,11 @@ pub unsafe extern "system" fn unlock_for_process(this: *mut c_void) -> HRESULT {
     // Unlock is non-RT. Normally no callback remains; if one is still exiting,
     // retain its storage until the next lock or final destruction.
     if let Some(_access) = unsafe { DspAccess::try_acquire(&(*object).dsp_in_use) } {
-        unsafe { *(*object).dsp.get() = None };
+        unsafe {
+            *(*object).dsp.get() = None;
+            *(*object).injection.get() = None;
+            (*object).injection_stop = None;
+        }
     }
     apo_log!(
         etw::INFO,
@@ -373,9 +374,7 @@ pub unsafe extern "system" fn process(
     let Some(dsp) = (unsafe { &mut *(*object).dsp.get() }) else {
         return;
     };
-    if input.u32ValidFrameCount > unsafe { (*object).max_input_frames.load(Ordering::Relaxed) }
-        || input.u32ValidFrameCount > unsafe { (*object).max_output_frames.load(Ordering::Relaxed) }
-    {
+    if input.u32ValidFrameCount > unsafe { (*object).max_input_frames.load(Ordering::Relaxed) } {
         return;
     }
     if input.u32BufferFlags == BUFFER_INVALID {
