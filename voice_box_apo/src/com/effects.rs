@@ -63,7 +63,11 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
     if data.is_null() || (size as usize) < core::mem::size_of::<APOInitBaseStruct>() {
         return E_INVALIDARG;
     }
-    if unsafe { ptr::read_unaligned(data.cast::<APOInitBaseStruct>()) }.clsid != APO_CLSID {
+    let header = unsafe { ptr::read_unaligned(data.cast::<APOInitBaseStruct>()) };
+    if header.cbSize != size {
+        return E_INVALIDARG;
+    }
+    if header.clsid != APO_CLSID {
         return APOERR_INVALID_APO_CLSID;
     }
 

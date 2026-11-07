@@ -18,8 +18,7 @@ use crate::{
     com::{
         ApoCom, DspAccess,
         formats::{
-            formats_match, frame_bytes, is_supported_format, log_connection_format, read_format,
-            sample_format,
+            formats_match, is_supported_format, log_connection_format, read_format, sample_format,
         },
         object_from,
     },
@@ -42,22 +41,6 @@ pub unsafe extern "system" fn get_latency(this: *mut c_void, latency: *mut i64) 
     S_OK
 }
 
-fn log_lock_failure(
-    object: *mut ApoCom,
-    input_count: u32,
-    output_count: u32,
-    reason: &str,
-    result: HRESULT,
-) -> HRESULT {
-    apo_log!(
-        etw::ERROR,
-        etw::APO_CFG,
-        "LockForProcess failed instance={object:p} inputs={input_count} outputs={output_count} reason={reason} result=0x{:08x}",
-        result.0 as u32
-    );
-    result
-}
-
 pub unsafe extern "system" fn lock_for_process(
     this: *mut c_void,
     input_count: u32,
@@ -66,20 +49,20 @@ pub unsafe extern "system" fn lock_for_process(
     outputs: *const *const APO_CONNECTION_DESCRIPTOR,
 ) -> HRESULT {
     let object = unsafe { object_from(this) };
-    if !unsafe { (*object).initialized.load(Ordering::Relaxed) } {
-        return log_lock_failure(
-            object,
-            input_count,
-            output_count,
-            "not initialized",
-            APOERR_NOT_INITIALIZED,
+    let fail = |reason: &str, result: HRESULT| {
+        apo_log!(
+            etw::ERROR,
+            etw::APO_CFG,
+            "LockForProcess failed instance={object:p} inputs={input_count} outputs={output_count} reason={reason} result=0x{:08x}",
+            result.0 as u32
         );
+        result
+    };
+    if !unsafe { (*object).initialized.load(Ordering::Relaxed) } {
+        return fail("not initialized", APOERR_NOT_INITIALIZED);
     }
     if input_count != 1 || output_count != 1 {
-        return log_lock_failure(
-            object,
-            input_count,
-            output_count,
+        return fail(
             "connection count must be 1 input and 1 output",
             APOERR_NUM_CONNECTIONS_INVALID,
         );
@@ -88,56 +71,26 @@ pub unsafe extern "system" fn lock_for_process(
         || outputs.is_null()
         || unsafe { (*inputs).is_null() || (*outputs).is_null() }
     {
-        return log_lock_failure(
-            object,
-            input_count,
-            output_count,
-            "null connection descriptor",
-            E_POINTER,
-        );
+        return fail("null connection descriptor", E_POINTER);
     }
     let input_format = unsafe { (**inputs).pFormat.as_ref() };
     let output_format = unsafe { (**outputs).pFormat.as_ref() };
     let Some(input_format) = input_format else {
-        return log_lock_failure(
-            object,
-            input_count,
-            output_count,
-            "null input media type",
-            E_POINTER,
-        );
+        return fail("null input media type", E_POINTER);
     };
     let Some(output_format) = output_format else {
-        return log_lock_failure(
-            object,
-            input_count,
-            output_count,
-            "null output media type",
-            E_POINTER,
-        );
+        return fail("null output media type", E_POINTER);
     };
     let input_format = match unsafe { read_format(input_format.as_raw()) } {
         Ok(format) => format,
         Err(result) => {
-            return log_lock_failure(
-                object,
-                input_count,
-                output_count,
-                "cannot read input format",
-                result,
-            );
+            return fail("cannot read input format", result);
         }
     };
     let output_format = match unsafe { read_format(output_format.as_raw()) } {
         Ok(format) => format,
         Err(result) => {
-            return log_lock_failure(
-                object,
-                input_count,
-                output_count,
-                "cannot read output format",
-                result,
-            );
+            return fail("cannot read output format", result);
         }
     };
     log_connection_format("LockForProcess input", &input_format);
@@ -146,10 +99,7 @@ pub unsafe extern "system" fn lock_for_process(
         || !is_supported_format(&output_format)
         || !formats_match(&input_format, &output_format)
     {
-        return log_lock_failure(
-            object,
-            input_count,
-            output_count,
+        return fail(
             "unsupported or mismatched input/output format",
             APOERR_INVALID_CONNECTION_FORMAT,
         );
@@ -157,34 +107,18 @@ pub unsafe extern "system" fn lock_for_process(
     let _control =
         unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
     if unsafe { (*object).discovery_only.load(Ordering::Relaxed) } {
-        return log_lock_failure(
-            object,
-            input_count,
-            output_count,
-            "discovery-only instance",
-            APOERR_NOT_INITIALIZED,
-        );
+        return fail("discovery-only instance", APOERR_NOT_INITIALIZED);
     }
     if unsafe { (*object).locked.load(Ordering::Relaxed) } {
-        return log_lock_failure(
-            object,
-            input_count,
-            output_count,
-            "already locked",
-            APOERR_APO_LOCKED,
-        );
+        return fail("already locked", APOERR_APO_LOCKED);
     }
-    let frame_bytes =
-        frame_bytes(&input_format).expect("UNREACHABLE: validated format should have a frame size");
     let sample_format = sample_format(&input_format)
         .expect("UNREACHABLE: validated format should have a supported sample format");
+    let frame_bytes = input_format.dwSamplesPerFrame as usize * sample_format.bytes();
     let max_input_frames = unsafe { (**inputs).u32MaxFrameCount };
     let max_output_frames = unsafe { (**outputs).u32MaxFrameCount };
     if max_output_frames < max_input_frames {
-        return log_lock_failure(
-            object,
-            input_count,
-            output_count,
+        return fail(
             "output buffer cannot hold maximum input frames",
             APOERR_INVALID_OUTPUT_MAXFRAMECOUNT,
         );
@@ -199,22 +133,10 @@ pub unsafe extern "system" fn lock_for_process(
                     .is_some_and(|bytes| bytes <= isize::MAX as usize)
             })
     {
-        return log_lock_failure(
-            object,
-            input_count,
-            output_count,
-            "invalid connection buffer capacity",
-            E_INVALIDARG,
-        );
+        return fail("invalid connection buffer capacity", E_INVALIDARG);
     }
     let Some(_dsp_access) = (unsafe { DspAccess::try_acquire(&(*object).dsp_in_use) }) else {
-        return log_lock_failure(
-            object,
-            input_count,
-            output_count,
-            "previous processing pass still active",
-            APOERR_APO_LOCKED,
-        );
+        return fail("previous processing pass still active", APOERR_APO_LOCKED);
     };
     let resident_pages = if unsafe { (*object).resident_pages.is_none() } {
         match crate::memory::image_ranges().and_then(|mut ranges| {
@@ -225,10 +147,7 @@ pub unsafe extern "system" fn lock_for_process(
         }) {
             Ok(pages) => Some(pages),
             Err(error) => {
-                return log_lock_failure(
-                    object,
-                    input_count,
-                    output_count,
+                return fail(
                     "cannot query or lock processing code and control data",
                     error.code(),
                 );
@@ -250,10 +169,7 @@ pub unsafe extern "system" fn lock_for_process(
     }) {
         Ok(dsp) => dsp,
         Err(error) => {
-            return log_lock_failure(
-                object,
-                input_count,
-                output_count,
+            return fail(
                 "cannot allocate or lock speech enhancement state",
                 error.code(),
             );
@@ -383,10 +299,8 @@ pub unsafe extern "system" fn process(
     if output.pBuffer == 0 {
         return;
     }
-    let bytes_per_frame = dsp.frame_bytes();
-    let Some(bytes) = (input.u32ValidFrameCount as usize).checked_mul(bytes_per_frame) else {
-        return;
-    };
+    // LockForProcess validated the maximum buffer size, and the frame count is bounded above.
+    let bytes = input.u32ValidFrameCount as usize * dsp.frame_bytes();
     let destination = output.pBuffer as *mut u8;
     if input.u32BufferFlags == BUFFER_VALID {
         if input.pBuffer == 0 {

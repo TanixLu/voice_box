@@ -70,14 +70,8 @@ unsafe extern "system" fn factory_create_instance(
         Err(result) => return result,
     };
     let inner = unsafe { ptr::addr_of_mut!((*object).inner_unknown).cast::<c_void>() };
-    let result = if outer.is_null() {
-        let result = unsafe { inner_query_interface(inner, iid, output) };
-        unsafe { inner_release(inner) };
-        result
-    } else {
-        unsafe { *output = inner };
-        S_OK
-    };
+    let result = unsafe { inner_query_interface(inner, iid, output) };
+    unsafe { inner_release(inner) };
     apo_log!(
         if result == S_OK {
             etw::INFO

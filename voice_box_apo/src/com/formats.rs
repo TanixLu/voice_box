@@ -92,7 +92,6 @@ pub fn is_supported_format(format: &UNCOMPRESSEDAUDIOFORMAT) -> bool {
         && sample_format(format).is_some()
         && format.fFramesPerSecond.is_finite()
         && (MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&f64::from(format.fFramesPerSecond))
-        && frame_bytes(format).is_some()
 }
 
 pub fn formats_match(left: &UNCOMPRESSEDAUDIOFORMAT, right: &UNCOMPRESSEDAUDIOFORMAT) -> bool {
@@ -102,10 +101,6 @@ pub fn formats_match(left: &UNCOMPRESSEDAUDIOFORMAT, right: &UNCOMPRESSEDAUDIOFO
         && left.dwValidBitsPerSample == right.dwValidBitsPerSample
         && left.fFramesPerSecond == right.fFramesPerSecond
         && left.dwChannelMask == right.dwChannelMask
-}
-
-pub fn frame_bytes(format: &UNCOMPRESSEDAUDIOFORMAT) -> Option<usize> {
-    (format.dwSamplesPerFrame as usize).checked_mul(format.dwBytesPerSampleContainer as usize)
 }
 
 pub fn sample_format(format: &UNCOMPRESSEDAUDIOFORMAT) -> Option<SampleFormat> {
