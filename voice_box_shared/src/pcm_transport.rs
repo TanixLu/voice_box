@@ -214,6 +214,14 @@ pub fn pcm_frame() -> u64 {
         (i128::from(ticks.max(0)) * i128::from(PCM_SAMPLE_RATE) / i128::from(win_qpf())) as u64
     }
 }
+pub fn pcm_frame_f64() -> f64 {
+    let mut ticks = 0;
+    if unsafe { QueryPerformanceCounter(&mut ticks) }.is_err() {
+        0.0
+    } else {
+        ticks.max(0) as f64 * f64::from(PCM_SAMPLE_RATE) / win_qpf() as f64
+    }
+}
 
 // On x86-64, 64-bit Relaxed atomic loads are guaranteed
 // to work on read-only mappings. An Acquire fence preserves

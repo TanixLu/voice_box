@@ -15,6 +15,7 @@ use voice_box_shared::{
     dsp::{RandomAccessResampler, RateMatcher},
     pcm_transport::{
         PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame, PcmReader, PcmSlot, pcm_frame,
+        pcm_frame_f64,
     },
 };
 
@@ -78,23 +79,22 @@ impl Injection {
         if frames == 0 {
             return None;
         }
-        let now = pcm_frame();
+        let now = pcm_frame_f64();
         let generation = self.state.generation.load(Acquire);
         let deadline = self.state.deadline.load(Acquire) as f64;
         // Let a lagging source finish its tail after its scheduled QPC end.
         let injection_active = generation != 0
-            && ((now as f64) < deadline
-                || (generation == self.generation && self.position < deadline));
+            && (now < deadline || (generation == self.generation && self.position < deadline));
         if injection_active
             && (generation != self.generation
-                || (self.position - now as f64).abs() > PCM_MAX_CURSOR_DRIFT_FRAMES as f64)
+                || (self.position - now).abs() > PCM_MAX_CURSOR_DRIFT_FRAMES as f64)
         {
-            self.position = now as f64;
+            self.position = now;
             self.matcher.reset();
         }
         self.generation = if injection_active { generation } else { 0 };
         if injection_active {
-            let error = (self.position - now as f64) / f64::from(PCM_SAMPLE_RATE);
+            let error = (self.position - now) / f64::from(PCM_SAMPLE_RATE);
             let step = self.resampler.source_step();
             Some(self.matcher.process(frames, error, || {
                 let stereo = self.resampler.sample(self.position, |frame| {
