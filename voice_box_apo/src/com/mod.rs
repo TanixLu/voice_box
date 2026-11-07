@@ -37,7 +37,7 @@ use crate::{
             get_controllable_effects_list, get_effects_list, get_registration_properties,
             initialize, set_effect_state,
         },
-        formats::{get_input_channel_count, is_input_format_supported, is_output_format_supported},
+        formats::{get_input_channel_count, is_format_supported},
         processing::{
             get_latency, identity_frames, lock_for_process, process, reset, unlock_for_process,
         },
@@ -57,6 +57,12 @@ struct InterfaceHeader<V> {
 }
 
 /// A single carrier supports normal activation and COM aggregation.
+///
+/// Non-real-time control operations are serialized. Access to UnsafeCell is exclusive
+/// through DspAccess, which never waits on the processing thread. Reset only posts
+/// a request that the next processing pass consumes while it owns the DSP.
+/// control_guard and DspAccess publish ordinary fields; the remaining atomic
+/// flags and scalar properties do not publish additional data.
 #[repr(C)]
 struct ApoCom {
     // Drop leases before any of the allocations whose pages they cover.
@@ -87,13 +93,6 @@ struct ApoCom {
     latency_hns: AtomicI64,
     dsp: UnsafeCell<Option<Resident<AudioProcessor>>>,
 }
-
-// Non-real-time control operations are serialized. Access to UnsafeCell is exclusive
-// through DspAccess, which never waits on the processing thread. Reset only posts
-// a request that the next processing pass consumes while it owns the DSP.
-// control_guard and DspAccess publish ordinary fields; the remaining atomic
-// flags and scalar properties do not publish additional data.
-unsafe impl Sync for ApoCom {}
 
 struct DspAccess<'a>(&'a AtomicBool);
 
@@ -291,8 +290,8 @@ static APO_VTABLE: IAudioProcessingObject_Vtbl = IAudioProcessingObject_Vtbl {
     GetLatency: get_latency,
     GetRegistrationProperties: get_registration_properties,
     Initialize: initialize,
-    IsInputFormatSupported: is_input_format_supported,
-    IsOutputFormatSupported: is_output_format_supported,
+    IsInputFormatSupported: is_format_supported,
+    IsOutputFormatSupported: is_format_supported,
     GetInputChannelCount: get_input_channel_count,
 };
 

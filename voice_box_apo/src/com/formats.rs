@@ -32,12 +32,9 @@ unsafe fn negotiate_format(
     }
     let requested_format = match unsafe { read_format(requested) } {
         Ok(format) => format,
-        _ => return APOERR_FORMAT_NOT_SUPPORTED,
+        Err(result) => return result,
     };
     log_connection_format("Format negotiation requested", &requested_format);
-    if !is_supported_format(&requested_format) {
-        return APOERR_FORMAT_NOT_SUPPORTED;
-    }
     // This APO processes in place and cannot convert between formats. If the
     // other end is already fixed, suggest that format instead of accepting a
     // pair which LockForProcess would later reject.
@@ -46,23 +43,25 @@ unsafe fn negotiate_format(
     } else {
         let opposite_format = match unsafe { read_format(opposite) } {
             Ok(format) => format,
-            _ => return APOERR_FORMAT_NOT_SUPPORTED,
+            Err(result) => return result,
         };
         log_connection_format("Format negotiation opposite", &opposite_format);
-        if !is_supported_format(&opposite_format) {
-            return APOERR_FORMAT_NOT_SUPPORTED;
-        }
         if formats_match(&requested_format, &opposite_format) {
             (requested, requested_format, S_OK)
         } else {
             (opposite, opposite_format, S_FALSE)
         }
     };
+    if !is_supported_format(&format) {
+        return APOERR_FORMAT_NOT_SUPPORTED;
+    }
     // AddRef may invoke an external COM object, so do not hold our mutex there.
     unsafe { ((*unknown_vtable(selected)).AddRef)(selected) };
     {
         let _control = unsafe { (*object).control_guard.lock() }
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Either side may be negotiated first. Matching input/output formats
+        // give the input channel count in both call orders.
         if !unsafe { (*object).locked.load(Ordering::Relaxed) } {
             unsafe {
                 (*object)
@@ -138,7 +137,7 @@ pub fn log_connection_format(label: &str, format: &UNCOMPRESSEDAUDIOFORMAT) {
     );
 }
 
-pub unsafe extern "system" fn is_input_format_supported(
+pub unsafe extern "system" fn is_format_supported(
     this: *mut c_void,
     opposite: *mut c_void,
     requested: *mut c_void,
@@ -149,28 +148,7 @@ pub unsafe extern "system" fn is_input_format_supported(
     apo_log!(
         etw::VERBOSE,
         etw::FORMAT,
-        "IsInputFormatSupported instance={object:p} result=0x{:08x}",
-        result.0 as u32
-    );
-    result
-}
-
-pub unsafe extern "system" fn is_output_format_supported(
-    this: *mut c_void,
-    opposite: *mut c_void,
-    requested: *mut c_void,
-    supported: *mut *mut c_void,
-) -> HRESULT {
-    let object = unsafe { object_from(this) };
-    // The audio engine is allowed to negotiate only the output side before it
-    // asks GetInputChannelCount. Registration requires samples-per-frame to
-    // match, so the accepted output format also gives us the input channel
-    // count in that call order.
-    let result = unsafe { negotiate_format(object, opposite, requested, supported) };
-    apo_log!(
-        etw::VERBOSE,
-        etw::FORMAT,
-        "IsOutputFormatSupported instance={object:p} result=0x{:08x}",
+        "IsFormatSupported instance={object:p} result=0x{:08x}",
         result.0 as u32
     );
     result

@@ -124,14 +124,9 @@ pub unsafe extern "system" fn lock_for_process(
         );
     }
     if max_input_frames == 0
-        || max_output_frames == 0
-        || ![max_input_frames, max_output_frames]
-            .into_iter()
-            .all(|frames| {
-                (frames as usize)
-                    .checked_mul(frame_bytes)
-                    .is_some_and(|bytes| bytes <= isize::MAX as usize)
-            })
+        || (max_output_frames as usize)
+            .checked_mul(frame_bytes)
+            .is_none_or(|bytes| bytes > isize::MAX as usize)
     {
         return fail("invalid connection buffer capacity", E_INVALIDARG);
     }
