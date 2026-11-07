@@ -36,6 +36,7 @@ use windows::{
     },
     core::{PCWSTR, w},
 };
+use windows_core::GUID;
 
 use crate::{
     dsp::finite_sample,
@@ -51,6 +52,15 @@ const MAGIC: u64 = u64::from_le_bytes(*b"VoiceBox");
 pub const PCM_DECODE_AHEAD_FRAMES: u64 = 12_000; // 250 ms of decoded audio, bounded independently of file length.
 const BUFFER_CAPACITY_FRAMES: usize = 32_768;
 const MAPPING_SIZE: usize = size_of::<Header>() + BUFFER_CAPACITY_FRAMES * size_of::<PcmSlot>();
+
+pub fn pcm_transport_name(guid: &str) -> anyhow::Result<String> {
+    let id = guid
+        .strip_prefix('{')
+        .and_then(|s| s.strip_suffix('}'))
+        .unwrap_or(guid);
+    ensure!(GUID::try_from(id).is_ok(), "Invalid microphone ID");
+    Ok(format!(r"Global\VoiceBox.Pcm.{}", id.to_ascii_lowercase()))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct HeaderState(u64);

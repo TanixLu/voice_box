@@ -20,7 +20,10 @@ use windows::Win32::{
 };
 use windows_core::{BOOL, GUID, HRESULT};
 
-use voice_box_shared::utils::{APO_CLSID, apo_registration_properties, transport_name};
+use voice_box_shared::{
+    pcm_transport::pcm_transport_name,
+    utils::{APO_CLSID, apo_registration_properties},
+};
 
 use crate::{
     com::{EFFECT_ID_DENOISE, object_from},
@@ -141,7 +144,7 @@ fn soundboard_name(
     unsafe {
         CoTaskMemFree(Some(text.0.cast()));
     }
-    transport_name(&guid.ok()?).ok()
+    pcm_transport_name(&guid.ok()?).ok()
 }
 
 fn processing_mode_name(mode: &GUID) -> &'static str {

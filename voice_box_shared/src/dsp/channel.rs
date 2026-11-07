@@ -2,13 +2,13 @@
 
 use ul_unas_rs::{ALGORITHM_DELAY, Denoiser, FRAME_SIZE, SAMPLE_RATE};
 
-use super::{Resampler, finite_sample, high_pass::HighPass};
+use super::{StreamingResampler, finite_sample, high_pass::HighPass};
 
 pub(super) struct Channel {
     denoiser: Box<Denoiser>,
     high_pass: HighPass,
-    input_resampler: Resampler,
-    output_resampler: Resampler,
+    input_resampler: StreamingResampler,
+    output_resampler: StreamingResampler,
     input: [f32; FRAME_SIZE],
     output: [f32; FRAME_SIZE],
     pending: usize,
@@ -22,8 +22,8 @@ pub(super) struct Channel {
 impl Channel {
     pub(super) fn new(sample_rate: f64) -> Self {
         let rate = f64::from(SAMPLE_RATE);
-        let input_resampler = Resampler::new(sample_rate, rate);
-        let output_resampler = Resampler::new(rate, sample_rate);
+        let input_resampler = StreamingResampler::new(sample_rate, rate);
+        let output_resampler = StreamingResampler::new(rate, sample_rate);
         let prefill = ((FRAME_SIZE + output_resampler.input_chunk_size()) as f64 * sample_rate
             / rate)
             .ceil() as usize

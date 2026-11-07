@@ -10,15 +10,15 @@ use std::{
     collections::BTreeMap,
     ffi::c_void,
     ops::{Deref, DerefMut},
-    ptr,
-    sync::{LazyLock, Mutex},
+    ptr::{self, NonNull},
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use windows::Win32::System::{
     Memory::{
-        MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
-        PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOPY,
-        VirtualLock, VirtualQuery, VirtualUnlock,
+        MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ,
+        PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_READONLY, PAGE_READWRITE,
+        PAGE_WRITECOPY, VirtualAlloc, VirtualFree, VirtualLock, VirtualQuery, VirtualUnlock,
     },
     ProcessStatus::{PSAPI_WORKING_SET_EX_INFORMATION, QueryWorkingSetEx},
     SystemInformation::{GetSystemInfo, SYSTEM_INFO},
@@ -125,6 +125,68 @@ impl<T> Deref for Resident<T> {
 impl<T> DerefMut for Resident<T> {
     fn deref_mut(&mut self) -> &mut T {
         &mut self.value
+    }
+}
+
+/// A shared value in a dedicated virtual allocation. Both the value's pages and
+/// the Arc's pointer carrier stay resident until the final owner is dropped.
+/// Only construct and drop on non-real-time threads. Indirect allocations
+/// inside T are not covered by this page lease.
+pub struct LockedAllocation<T> {
+    pages: Option<LockedPages>,
+    pointer: NonNull<T>,
+}
+
+// Exclusive ownership follows Box's thread-safety bounds; shared access is &T.
+unsafe impl<T: Send> Send for LockedAllocation<T> {}
+unsafe impl<T: Sync> Sync for LockedAllocation<T> {}
+
+impl<T> LockedAllocation<T> {
+    /// Allocate a zero-initialized shared value and lock both allocations.
+    /// Alignments larger than the system page size are not supported.
+    ///
+    /// # Safety
+    /// All-zero bytes must represent a valid, safely droppable value of T.
+    pub unsafe fn new_zeroed() -> windows::core::Result<Arc<Self>> {
+        if align_of::<T>() > *PAGE_SIZE {
+            return Err(windows::core::Error::from_hresult(
+                windows::Win32::Foundation::E_INVALIDARG,
+            ));
+        }
+        let bytes = size_of::<T>().max(1);
+        let pointer =
+            unsafe { VirtualAlloc(None, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE) };
+        let pointer =
+            NonNull::new(pointer.cast::<T>()).ok_or_else(windows::core::Error::from_thread)?;
+        let mut allocation = Arc::new(Self {
+            pages: None,
+            pointer,
+        });
+        let pages = LockedPages::new([
+            (pointer.as_ptr() as usize, bytes),
+            (Arc::as_ptr(&allocation) as usize, size_of::<Self>()),
+        ])?;
+        Arc::get_mut(&mut allocation)
+            .expect("UNREACHABLE: newly created allocation should be uniquely owned")
+            .pages = Some(pages);
+        Ok(allocation)
+    }
+}
+
+impl<T> Deref for LockedAllocation<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        unsafe { self.pointer.as_ref() }
+    }
+}
+
+impl<T> Drop for LockedAllocation<T> {
+    fn drop(&mut self) {
+        self.pages.take();
+        unsafe {
+            ptr::drop_in_place(self.pointer.as_ptr());
+            let _ = VirtualFree(self.pointer.as_ptr().cast(), 0, MEM_RELEASE);
+        }
     }
 }
 

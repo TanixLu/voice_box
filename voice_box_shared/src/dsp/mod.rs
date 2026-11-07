@@ -14,7 +14,7 @@ mod sample;
 pub use self::{
     limiter::ZeroLatencyLimiter,
     rate_matcher::RateMatcher,
-    resampler::Resampler,
+    resampler::{RandomAccessResampler, StreamingResampler},
     sample::{SampleFormat, clamp_sample, finite_sample},
 };
 

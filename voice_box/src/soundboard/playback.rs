@@ -6,12 +6,9 @@ use std::{
 
 use anyhow::ensure;
 
-use voice_box_shared::{
-    pcm_transport::{
-        PCM_DECODE_AHEAD_FRAMES, PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame, PcmWriter,
-        pcm_frame,
-    },
-    utils::transport_name,
+use voice_box_shared::pcm_transport::{
+    PCM_DECODE_AHEAD_FRAMES, PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame, PcmWriter,
+    pcm_frame, pcm_transport_name,
 };
 
 use crate::{
@@ -232,7 +229,7 @@ pub fn run(
                         let guid =
                             devices::soundboard_microphone_guid(next.microphone_device.as_deref())?;
                         mapping = Some(
-                            PcmWriter::open(&transport_name(&guid)?)
+                            PcmWriter::open(&pcm_transport_name(&guid)?)
                                 .user_context(Text::CreatePlaybackBuffer)?,
                         );
                     }

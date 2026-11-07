@@ -10,7 +10,7 @@ use symphonia::core::{
 };
 
 use voice_box_shared::{
-    dsp::{MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, Resampler, finite_sample},
+    dsp::{MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, StreamingResampler, finite_sample},
     pcm_transport::{PCM_CHANNELS, PCM_SAMPLE_RATE, PcmFrame},
 };
 
@@ -22,7 +22,7 @@ pub struct SoundDecoder {
     track_id: u32,
     rate: u32,
     channels: usize,
-    resamplers: [Resampler; PCM_CHANNELS],
+    resamplers: [StreamingResampler; PCM_CHANNELS],
     delay_frames_remaining: usize,
     samples: Vec<f32>,
     output: VecDeque<PcmFrame>,
@@ -59,8 +59,9 @@ impl SoundDecoder {
             .user_context(Text::CreateAudioDecoder)?;
         let duration_secs = track.num_frames.map(|n| n as f64 / f64::from(rate));
         let id = track.id;
-        let resamplers: [_; PCM_CHANNELS] =
-            std::array::from_fn(|_| Resampler::new(f64::from(rate), f64::from(PCM_SAMPLE_RATE)));
+        let resamplers: [_; PCM_CHANNELS] = std::array::from_fn(|_| {
+            StreamingResampler::new(f64::from(rate), f64::from(PCM_SAMPLE_RATE))
+        });
         let delay_frames_remaining =
             (resamplers[0].delay_seconds().max(0.0) * f64::from(PCM_SAMPLE_RATE)).round() as usize;
         Ok(Self {

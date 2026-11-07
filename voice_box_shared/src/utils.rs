@@ -10,7 +10,6 @@ use std::{
     sync::OnceLock,
 };
 
-use anyhow::ensure;
 use atomic_write_file::AtomicWriteFile;
 use windows::Win32::{
     Foundation::{ERROR_ALREADY_EXISTS, GetLastError},
@@ -171,15 +170,6 @@ pub fn log_path() -> &'static Path {
 pub fn rotated_log_path() -> &'static Path {
     static CACHE: OnceLock<PathBuf> = OnceLock::new();
     CACHE.get_or_init(|| data_dir().join("voice_box.log.1"))
-}
-
-pub fn transport_name(guid: &str) -> anyhow::Result<String> {
-    let id = guid
-        .strip_prefix('{')
-        .and_then(|s| s.strip_suffix('}'))
-        .unwrap_or(guid);
-    ensure!(GUID::try_from(id).is_ok(), "Invalid microphone ID");
-    Ok(format!(r"Global\VoiceBox.Pcm.{}", id.to_ascii_lowercase()))
 }
 
 pub fn win_qpf() -> i64 {
