@@ -49,6 +49,7 @@ pub type PcmFrame = [f32; PCM_CHANNELS];
 pub const PCM_MAX_CURSOR_DRIFT_FRAMES: u64 = PCM_SAMPLE_RATE as u64 / 50;
 
 const MAGIC: u64 = u64::from_le_bytes(*b"VoiceBox");
+const HEARTBEAT_TIMEOUT_FRAMES: u64 = PCM_SAMPLE_RATE as u64 / 2; // 500 ms
 pub const PCM_DECODE_AHEAD_FRAMES: u64 = 12_000; // 250 ms of decoded audio, bounded independently of file length.
 const BUFFER_CAPACITY_FRAMES: usize = 32_768;
 const MAPPING_SIZE: usize = size_of::<Header>() + BUFFER_CAPACITY_FRAMES * size_of::<PcmSlot>();
@@ -159,8 +160,7 @@ impl Header {
             if self.state.load(Relaxed) != before.0 {
                 continue;
             }
-            if before.generation() == 0 || now.abs_diff(heartbeat) > u64::from(PCM_SAMPLE_RATE) / 2
-            {
+            if before.generation() == 0 || now.abs_diff(heartbeat) > HEARTBEAT_TIMEOUT_FRAMES {
                 return (0, 0);
             }
             return (before.generation(), end);

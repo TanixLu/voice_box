@@ -24,7 +24,9 @@ use crate::{
     worker,
 };
 
-const FRAMES: usize = 4096;
+const FRAMES: usize = 4096; // ~85.3 ms at 48 kHz
+const HISTORY_FRAMES: u64 = PCM_SAMPLE_RATE as u64 / 100; // 10 ms
+const COPY_AHEAD_FRAMES: u64 = PCM_SAMPLE_RATE as u64 * 60 / 1000; // 60 ms
 
 struct SoundboardState {
     frames: [PcmSlot; FRAMES],
@@ -114,45 +116,39 @@ impl Drop for Injection {
 
 fn receive(name: String, state: &SoundboardState, stop: &AtomicBool) {
     let mut mapping = None;
-    let mut retry_at = 0;
     let mut cursor = 0;
     let mut previous = 0;
     while !stop.load(Relaxed) {
         let now = pcm_frame();
-        if mapping.is_none() && now >= retry_at {
+        if mapping.is_none() {
             mapping = PcmReader::open(&name).ok();
-            // Discover a new transport before playback's 100 ms startup lead ends.
-            retry_at = now + u64::from(PCM_SAMPLE_RATE) / 100;
         }
         if let Some(mapping) = &mapping {
-            let (generation, end) = mapping.status(now);
-            if generation != previous || cursor < now.saturating_sub(480) {
+            let (generation, source_end) = mapping.status(now);
+            let copy_end = source_end.min(now + COPY_AHEAD_FRAMES);
+            if generation != previous || cursor < now.saturating_sub(HISTORY_FRAMES) {
                 state.generation.store(0, Relaxed);
-                cursor = now.saturating_sub(480);
+                cursor = now.saturating_sub(HISTORY_FRAMES);
             }
             if generation != 0 {
                 // Bound work even for malformed shared headers. Each reader owns
                 // its own cursor; recording clients never consume one another's PCM.
-                let end = end.min(now + 2880);
-                while cursor < end {
+                while cursor < copy_end {
                     let stereo = mapping.read(cursor, generation);
                     state.frames[cursor as usize % FRAMES].write(cursor, generation, stereo);
                     cursor += 1;
                 }
             }
-            // Deadline and generation publish the copied frames.
-            state.deadline.store(
-                if generation == 0 {
-                    0
-                } else {
-                    end.min(now + u64::from(PCM_SAMPLE_RATE) / 2)
-                },
-                Release,
-            );
+            // Keep injection active through the source's end, even if local PCM runs out.
+            state.deadline.store(source_end, Release);
             state.generation.store(generation, Release);
             previous = generation;
         }
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::sleep(Duration::from_millis(if mapping.is_some() {
+            5
+        } else {
+            20
+        }));
     }
     apo_log!(etw::INFO, etw::LIFECYCLE, "Soundboard receiver exited");
 }
