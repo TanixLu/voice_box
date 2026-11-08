@@ -18,10 +18,7 @@ use voice_box_shared::pcm_transport::{PCM_CHANNELS, PcmFrame};
 use crate::{
     audio::{capture::Recording, loopback, playback::playback},
     i18n::{Details, Message, Text, UserContext},
-    soundboard::{
-        sound::{Sound, is_valid_name},
-        storage::insert_sound,
-    },
+    soundboard::sound::{Sound, is_valid_name},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -283,7 +280,7 @@ impl Recorder {
         };
         let audio = clip.audio.clone();
         self.begin(Activity::Saving, selection.range(), wake, move |_, _| {
-            save_clip(&mut crate::database::open()?, &audio, selection, &name).map(Outcome::Saved)
+            save_clip(&audio, selection, &name).map(Outcome::Saved)
         });
     }
     // Returns an audio entry already committed to the database.
@@ -394,12 +391,7 @@ fn write_wave(
     Ok(())
 }
 
-fn save_clip(
-    connection: &mut rusqlite::Connection,
-    audio: &Recording,
-    selection: Selection,
-    name: &str,
-) -> anyhow::Result<Sound> {
+fn save_clip(audio: &Recording, selection: Selection, name: &str) -> anyhow::Result<Sound> {
     let name = name.trim();
     ensure!(is_valid_name(name), Text::InvalidRecordingName);
     ensure!(
@@ -413,7 +405,7 @@ fn save_clip(
     // The float WAV header is 58 bytes; encode directly into the buffered BLOB writer.
     let length = 58 + (selection.end - selection.start) as u64 * size_of::<PcmFrame>() as u64;
     let duration_secs = (selection.end - selection.start) as f64 / f64::from(audio.sample_rate);
-    insert_sound(connection, name, duration_secs, length, |output| {
+    crate::database::sounds::insert(name, duration_secs, length, |output| {
         write_wave(output, audio, selection)
     })
     .user_context(Text::SaveRecording)

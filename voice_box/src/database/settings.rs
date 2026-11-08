@@ -1,42 +1,40 @@
-//! SQLite adaptation for settings; field definitions live in the parent module.
+//! Settings persistence; the field list is owned by the settings model.
 
 use std::collections::HashMap;
 
 use rusqlite::{
     Connection, ToSql, Transaction, params,
-    types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, Value, ValueRef},
+    types::{FromSql, FromSqlError, FromSqlResult, Value},
 };
 
-pub use crate::impl_storage;
-use crate::{i18n::LanguagePreference, settings::OutputDevice, utils::GainPercent};
+use crate::{i18n::LanguagePreference, settings::Settings, utils::GainPercent};
 
-#[macro_export]
 macro_rules! impl_storage {
     ($($field:ident: $ty:ty = $default:expr;)*) => {
-        impl Settings {
-            fn read_from(connection: &rusqlite::Connection) -> anyhow::Result<Self> {
-                let values = storage::load_values(connection)?;
-                let mut settings = Self {
-                    $($field: storage::read_setting(&values, stringify!($field), $default),)*
-                };
-                settings.sanitize();
-                Ok(settings)
-            }
+        pub fn load() -> anyhow::Result<Settings> {
+            let connection = super::open_read()?;
+            let values = load_values(&connection)?;
+            Ok(Settings {
+                $($field: read_setting(&values, stringify!($field), $default),)*
+            })
+        }
 
-            fn save_to(&self, connection: &mut rusqlite::Connection) -> anyhow::Result<()> {
-                let transaction = connection.transaction()?;
-                $(storage::write_setting(&transaction, stringify!($field), &self.$field)?;)*
-                transaction.commit()?;
-                Ok(())
-            }
+        pub fn save(settings: &Settings) -> anyhow::Result<()> {
+            let mut connection = super::open()?;
+            let transaction = connection.transaction()?;
+            $(write_setting(&transaction, stringify!($field), &settings.$field)?;)*
+            transaction.commit()?;
+            Ok(())
         }
     };
 }
 
-// SQL queries fail normally; only conversion of successfully read values can fall back.
-pub type Values = HashMap<String, Value>;
+crate::settings::fields!(impl_storage);
 
-pub fn load_values(connection: &Connection) -> rusqlite::Result<Values> {
+// SQL queries fail normally; only conversion of successfully read values can fall back.
+type Values = HashMap<String, Value>;
+
+fn load_values(connection: &Connection) -> rusqlite::Result<Values> {
     let mut query = connection.prepare_cached("SELECT key, value FROM settings")?;
     query
         .query_map([], |row| {
@@ -53,12 +51,12 @@ pub fn load_values(connection: &Connection) -> rusqlite::Result<Values> {
         .collect()
 }
 
-pub trait Stored: Sized {
+trait Stored: Sized {
     fn read(values: &Values, key: &str) -> FromSqlResult<Option<Self>>;
     fn write(&self, transaction: &Transaction<'_>, key: &str) -> rusqlite::Result<()>;
 }
 
-pub fn read_setting<T: Stored>(values: &Values, key: &str, default: T) -> T {
+fn read_setting<T: Stored>(values: &Values, key: &str, default: T) -> T {
     match T::read(values, key) {
         Ok(Some(value)) => value,
         Ok(None) => default,
@@ -69,7 +67,7 @@ pub fn read_setting<T: Stored>(values: &Values, key: &str, default: T) -> T {
     }
 }
 
-pub fn write_setting<T: Stored>(
+fn write_setting<T: Stored>(
     transaction: &Transaction<'_>,
     key: &str,
     value: &T,
@@ -175,37 +173,6 @@ impl<T: FromSql + ToSql> Stored for Option<T> {
             transaction.execute("DELETE FROM settings WHERE key = ?1", [key])?;
         }
         Ok(())
-    }
-}
-
-impl FromSql for OutputDevice {
-    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
-        let (id, name) = value
-            .as_str()?
-            .split_once('\0')
-            .ok_or_else(|| invalid("output device must contain ID and name separated by NUL"))?;
-        if id.is_empty() {
-            return Err(invalid("output device ID is empty"));
-        }
-        Ok(Self {
-            id: id.to_owned(),
-            name: name.to_owned(),
-        })
-    }
-}
-
-impl ToSql for OutputDevice {
-    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        // Windows endpoint IDs cannot contain NUL; the name occupies the remaining text.
-        if self.id.is_empty() || self.id.contains('\0') {
-            return Err(rusqlite::Error::ToSqlConversionFailure(
-                "output device ID must be nonempty and contain no NUL".into(),
-            ));
-        }
-        Ok(ToSqlOutput::Owned(Value::Text(format!(
-            "{}\0{}",
-            self.id, self.name
-        ))))
     }
 }
 

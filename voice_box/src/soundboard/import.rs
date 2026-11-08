@@ -10,7 +10,6 @@ use std::{
 };
 
 use anyhow::ensure;
-use rusqlite::{Connection, TransactionBehavior};
 
 use voice_box_shared::pcm_transport::PCM_SAMPLE_RATE;
 
@@ -20,7 +19,6 @@ use crate::{
     soundboard::{
         decoder::SoundDecoder,
         sound::{Sound, is_valid_name},
-        storage::write_sound,
     },
 };
 
@@ -32,11 +30,7 @@ pub struct ImportedSounds {
 pub fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSounds> {
     let (files, mut imported) = validate_files(sources)?;
     if !files.is_empty() {
-        let result = database::open().and_then(|mut connection| {
-            connection.busy_timeout(std::time::Duration::ZERO)?;
-            connection.pragma_update(None, "cache_size", -32768)?;
-            insert_files(&mut connection, files)
-        });
+        let result = insert_files(files);
         match result {
             Ok(sounds) => imported.sounds = sounds,
             Err(error) => imported.errors.push(Message::ImportSoundsFailed {
@@ -150,31 +144,23 @@ fn validate_file(source: &Path) -> anyhow::Result<ValidatedFile> {
     })
 }
 
-fn insert_files(
-    connection: &mut Connection,
-    files: Vec<ValidatedFile>,
-) -> anyhow::Result<Vec<Sound>> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let mut sounds = Vec::with_capacity(files.len());
-    for mut file in files {
-        let sound = write_sound(
-            &transaction,
-            &file.name,
-            file.duration_secs,
-            file.length,
-            |output| {
-                io::copy(&mut file.file, output)?;
-                Ok(())
-            },
-        )
-        .map_err(|error| {
-            anyhow::anyhow!(Message::ImportFileFailed {
-                path: file.source.display().to_string(),
-                error: Details::new(error),
-            })
-        })?;
-        sounds.push(sound);
-    }
-    transaction.commit()?;
-    Ok(sounds)
+fn insert_files(files: Vec<ValidatedFile>) -> anyhow::Result<Vec<Sound>> {
+    database::sounds::insert_batch(|batch| {
+        let mut sounds = Vec::with_capacity(files.len());
+        for mut file in files {
+            let sound = batch
+                .insert(&file.name, file.duration_secs, file.length, |output| {
+                    io::copy(&mut file.file, output)?;
+                    Ok(())
+                })
+                .map_err(|error| {
+                    anyhow::anyhow!(Message::ImportFileFailed {
+                        path: file.source.display().to_string(),
+                        error: Details::new(error),
+                    })
+                })?;
+            sounds.push(sound);
+        }
+        Ok(sounds)
+    })
 }

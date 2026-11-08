@@ -42,6 +42,7 @@ fn run() -> anyhow::Result<()> {
     set_language(LanguagePreference::System.resolve());
     ensure!(win_is_admin(), Text::AdministratorRequired);
     ensure!(is_single_instance()?, Text::AnotherInstance);
-    // apo_cfg_writer::init()?; // 这里****************
+    logging::init()?;
+    database::init()?;
     todo!()
 }

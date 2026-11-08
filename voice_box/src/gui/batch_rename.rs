@@ -77,11 +77,11 @@ impl BatchRename {
         messages.join("；")
     }
 
-    pub fn applying(&self) -> bool {
-        self.applying
-    }
     pub fn selected(&self) -> &HashSet<SoundId> {
         &self.selected
+    }
+    pub fn applying(&self) -> bool {
+        self.applying
     }
     pub fn complete(&mut self, library: &Library, result: anyhow::Result<()>) -> bool {
         self.applying = false;

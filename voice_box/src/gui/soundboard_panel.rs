@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use anyhow::ensure;
+
 use crate::{
     gui::{
         batch_rename::{self, BatchRename},
@@ -10,7 +12,7 @@ use crate::{
         sound_settings::{self, SoundSettings},
         widgets::format_duration,
     },
-    i18n::{Details, Message, Text},
+    i18n::{Details, Message, Text, UserContext},
     settings::{BindingTarget, Settings},
     soundboard::{Soundboard, library::Library},
 };
@@ -43,7 +45,7 @@ impl SoundboardPanel {
         self.list.cancel_delete();
     }
     pub fn cancel_batch(&mut self) {
-        if self.model.batch_renaming() || self.model.deleting() {
+        if self.model.deleting() {
             return;
         }
         self.list.cancel_batch();
@@ -58,11 +60,7 @@ impl SoundboardPanel {
             .is_some_and(|tool| tool.saving())
     }
     pub fn interaction_blocked(&self, jobs: &Jobs) -> bool {
-        jobs.busy()
-            || self.model.importing()
-            || self.model.deleting()
-            || self.model.batch_renaming()
-            || self.recording_saving()
+        jobs.busy() || self.model.importing() || self.model.deleting() || self.recording_saving()
     }
     pub fn poll_recording(&mut self, ctx: &egui::Context) {
         if let Some(tool) = &mut self.recording_import
@@ -80,8 +78,34 @@ impl SoundboardPanel {
         }
     }
 
+    fn edit_library(
+        &mut self,
+        ctx: &egui::Context,
+        jobs: &mut Jobs,
+        edit: impl FnOnce(&mut Library) -> anyhow::Result<()> + Send + 'static,
+    ) -> anyhow::Result<()> {
+        ensure!(!self.interaction_blocked(jobs), Text::RenameBusy);
+        ensure!(
+            !self.renaming() || !self.model.playing(),
+            Text::StopBeforeRename
+        );
+        let mut library = self.model.library().clone();
+        ensure!(
+            jobs.begin(ctx, Text::SaveSoundLibrary, move || {
+                JobResult::LibrarySaved(
+                    edit(&mut library)
+                        .and_then(|()| library.save())
+                        .map(|()| library),
+                )
+            }),
+            jobs.status.clone()
+        );
+        Ok(())
+    }
+
     fn save_soundboard_settings(
         &mut self,
+        ctx: &egui::Context,
         settings: Settings,
         jobs: &mut Jobs,
         hotkeys: &HotkeyManager,
@@ -93,11 +117,18 @@ impl SoundboardPanel {
         .into_iter()
         .flatten()
         .try_for_each(|key| hotkeys.validate(key))
-        .and_then(|()| self.model.save_settings(settings));
+        .and_then(|()| {
+            settings.validate(
+                self.model
+                    .library()
+                    .sounds
+                    .iter()
+                    .filter_map(|sound| sound.hotkey),
+            )
+        });
         match result {
             Ok(()) => {
-                jobs.status.clear();
-                jobs.failed = false;
+                jobs.save_settings(ctx, settings);
             }
             Err(error) => {
                 tracing::error!("Failed to save soundboard settings: {error:#}");
@@ -139,20 +170,32 @@ impl SoundboardPanel {
         ui.add_enabled_ui(available, |ui| {
             self.toolbar_ui(ui, jobs, hotkeys);
             // The toolbar can start an operation during this same frame.
-            if self.interaction_blocked(jobs) || self.recording_open() {
+            if ui.is_enabled() && (self.interaction_blocked(jobs) || self.recording_open()) {
                 ui.disable();
             }
             let actions = self
                 .list
                 .ui(ui, &self.model.library().sounds, self.list_status(hotkeys));
             for action in actions {
-                self.list_action(ui.ctx(), hotkeys, action);
+                if self.interaction_blocked(jobs) {
+                    break;
+                }
+                self.list_action(ui.ctx(), jobs, hotkeys, action);
+            }
+            if self.interaction_blocked(jobs) && ui.is_enabled() {
+                ui.disable();
             }
             let batch_actions =
                 self.list
                     .batch_ui(ui, &self.model.library().sounds, self.list_status(hotkeys));
             for action in batch_actions {
+                if self.interaction_blocked(jobs) {
+                    break;
+                }
                 self.batch_action(ui.ctx(), jobs, hotkeys, action);
+            }
+            if self.interaction_blocked(jobs) && ui.is_enabled() {
+                ui.disable();
             }
             self.playback_ui(ui, hotkeys);
         });
@@ -163,7 +206,7 @@ impl SoundboardPanel {
         {
             self.model.remove(&ids, super::wake_ui(ui.ctx().clone()));
         }
-        self.batch_rename_ui(ui.ctx(), available);
+        self.batch_rename_ui(ui.ctx(), jobs, available);
     }
 
     fn list_status(&self, hotkeys: &HotkeyManager) -> sound_list::Status {
@@ -174,33 +217,21 @@ impl SoundboardPanel {
         }
     }
 
-    fn batch_rename_ui(&mut self, ctx: &egui::Context, available: bool) {
+    fn batch_rename_ui(&mut self, ctx: &egui::Context, jobs: &mut Jobs, available: bool) {
         use batch_rename::{Action, Status};
         let Some(tool) = &mut self.batch_rename else {
             return;
         };
-        if tool.applying()
-            && let Some(result) = self.model.take_rename_result()
-        {
-            let closed = tool.complete(self.model.library(), result);
-            if let Some(selected) = self.list.selected_mut() {
-                *selected = tool.selected().clone();
-            }
-            if closed {
-                self.list.clear_anchor();
-                self.batch_rename = None;
-                return;
-            }
-        }
-        match tool.ui(
+        let action = tool.ui(
             ctx,
             self.model.library(),
             Status {
                 available,
-                busy: self.model.busy(),
+                busy: jobs.busy() || self.model.busy(),
                 playing: self.model.playing(),
             },
-        ) {
+        );
+        match action {
             Action::None => {}
             Action::Closed => {
                 self.list.clear_anchor();
@@ -208,8 +239,11 @@ impl SoundboardPanel {
             }
             Action::StopPlayback => self.model.stop(),
             Action::Apply(plan) => {
-                let result = self.model.rename_sounds(plan, super::wake_ui(ctx.clone()));
-                tool.apply_result(result);
+                let result =
+                    self.edit_library(ctx, jobs, move |library| library.rename_batch(plan));
+                if let Some(tool) = &mut self.batch_rename {
+                    tool.apply_result(result);
+                }
             }
         }
     }
@@ -264,7 +298,7 @@ impl SoundboardPanel {
                             );
                         }
                     }
-                    if self.model.importing() || self.model.deleting() || jobs.exporting() {
+                    if self.interaction_blocked(jobs) {
                         ui.spinner();
                     }
                 },
@@ -275,6 +309,7 @@ impl SoundboardPanel {
     fn list_action(
         &mut self,
         ctx: &egui::Context,
+        jobs: &mut Jobs,
         hotkeys: &mut HotkeyManager,
         action: sound_list::Action,
     ) {
@@ -290,16 +325,18 @@ impl SoundboardPanel {
                 hotkeys.begin_capture(target);
             }
             Action::ClearHotkey(index) => {
-                if let Err(error) = self
-                    .model
-                    .bind_hotkey(BindingTarget::Sound(index), None, None)
-                {
+                let id = self.model.library().sounds[index].id;
+                if let Err(error) = self.edit_library(ctx, jobs, move |library| {
+                    library.set_hotkeys(&HashSet::from([id]), None)
+                }) {
                     tracing::error!("Failed to clear hotkey: {error:#}");
                     self.model.set_error(Message::error(error));
                 }
             }
             Action::Move { from, to } => {
-                if let Err(error) = self.model.move_sound(from, to) {
+                if let Err(error) =
+                    self.edit_library(ctx, jobs, move |library| library.move_sound(from, to))
+                {
                     tracing::error!("Failed to reorder sounds: {error:#}");
                     self.model.set_error(Message::error(error));
                 }
@@ -401,13 +438,16 @@ impl SoundboardPanel {
                     self.model.message.clear();
                 }
             }
-            BatchAction::Move(to_top) => match self.model.move_sounds(&ids, to_top) {
-                Ok(()) => {
-                    self.model.message.clear();
-                    self.model.failed = false;
+            BatchAction::Move(to_top) => {
+                match self.edit_library(ctx, jobs, move |library| library.move_sounds(&ids, to_top))
+                {
+                    Ok(()) => {
+                        self.model.message.clear();
+                        self.model.failed = false;
+                    }
+                    Err(error) => self.model.set_error(Message::error(error)),
                 }
-                Err(error) => self.model.set_error(Message::error(error)),
-            },
+            }
             BatchAction::Rename => {
                 self.batch_rename = Some(BatchRename::new(self.model.library(), ids))
             }
@@ -424,13 +464,15 @@ impl SoundboardPanel {
                 }
                 ctx.request_repaint();
             }
-            BatchAction::ClearHotkey => match self.model.bind_sound_hotkeys(&ids, None) {
-                Ok(()) => hotkeys.message.clear(),
-                Err(error) => {
-                    tracing::error!("Failed to clear selected hotkeys: {error:#}");
-                    hotkeys.message = Message::error(error);
+            BatchAction::ClearHotkey => {
+                match self.edit_library(ctx, jobs, move |library| library.set_hotkeys(&ids, None)) {
+                    Ok(()) => hotkeys.message.clear(),
+                    Err(error) => {
+                        tracing::error!("Failed to clear selected hotkeys: {error:#}");
+                        hotkeys.message = Message::error(error);
+                    }
                 }
-            },
+            }
         }
     }
 
@@ -474,7 +516,7 @@ impl SoundboardPanel {
             ctx,
             &self.model.settings,
             Status {
-                busy: jobs.busy() || hotkeys.is_capturing(),
+                busy: self.interaction_blocked(jobs) || hotkeys.is_capturing(),
                 capture_target: hotkeys.target(),
                 capture_message: &hotkeys.settings_message,
                 error: jobs.failed.then_some(&jobs.status),
@@ -486,7 +528,7 @@ impl SoundboardPanel {
                 hotkeys.settings_message.clear();
             }
             Action::ClearMessage => hotkeys.settings_message.clear(),
-            Action::Save(settings) => self.save_soundboard_settings(settings, jobs, hotkeys),
+            Action::Save(settings) => self.save_soundboard_settings(ctx, settings, jobs, hotkeys),
             Action::Capture(target) => {
                 self.model.stop();
                 hotkeys.begin_capture(target);
@@ -503,32 +545,107 @@ impl SoundboardPanel {
         self.settings.set_devices(microphones, speakers);
     }
 
-    pub fn poll_capture(&mut self, ctx: &egui::Context, hotkeys: &mut HotkeyManager) {
-        if let Some(capture) = hotkeys.poll_capture(ctx) {
-            let result = if let Some(ids) = capture.ids {
-                self.model.bind_sound_hotkeys(&ids, Some(capture.key))
-            } else {
+    pub fn poll_capture(
+        &mut self,
+        ctx: &egui::Context,
+        jobs: &mut Jobs,
+        hotkeys: &mut HotkeyManager,
+    ) {
+        let Some(capture) = hotkeys.poll_capture(ctx) else {
+            return;
+        };
+        let result = self
+            .settings
+            .draft_mut()
+            .as_deref()
+            .unwrap_or(&self.model.settings)
+            .validate_binding(
                 self.model
-                    .bind_hotkey(capture.target, Some(capture.key), self.settings.draft_mut())
-            };
-            hotkeys.capture_result(capture.target, result);
+                    .library()
+                    .sounds
+                    .iter()
+                    .filter_map(|sound| sound.hotkey),
+                capture.target,
+                capture.key,
+            )
+            .and_then(|()| match capture.target {
+                BindingTarget::Sound(index) => {
+                    let ids = match capture.ids {
+                        Some(ids) => ids,
+                        None => HashSet::from([self
+                            .model
+                            .library()
+                            .sounds
+                            .get(index)
+                            .user_context(Text::SoundNotFound)?
+                            .id]),
+                    };
+                    self.edit_library(ctx, jobs, move |library| {
+                        library.set_hotkeys(&ids, Some(capture.key))
+                    })
+                }
+                target => {
+                    let settings = self
+                        .settings
+                        .draft_mut()
+                        .user_context(Text::OpenSoundSettingsFirst)?;
+                    match target {
+                        BindingTarget::Hold => {
+                            settings.playback_auto_hold_hotkey = Some(capture.key)
+                        }
+                        BindingTarget::Stop => settings.playback_stop_hotkey = Some(capture.key),
+                        BindingTarget::Random => {
+                            settings.playback_random_hotkey = Some(capture.key)
+                        }
+                        BindingTarget::Sound(_) => unreachable!(),
+                    }
+                    Ok(())
+                }
+            });
+        hotkeys.capture_result(capture.target, result);
+    }
+
+    pub fn finish_rename(
+        &mut self,
+        ctx: &egui::Context,
+        jobs: &mut Jobs,
+        soundboard_tab_selected: bool,
+    ) {
+        let keep_editing = soundboard_tab_selected && !self.settings.is_open();
+        if let Some((index, name)) = self.list.rename_request(keep_editing, self.model.playing())
+            && let Err(error) =
+                self.edit_library(ctx, jobs, move |library| library.rename(index, &name))
+        {
+            self.list.rename_finished(false);
+            self.model.set_error(Message::error(error));
         }
     }
 
-    pub fn finish_rename(&mut self, soundboard_tab_selected: bool) {
-        let keep_editing = soundboard_tab_selected && !self.settings.is_open();
-        if let Some((index, name)) = self.list.rename_request(keep_editing, self.model.playing()) {
-            let result = self.model.rename(index, &name);
+    pub fn finish_edit(&mut self, result: anyhow::Result<Library>) {
+        let result = result
+            .map(|library| self.model.replace_library(library))
+            .map_err(|error| {
+                self.model.set_error(Message::error(error));
+                anyhow::anyhow!(self.model.message.clone())
+            });
+        // Editing blocks other library changes, so the open editor owns the result.
+        if self.list.renaming() {
             self.list.rename_finished(result.is_ok());
-            match result {
-                Ok(()) => {
-                    self.model.failed = false;
-                    self.model.message.clear();
-                }
-                Err(error) => self.model.set_error(Message::error(error)),
+        }
+        if let Some(tool) = &mut self.batch_rename
+            && tool.applying()
+        {
+            let closed = tool.complete(self.model.library(), result);
+            if let Some(selected) = self.list.selected_mut() {
+                *selected = tool.selected().clone();
+            }
+            if closed {
+                self.list.clear_anchor();
+                self.batch_rename = None;
             }
         }
     }
+
     pub fn finish_delete(&mut self) {
         if let Some(removed) = self.model.take_removed_sounds() {
             self.list.remove_ids(&removed);

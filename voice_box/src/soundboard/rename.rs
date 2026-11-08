@@ -155,26 +155,17 @@ impl RenamePlan {
 }
 
 impl Library {
-    pub fn rename_batch(
-        &mut self,
-        mut plan: RenamePlan,
-        save: impl FnOnce(&Self) -> anyhow::Result<()>,
-    ) -> anyhow::Result<()> {
+    pub fn rename_batch(&mut self, mut plan: RenamePlan) -> anyhow::Result<()> {
         plan.validate(self);
         ensure!(
             plan.error_count() == 0 && plan.change_count() > 0,
             Text::RenameValidationFailed
         );
-        let original = self.sounds.clone();
         for entry in plan.entries {
             self.sounds
                 .get_mut(entry.index)
                 .user_context(Text::SoundNotFound)?
                 .name = entry.name;
-        }
-        if let Err(error) = save(self) {
-            self.sounds = original;
-            return Err(error);
         }
         Ok(())
     }

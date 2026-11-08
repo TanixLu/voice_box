@@ -28,7 +28,7 @@ use crate::{
         voice::VoicePanel,
         widgets::section,
     },
-    i18n::{self, Details, LanguagePreference, Message, Text, UserContext},
+    i18n::{Details, LanguagePreference, Message, Text, UserContext},
     settings,
     soundboard::library::Library,
     static_data::ICON_PNG_DATA,
@@ -194,12 +194,8 @@ impl VoiceBoxApp {
         if previous != enabled {
             let mut settings = self.soundboard.model.settings.clone();
             settings.startup_enabled = enabled;
-            match settings.save() {
-                Ok(()) => {
-                    self.soundboard.model.settings = settings;
-                    self.synchronize_startup(ui.ctx(), enabled.then_some(Text::StartupRegistered));
-                }
-                Err(error) => self.startup_message = Some(Message::error(error)),
+            if !self.jobs.save_settings(ui.ctx(), settings) {
+                self.startup_message = Some(self.jobs.status.clone());
             }
             ui.close();
         } else if retry {
@@ -223,17 +219,7 @@ impl VoiceBoxApp {
         if previous != theme_preference {
             let mut settings = self.soundboard.model.settings.clone();
             settings.theme_preference = theme_preference;
-            match settings.save() {
-                Ok(()) => {
-                    self.soundboard.model.settings = settings;
-                    ui.ctx().set_theme(theme_preference);
-                    ui.ctx().request_repaint();
-                }
-                Err(error) => {
-                    self.jobs.status = Message::error(error);
-                    self.jobs.failed = true;
-                }
-            }
+            self.jobs.save_settings(ui.ctx(), settings);
         }
     }
 
@@ -247,17 +233,7 @@ impl VoiceBoxApp {
         if previous != language_preference {
             let mut settings = self.soundboard.model.settings.clone();
             settings.language_preference = language_preference;
-            match settings.save() {
-                Ok(()) => {
-                    self.soundboard.model.settings = settings;
-                    i18n::set_language(language_preference.resolve());
-                    ui.ctx().request_repaint();
-                }
-                Err(error) => {
-                    self.jobs.status = Message::error(error);
-                    self.jobs.failed = true;
-                }
-            }
+            self.jobs.save_settings(ui.ctx(), settings);
         }
     }
 
@@ -270,10 +246,10 @@ impl VoiceBoxApp {
                 ui.set_min_width(100.0);
                 ui.spacing_mut().button_padding.x = 25.0;
 
-                self.language_ui(ui);
+                ui.add_enabled_ui(!self.interaction_blocked(), |ui| self.language_ui(ui));
                 ui.separator();
 
-                self.theme_ui(ui);
+                ui.add_enabled_ui(!self.interaction_blocked(), |ui| self.theme_ui(ui));
                 ui.separator();
 
                 self.startup_ui(ui);
@@ -355,7 +331,8 @@ impl VoiceBoxApp {
 
     fn show(&mut self, ui: &mut egui::Ui) {
         if !self.interaction_blocked() {
-            self.soundboard.poll_capture(ui.ctx(), &mut self.hotkeys);
+            self.soundboard
+                .poll_capture(ui.ctx(), &mut self.jobs, &mut self.hotkeys);
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 self.soundboard.cancel_rename();
             }
@@ -399,6 +376,9 @@ impl VoiceBoxApp {
 
                 ui.add_space(12.0);
 
+                if self.interaction_blocked() && ui.is_enabled() {
+                    ui.disable();
+                }
                 match self.tab {
                     Tab::Voice => self.voice_tab_ui(ui),
                     Tab::Soundboard => self.soundboard.ui(
@@ -415,7 +395,8 @@ impl VoiceBoxApp {
             .settings_ui(ui.ctx(), &mut self.jobs, &mut self.hotkeys);
         self.soundboard.recording_ui(ui.ctx());
         if !self.interaction_blocked() && !self.soundboard.recording_open() {
-            self.soundboard.finish_rename(self.tab == Tab::Soundboard);
+            self.soundboard
+                .finish_rename(ui.ctx(), &mut self.jobs, self.tab == Tab::Soundboard);
         }
         self.soundboard.file_error_ui(ui.ctx());
         self.full_uninstall_ui(ui.ctx());

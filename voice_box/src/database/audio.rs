@@ -22,10 +22,10 @@ pub struct AudioSource {
 
 impl AudioSource {
     pub fn open(id: i64) -> anyhow::Result<Self> {
-        Self::new(super::open()?, id)
+        Self::new(super::open_read()?, id)
     }
 
-    pub fn new(connection: Connection, id: i64) -> anyhow::Result<Self> {
+    fn new(connection: Connection, id: i64) -> anyhow::Result<Self> {
         let length = connection.query_row(
             "SELECT byte_length FROM sounds WHERE id = ?1",
             [id],
@@ -95,7 +95,7 @@ impl MediaSource for AudioSource {
     }
 }
 
-pub struct AudioWriter<'a> {
+pub(super) struct AudioWriter<'a> {
     connection: &'a Connection,
     id: i64,
     chunk: i64,

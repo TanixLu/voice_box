@@ -1,7 +1,5 @@
 //! Typed application settings in database's key/value table.
 
-mod storage;
-
 use anyhow::ensure;
 
 use crate::{
@@ -25,6 +23,27 @@ pub struct OutputDevice {
     pub name: String,
 }
 
+macro_rules! fields {
+    ($define:ident) => {
+        $define! {
+            language_preference: LanguagePreference = LanguagePreference::System;
+            theme_preference: egui::ThemePreference = egui::ThemePreference::System;
+            startup_enabled: bool = false;
+            playback_microphone_output_device: Option<OutputDevice> = None;
+            playback_microphone_output_gain_percent: GainPercent = GainPercent::new(100);
+            playback_speaker_output_device: Option<OutputDevice> = None;
+            playback_speaker_output_gain_percent: GainPercent = GainPercent::new(100);
+            playback_auto_hold_hotkey: Option<Hotkey> = None;
+            playback_stop_hotkey: Option<Hotkey> = None;
+            playback_random_hotkey: Option<Hotkey> = None;
+            playback_show_overlay: bool = true;
+            playback_repeat: bool = false;
+        }
+    };
+}
+
+pub(crate) use fields;
+
 macro_rules! define_settings {
     ($($field:ident: $ty:ty = $default:expr;)*) => {
         #[derive(Clone, PartialEq, Eq)]
@@ -37,36 +56,20 @@ macro_rules! define_settings {
                 Self { $($field: $default,)* }
             }
         }
-
-        storage::impl_storage! { $($field: $ty = $default;)* }
     };
 }
 
-define_settings! {
-    language_preference: LanguagePreference = LanguagePreference::System;
-    theme_preference: egui::ThemePreference = egui::ThemePreference::System;
-    startup_enabled: bool = false;
-    playback_microphone_output_device: Option<OutputDevice> = None;
-    playback_microphone_output_gain_percent: GainPercent = GainPercent::new(100);
-    playback_speaker_output_device: Option<OutputDevice> = None;
-    playback_speaker_output_gain_percent: GainPercent = GainPercent::new(100);
-    playback_auto_hold_hotkey: Option<Hotkey> = None;
-    playback_stop_hotkey: Option<Hotkey> = None;
-    playback_random_hotkey: Option<Hotkey> = None;
-    playback_show_overlay: bool = true;
-    playback_repeat: bool = false;
-}
+fields!(define_settings);
 
 impl Settings {
     pub fn load() -> anyhow::Result<Self> {
-        let mut connection = database::open()?;
-        let transaction = connection.transaction()?;
-        Self::read_from(&transaction)
+        let mut settings = database::settings::load()?;
+        settings.sanitize();
+        Ok(settings)
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
-        self.save_to(&mut database::open()?)
-            .user_context(Text::SaveAppSettingsFailed)
+        database::settings::save(self).user_context(Text::SaveAppSettingsFailed)
     }
 
     pub fn validate_binding(

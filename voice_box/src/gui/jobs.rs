@@ -5,10 +5,17 @@ use voice_box_shared::apo_cfg::ApoCfg;
 use crate::{
     devices::{Microphone, PluginOperationResult, Speaker},
     gui::VoiceBoxApp,
-    i18n::{Details, Message, Text},
+    i18n::{self, Details, Message, Text},
+    settings::Settings,
+    soundboard::library::Library,
 };
 
 pub enum JobResult {
+    LibrarySaved(anyhow::Result<Library>),
+    SettingsSaved {
+        settings: Settings,
+        result: anyhow::Result<()>,
+    },
     Exported(anyhow::Result<()>),
     Uninstall(anyhow::Result<()>),
     Startup {
@@ -32,6 +39,13 @@ pub struct Jobs {
 }
 
 impl Jobs {
+    pub fn save_settings(&mut self, ctx: &egui::Context, settings: Settings) -> bool {
+        self.begin(ctx, Text::Saving, move || JobResult::SettingsSaved {
+            result: settings.save(),
+            settings,
+        })
+    }
+
     pub fn busy(&self) -> bool {
         self.receiver.is_some()
     }
@@ -61,7 +75,11 @@ impl Jobs {
                 tracing::info!(operation = %operation_name, "Background operation started");
                 let result = operation();
                 match &result {
-                    JobResult::Uninstall(Err(error))
+                    JobResult::LibrarySaved(Err(error))
+                    | JobResult::SettingsSaved {
+                        result: Err(error), ..
+                    }
+                    | JobResult::Uninstall(Err(error))
                     | JobResult::Startup {
                         result: Err(error), ..
                     }
@@ -127,6 +145,13 @@ impl VoiceBoxApp {
                     self.jobs.status.clear();
                     return;
                 }
+                if matches!(self.jobs.status, Message::Text(Text::SaveSoundLibrary)) {
+                    self.soundboard
+                        .finish_edit(Err(anyhow::anyhow!(Text::OperationIncomplete)));
+                    self.jobs.receiver = None;
+                    self.jobs.status.clear();
+                    return;
+                }
                 self.jobs.receiver = None;
                 self.uninstalling = false;
                 self.jobs.status = Text::OperationIncomplete.into();
@@ -136,6 +161,38 @@ impl VoiceBoxApp {
         };
         self.jobs.receiver = None;
         match result {
+            JobResult::LibrarySaved(result) => {
+                self.soundboard.finish_edit(result);
+                self.jobs.status.clear();
+            }
+            JobResult::SettingsSaved { settings, result } => {
+                let startup_changed =
+                    settings.startup_enabled != self.soundboard.model.settings.startup_enabled;
+                match result {
+                    Ok(()) => {
+                        ctx.set_theme(settings.theme_preference);
+                        i18n::set_language(settings.language_preference.resolve());
+                        self.soundboard.model.apply_settings(settings);
+                        self.jobs.status.clear();
+                        if startup_changed {
+                            let notice = self
+                                .soundboard
+                                .model
+                                .settings
+                                .startup_enabled
+                                .then_some(Text::StartupRegistered);
+                            self.synchronize_startup(ctx, notice);
+                        }
+                    }
+                    Err(error) => {
+                        self.jobs.status = Message::error(error);
+                        self.jobs.failed = true;
+                        if startup_changed {
+                            self.startup_message = Some(self.jobs.status.clone());
+                        }
+                    }
+                }
+            }
             JobResult::Startup { result, notice } => {
                 self.jobs.status.clear();
                 self.startup_synchronized = result.is_ok();
