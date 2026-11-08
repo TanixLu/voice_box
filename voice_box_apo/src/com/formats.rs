@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use std::sync::atomic::Ordering;
 
 use windows::Win32::{
     Foundation::{E_POINTER, S_FALSE, S_OK},
@@ -20,61 +19,6 @@ use crate::{
     com::{ApoCom, object_from, unknown_vtable},
     etw::{self, apo_log},
 };
-
-unsafe fn negotiate_format(
-    object: *mut ApoCom,
-    opposite: *mut c_void,
-    requested: *mut c_void,
-    supported: *mut *mut c_void,
-) -> HRESULT {
-    if requested.is_null() || supported.is_null() {
-        return E_POINTER;
-    }
-    let requested_format = match unsafe { read_format(requested) } {
-        Ok(format) => format,
-        Err(result) => return result,
-    };
-    log_connection_format("Format negotiation requested", &requested_format);
-    // This APO processes in place and cannot convert between formats. If the
-    // other end is already fixed, suggest that format instead of accepting a
-    // pair which LockForProcess would later reject.
-    let (selected, format, result) = if opposite.is_null() {
-        (requested, requested_format, S_OK)
-    } else {
-        let opposite_format = match unsafe { read_format(opposite) } {
-            Ok(format) => format,
-            Err(result) => return result,
-        };
-        log_connection_format("Format negotiation opposite", &opposite_format);
-        if formats_match(&requested_format, &opposite_format) {
-            (requested, requested_format, S_OK)
-        } else {
-            (opposite, opposite_format, S_FALSE)
-        }
-    };
-    if !is_supported_format(&format) {
-        return APOERR_FORMAT_NOT_SUPPORTED;
-    }
-    // AddRef may invoke an external COM object, so do not hold our mutex there.
-    unsafe { ((*unknown_vtable(selected)).AddRef)(selected) };
-    {
-        let _control = unsafe { (*object).control_guard.lock() }
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // Either side may be negotiated first. Matching input/output formats
-        // give the input channel count in both call orders.
-        if !unsafe { (*object).locked.load(Ordering::Relaxed) } {
-            unsafe {
-                (*object)
-                    .input_channels
-                    .store(format.dwSamplesPerFrame, Ordering::Relaxed)
-            };
-        }
-    }
-    unsafe {
-        *supported = selected;
-    }
-    result
-}
 
 pub unsafe fn read_format(raw: *mut c_void) -> Result<UNCOMPRESSEDAUDIOFORMAT, HRESULT> {
     let Some(media_type) = (unsafe { IAudioMediaType::from_raw_borrowed(&raw) }) else {
@@ -137,13 +81,61 @@ pub fn log_connection_format(label: &str, format: &UNCOMPRESSEDAUDIOFORMAT) {
     );
 }
 
+unsafe fn negotiate_format(
+    object: &ApoCom,
+    opposite: *mut c_void,
+    requested: *mut c_void,
+    supported: *mut *mut c_void,
+) -> HRESULT {
+    if requested.is_null() || supported.is_null() {
+        return E_POINTER;
+    }
+    // Media type methods and AddRef may reenter this APO; keep them outside our mutex.
+    let requested_format = match unsafe { read_format(requested) } {
+        Ok(format) => format,
+        Err(result) => return result,
+    };
+    log_connection_format("Format negotiation requested", &requested_format);
+    let opposite_format = if opposite.is_null() {
+        None
+    } else {
+        let format = match unsafe { read_format(opposite) } {
+            Ok(format) => format,
+            Err(result) => return result,
+        };
+        log_connection_format("Format negotiation opposite", &format);
+        Some(format)
+    };
+    // This APO processes in place and cannot convert between formats. If the
+    // other end is already fixed, suggest that format instead of accepting a
+    // pair which LockForProcess would later reject.
+    let (selected, format, result) = match opposite_format {
+        Some(format) if !formats_match(&requested_format, &format) => (opposite, format, S_FALSE),
+        _ => (requested, requested_format, S_OK),
+    };
+    if !is_supported_format(&format) {
+        return APOERR_FORMAT_NOT_SUPPORTED;
+    }
+    unsafe { ((*unknown_vtable(selected)).AddRef)(selected) };
+    {
+        let mut control = object.control();
+        // Either side may be negotiated first. Matching input/output formats
+        // give the input channel count in both call orders.
+        if !object.processing.is_accepting() {
+            control.input_channels = format.dwSamplesPerFrame;
+        }
+    }
+    unsafe { *supported = selected };
+    result
+}
+
 pub unsafe extern "system" fn is_format_supported(
     this: *mut c_void,
     opposite: *mut c_void,
     requested: *mut c_void,
     supported: *mut *mut c_void,
 ) -> HRESULT {
-    let object = unsafe { object_from(this) };
+    let object = unsafe { &*object_from(this) };
     let result = unsafe { negotiate_format(object, opposite, requested, supported) };
     apo_log!(
         etw::VERBOSE,
@@ -166,8 +158,9 @@ pub unsafe extern "system" fn get_input_channel_count(
         );
         return E_POINTER;
     }
-    let object = unsafe { object_from(this) };
-    if !unsafe { (*object).initialized.load(Ordering::Relaxed) } {
+    let object = unsafe { &*object_from(this) };
+    let control = object.control();
+    if !control.initialized {
         apo_log!(
             etw::ERROR,
             etw::FORMAT,
@@ -176,7 +169,7 @@ pub unsafe extern "system" fn get_input_channel_count(
         );
         return APOERR_NOT_INITIALIZED;
     }
-    let channels = unsafe { (*object).input_channels.load(Ordering::Relaxed) };
+    let channels = control.input_channels;
     if channels == 0 {
         apo_log!(
             etw::ERROR,

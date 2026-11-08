@@ -131,6 +131,10 @@ impl AudioProcessor {
         self.frame_bytes
     }
 
+    pub fn is_bypassed(&self) -> bool {
+        self.chain.is_none()
+    }
+
     pub fn latency_hns(&self) -> i64 {
         self.latency_hns
     }

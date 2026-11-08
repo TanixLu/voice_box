@@ -1,5 +1,5 @@
 use core::{ffi::c_void, ptr};
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::Arc;
 
 use windows::Win32::{
     Foundation::{E_INVALIDARG, E_NOTIMPL, E_OUTOFMEMORY, E_POINTER, HANDLE, S_OK},
@@ -54,8 +54,8 @@ pub unsafe extern "system" fn get_registration_properties(
 }
 
 pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *const u8) -> HRESULT {
-    let object = unsafe { object_from(this) };
-    if unsafe { (*object).initialized.load(Ordering::Relaxed) } {
+    let object = unsafe { &*object_from(this) };
+    if object.control().initialized {
         return APOERR_ALREADY_INITIALIZED;
     }
     if data.is_null() || (size as usize) < core::mem::size_of::<APOInitBaseStruct>() {
@@ -99,37 +99,30 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
     // Cache the frequency before real-time processing.
     let _ = win_qpf();
 
-    let _control =
-        unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut control = object.control();
     // A concurrent or reentrant call may have initialized the instance in the meantime.
-    if unsafe { (*object).initialized.load(Ordering::Relaxed) } {
+    if control.initialized {
         return APOERR_ALREADY_INITIALIZED;
     }
 
-    unsafe {
-        (*object).soundboard_name = soundboard_name;
-        if mode != AUDIO_SIGNALPROCESSINGMODE_RAW {
-            // Discovery objects also expose live effect lists and change events.
-            // They watch APO configuration but still cannot allocate/process a DSP graph.
-            match crate::apo_cfg_watcher::ApoCfgWatcher::start(Arc::clone(&(*object).config)) {
-                Ok(worker) => (*object).apo_cfg_watcher = Some(worker),
-                Err(error) => {
-                    apo_log!(
-                        etw::WARNING,
-                        etw::APO_CFG,
-                        "APO configuration watcher failed: {error}"
-                    );
-                }
+    control.soundboard_name = soundboard_name;
+    if mode != AUDIO_SIGNALPROCESSINGMODE_RAW {
+        // Discovery objects also expose live effect lists and change events.
+        // They watch APO configuration but still cannot allocate/process a DSP graph.
+        match crate::apo_cfg_watcher::ApoCfgWatcher::start(Arc::clone(&object.config)) {
+            Ok(worker) => control.config_watcher = Some(worker),
+            Err(error) => {
+                apo_log!(
+                    etw::WARNING,
+                    etw::APO_CFG,
+                    "APO configuration watcher failed: {error}"
+                );
             }
         }
-        (*object)
-            .effect_enabled
-            .store(mode != AUDIO_SIGNALPROCESSINGMODE_RAW, Ordering::Relaxed);
-        (*object)
-            .discovery_only
-            .store(discovery_only, Ordering::Relaxed);
-        (*object).initialized.store(true, Ordering::Relaxed);
     }
+    control.supports_effects = mode != AUDIO_SIGNALPROCESSINGMODE_RAW;
+    control.discovery_only = discovery_only;
+    control.initialized = true;
     apo_log!(
         etw::INFO,
         etw::LIFECYCLE,
@@ -195,8 +188,8 @@ pub unsafe extern "system" fn get_effects_list(
         *effects = ptr::null_mut();
         *count = 0;
     }
-    let object = unsafe { object_from(this) };
-    let supports_effect = unsafe { (*object).effect_enabled.load(Ordering::Relaxed) };
+    let object = unsafe { &*object_from(this) };
+    let supports_effect = object.control().supports_effects;
     // Allocate before subscribing so an allocation failure cannot replace the
     // caller's existing subscription. The returned snapshot and subscription
     // are synchronized even if Enabled changes while this call is running.
@@ -208,7 +201,7 @@ pub unsafe extern "system" fn get_effects_list(
     if supports_effect && memory.is_null() {
         return E_OUTOFMEMORY;
     }
-    let denoise = match unsafe { (*object).config.subscribe_effects_list(event) } {
+    let denoise = match object.config.subscribe_effects_list(event) {
         Ok(enabled) => enabled,
         Err(error) => {
             unsafe { CoTaskMemFree(Some(memory.cast())) };
@@ -245,8 +238,8 @@ pub unsafe extern "system" fn get_controllable_effects_list(
         *effects = ptr::null_mut();
         *count = 0;
     }
-    let object = unsafe { object_from(this) };
-    let supports_effect = unsafe { (*object).effect_enabled.load(Ordering::Relaxed) };
+    let object = unsafe { &*object_from(this) };
+    let supports_effect = object.control().supports_effects;
     let memory = if supports_effect {
         unsafe { CoTaskMemAlloc(core::mem::size_of::<AUDIO_SYSTEMEFFECT>()) }
             .cast::<AUDIO_SYSTEMEFFECT>()
@@ -256,7 +249,7 @@ pub unsafe extern "system" fn get_controllable_effects_list(
     if supports_effect && memory.is_null() {
         return E_OUTOFMEMORY;
     }
-    let denoise = match unsafe { (*object).config.subscribe_controllable_effects_list(event) } {
+    let denoise = match object.config.subscribe_controllable_effects_list(event) {
         Ok(enabled) => enabled,
         Err(error) => {
             unsafe { CoTaskMemFree(Some(memory.cast())) };

@@ -16,19 +16,20 @@ use voice_box_shared::dsp::AudioProcessor;
 
 use crate::{
     com::{
-        ApoCom, DspAccess,
+        ApoCom,
         formats::{
             formats_match, is_supported_format, log_connection_format, read_format, sample_format,
         },
         object_from,
+        session::ProcessingSession,
     },
     etw::{self, apo_log},
     memory::Resident,
 };
 
 pub unsafe extern "system" fn reset(this: *mut c_void) -> HRESULT {
-    let object = unsafe { object_from(this) };
-    unsafe { (*object).reset_requested.store(true, Ordering::Relaxed) };
+    let object = unsafe { &*object_from(this) };
+    object.reset_requested.store(true, Ordering::Relaxed);
     S_OK
 }
 
@@ -36,8 +37,8 @@ pub unsafe extern "system" fn get_latency(this: *mut c_void, latency: *mut i64) 
     if latency.is_null() {
         return E_POINTER;
     }
-    let object = unsafe { object_from(this) };
-    unsafe { *latency = (*object).latency_hns.load(Ordering::Relaxed) };
+    let object = unsafe { &*object_from(this) };
+    unsafe { *latency = object.control().latency_hns };
     S_OK
 }
 
@@ -48,7 +49,7 @@ pub unsafe extern "system" fn lock_for_process(
     output_count: u32,
     outputs: *const *const APO_CONNECTION_DESCRIPTOR,
 ) -> HRESULT {
-    let object = unsafe { object_from(this) };
+    let object = unsafe { &*object_from(this) };
     let fail = |reason: &str, result: HRESULT| {
         apo_log!(
             etw::ERROR,
@@ -58,7 +59,7 @@ pub unsafe extern "system" fn lock_for_process(
         );
         result
     };
-    if !unsafe { (*object).initialized.load(Ordering::Relaxed) } {
+    if !object.control().initialized {
         return fail("not initialized", APOERR_NOT_INITIALIZED);
     }
     if input_count != 1 || output_count != 1 {
@@ -81,6 +82,8 @@ pub unsafe extern "system" fn lock_for_process(
     let Some(output_format) = output_format else {
         return fail("null output media type", E_POINTER);
     };
+    let max_input_frames = unsafe { (**inputs).u32MaxFrameCount };
+    let max_output_frames = unsafe { (**outputs).u32MaxFrameCount };
     let input_format = match unsafe { read_format(input_format.as_raw()) } {
         Ok(format) => format,
         Err(result) => {
@@ -101,19 +104,16 @@ pub unsafe extern "system" fn lock_for_process(
             APOERR_INVALID_CONNECTION_FORMAT,
         );
     }
-    let _control =
-        unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
-    if unsafe { (*object).discovery_only.load(Ordering::Relaxed) } {
+    let mut control = object.control();
+    if control.discovery_only {
         return fail("discovery-only instance", APOERR_NOT_INITIALIZED);
     }
-    if unsafe { (*object).locked.load(Ordering::Relaxed) } {
+    if object.processing.is_accepting() {
         return fail("already locked", APOERR_APO_LOCKED);
     }
     let sample_format = sample_format(&input_format)
         .expect("UNREACHABLE: validated format should have a supported sample format");
     let frame_bytes = input_format.dwSamplesPerFrame as usize * sample_format.bytes();
-    let max_input_frames = unsafe { (**inputs).u32MaxFrameCount };
-    let max_output_frames = unsafe { (**outputs).u32MaxFrameCount };
     if max_output_frames < max_input_frames {
         return fail(
             "output buffer cannot hold maximum input frames",
@@ -127,13 +127,13 @@ pub unsafe extern "system" fn lock_for_process(
     {
         return fail("invalid connection buffer capacity", E_INVALIDARG);
     }
-    let Some(_dsp_access) = (unsafe { DspAccess::try_acquire(&(*object).dsp_in_use) }) else {
+    let Some(access) = object.processing.try_control() else {
         return fail("previous processing pass still active", APOERR_APO_LOCKED);
     };
-    let resident_pages = if unsafe { (*object).resident_pages.is_none() } {
+    let resident_pages = if control.resident_pages.is_none() {
         match crate::memory::image_ranges().and_then(|mut ranges| {
-            ranges.push((object as usize, size_of::<ApoCom>()));
-            let config = unsafe { (*object).config.as_ref() };
+            ranges.push((object as *const ApoCom as usize, size_of::<ApoCom>()));
+            let config = object.config.as_ref();
             ranges.push((config as *const _ as usize, size_of_val(config)));
             crate::memory::LockedPages::new(ranges)
         }) {
@@ -155,8 +155,8 @@ pub unsafe extern "system" fn lock_for_process(
             sample_format,
             input_format.dwSamplesPerFrame as usize,
             f64::from(input_format.fFramesPerSecond),
-            unsafe { (*object).effect_enabled.load(Ordering::Relaxed) },
-            &unsafe { (*object).config.load() },
+            control.supports_effects,
+            &object.config.load(),
         )
     }) {
         Ok(dsp) => dsp,
@@ -167,83 +167,71 @@ pub unsafe extern "system" fn lock_for_process(
             );
         }
     };
-    let latency_hns = dsp.latency_hns();
-    unsafe {
-        *(*object).dsp.get() = Some(dsp);
-        if let Some(pages) = resident_pages {
-            (*object).resident_pages = Some(pages);
-        }
-        *(*object).injection.get() = None;
-        (*object).injection_stop = None;
-        if (*object).effect_enabled.load(Ordering::Relaxed)
-            && let Some(name) = (*object).soundboard_name.clone()
-        {
-            match crate::soundboard::Injection::start(
-                name,
-                f64::from(input_format.fFramesPerSecond),
-                max_input_frames as usize,
-            ) {
-                Ok(injection) => {
-                    (*object).injection_stop = Some(injection.cancellation());
-                    *(*object).injection.get() = Some(injection);
-                }
-                Err(error) => apo_log!(
+    let injection = if control.supports_effects
+        && let Some(name) = control.soundboard_name.clone()
+    {
+        match crate::soundboard::Injection::start(
+            name,
+            f64::from(input_format.fFramesPerSecond),
+            max_input_frames as usize,
+        ) {
+            Ok(injection) => Some(injection),
+            Err(error) => {
+                apo_log!(
                     etw::WARNING,
                     etw::LIFECYCLE,
                     "Soundboard unavailable: {error:#}"
-                ),
+                );
+                None
             }
         }
-        (*object).latency_hns.store(latency_hns, Ordering::Relaxed);
-        (*object)
-            .input_channels
-            .store(input_format.dwSamplesPerFrame, Ordering::Relaxed);
-        (*object).process_calls.store(0, Ordering::Relaxed);
-        (*object).processed_frames.store(0, Ordering::Relaxed);
-        (*object)
-            .max_input_frames
-            .store(max_input_frames, Ordering::Relaxed);
-        (*object).reset_requested.store(false, Ordering::Relaxed);
-        (*object).locked.store(true, Ordering::Relaxed);
+    } else {
+        None
+    };
+    let session = ProcessingSession::new(dsp, injection, max_input_frames);
+    let latency_hns = session.latency_hns();
+    if let Some(pages) = resident_pages {
+        control.resident_pages = Some(pages);
     }
+    control.injection_stop = session.cancellation();
+    control.latency_hns = latency_hns;
+    control.input_channels = input_format.dwSamplesPerFrame;
+    object.process_calls.store(0, Ordering::Relaxed);
+    object.processed_frames.store(0, Ordering::Relaxed);
+    object.reset_requested.store(false, Ordering::Relaxed);
+    access.install(session);
     apo_log!(
         etw::INFO,
         etw::APO_CFG,
         "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} effect=denoise enabled={} latency_hns={}",
-        unsafe { (**inputs).u32MaxFrameCount },
-        unsafe { (**outputs).u32MaxFrameCount },
+        max_input_frames,
+        max_output_frames,
         input_format.dwSamplesPerFrame,
-        unsafe { (*object).config.load().denoising_enabled },
-        unsafe { (*object).latency_hns.load(Ordering::Relaxed) },
+        object.config.load().denoising_enabled,
+        latency_hns,
     );
     S_OK
 }
 
 pub unsafe extern "system" fn unlock_for_process(this: *mut c_void) -> HRESULT {
-    let object = unsafe { object_from(this) };
-    let _control =
-        unsafe { (*object).control_guard.lock() }.unwrap_or_else(|poisoned| poisoned.into_inner());
-    if !unsafe { (*object).locked.swap(false, Ordering::Relaxed) } {
+    let object = unsafe { &*object_from(this) };
+    let mut control = object.control();
+    if !object.processing.deactivate() {
         return APOERR_ALREADY_UNLOCKED;
     }
-    if let Some(stop) = unsafe { &(*object).injection_stop } {
+    if let Some(stop) = control.injection_stop.take() {
         stop.store(true, Ordering::Relaxed);
     }
-    // Unlock is non-RT. Normally no callback remains; if one is still exiting,
-    // retain its storage until the next lock or final destruction.
-    if let Some(_access) = unsafe { DspAccess::try_acquire(&(*object).dsp_in_use) } {
-        unsafe {
-            *(*object).dsp.get() = None;
-            *(*object).injection.get() = None;
-            (*object).injection_stop = None;
-        }
+    // Never wait for a callback: retain its session until the next lock or drop.
+    if let Some(access) = object.processing.try_control() {
+        access.clear();
     }
     apo_log!(
         etw::INFO,
         etw::APO_CFG,
         "UnlockForProcess completed instance={object:p} process_calls={} processed_frames={}",
-        unsafe { (*object).process_calls.load(Ordering::Relaxed) },
-        unsafe { (*object).processed_frames.load(Ordering::Relaxed) }
+        object.process_calls.load(Ordering::Relaxed),
+        object.processed_frames.load(Ordering::Relaxed)
     );
     S_OK
 }
@@ -256,8 +244,8 @@ pub unsafe extern "system" fn process(
     output_count: u32,
     outputs: *mut *mut APO_CONNECTION_PROPERTY,
 ) {
-    let object = unsafe { object_from(this) };
-    unsafe { (*object).process_calls.fetch_add(1, Ordering::Relaxed) };
+    let object = unsafe { &*object_from(this) };
+    object.process_calls.fetch_add(1, Ordering::Relaxed);
     if input_count != 1 || output_count != 1 || inputs.is_null() || outputs.is_null() {
         return;
     }
@@ -272,24 +260,16 @@ pub unsafe extern "system" fn process(
     let output = unsafe { &mut *output };
     output.u32ValidFrameCount = 0;
     output.u32BufferFlags = BUFFER_INVALID;
-    let Some(_dsp_access) = (unsafe { DspAccess::try_acquire(&(*object).dsp_in_use) }) else {
+    let Some(mut session) = object.processing.try_process() else {
         return;
     };
-    // DspAccess acquired the state prepared by the previous DSP owner.
-    if !unsafe { (*object).locked.load(Ordering::Relaxed) } {
-        return;
-    }
-    let Some(dsp) = (unsafe { &mut *(*object).dsp.get() }) else {
+    let Some(bytes) = session.buffer_bytes(input.u32ValidFrameCount) else {
         return;
     };
-    if input.u32ValidFrameCount > unsafe { (*object).max_input_frames.load(Ordering::Relaxed) } {
-        return;
-    }
     if output.pBuffer == 0 {
         return;
     }
-    // LockForProcess validated the maximum buffer size, and the frame count is bounded above.
-    let bytes = input.u32ValidFrameCount as usize * dsp.frame_bytes();
+    // LockForProcess validated capacity; the session bounded the frame count.
     let destination = output.pBuffer as *mut u8;
     if input.u32BufferFlags == BUFFER_VALID {
         if input.pBuffer == 0 {
@@ -300,25 +280,17 @@ pub unsafe extern "system" fn process(
             unsafe { ptr::copy(source, destination, bytes) };
         }
     } else if input.u32BufferFlags == BUFFER_SILENT {
-        let silence = dsp.silence_byte();
+        let silence = session.silence_byte();
         unsafe { ptr::write_bytes(destination, silence, bytes) };
     } else {
         return;
     }
-    let apo_config = unsafe { (*object).config.load() };
-    if unsafe { (*object).reset_requested.swap(false, Ordering::Relaxed) } {
-        dsp.reset(&apo_config);
-        if let Some(injection) = unsafe { &mut *(*object).injection.get() } {
-            injection.reset();
-        }
-    }
+    let apo_config = object.config.load();
+    let reset = object.reset_requested.swap(false, Ordering::Relaxed);
+    let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
+    let effects_processed = session.process(buffer, &apo_config, reset);
     let mut output_flags = input.u32BufferFlags;
-    if unsafe { (*object).effect_enabled.load(Ordering::Relaxed) } {
-        let buffer = unsafe { core::slice::from_raw_parts_mut(destination, bytes) };
-        let playback = unsafe { &mut *(*object).injection.get() }
-            .as_mut()
-            .and_then(|injection| injection.read(input.u32ValidFrameCount as usize));
-        dsp.process_with_config(buffer, &apo_config, playback);
+    if effects_processed {
         // The DSP materializes every frame, including startup padding and mute.
         // Keep these packets valid even when all samples are zero: legacy capture
         // clients can stop recording when initial packets are BUFFER_SILENT.
@@ -327,11 +299,9 @@ pub unsafe extern "system" fn process(
     }
     output.u32ValidFrameCount = input.u32ValidFrameCount;
     output.u32BufferFlags = output_flags;
-    unsafe {
-        (*object)
-            .processed_frames
-            .fetch_add(input.u32ValidFrameCount as u64, Ordering::Relaxed);
-    }
+    object
+        .processed_frames
+        .fetch_add(input.u32ValidFrameCount as u64, Ordering::Relaxed);
 }
 
 pub unsafe extern "system" fn identity_frames(_: *mut c_void, frames: u32) -> u32 {

@@ -4,13 +4,14 @@ mod effects;
 pub mod factory;
 mod formats;
 mod processing;
+mod session;
 
-use core::{cell::UnsafeCell, ffi::c_void, ptr};
+use core::{ffi::c_void, ptr};
 use std::{
     boxed::Box,
     sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering, fence},
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering, fence},
     },
 };
 
@@ -29,9 +30,8 @@ use windows::Win32::{
 };
 use windows_core::{GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface};
 
-use voice_box_shared::dsp::AudioProcessor;
-
 use crate::{
+    apo_cfg_watcher::{ApoCfgWatcher, RtConfig},
     com::{
         effects::{
             get_controllable_effects_list, get_effects_list, get_registration_properties,
@@ -41,9 +41,10 @@ use crate::{
         processing::{
             get_latency, identity_frames, lock_for_process, process, reset, unlock_for_process,
         },
+        session::ProcessingCell,
     },
     etw::{self, apo_log},
-    memory::Resident,
+    memory::LockedPages,
 };
 
 const EFFECT_ID_DENOISE: GUID = AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION;
@@ -58,20 +59,15 @@ struct InterfaceHeader<V> {
 
 /// A single carrier supports normal activation and COM aggregation.
 ///
-/// Non-real-time control operations are serialized. Access to UnsafeCell is exclusive
-/// through DspAccess, which never waits on the processing thread. Reset only posts
-/// a request that the next processing pass consumes while it owns the DSP.
-/// control_guard and DspAccess publish ordinary fields; the remaining atomic
-/// flags and scalar properties do not publish additional data.
+/// Control state is accessed through its mutex; processing resources through
+/// ProcessingCell. Control paths take the mutex before session access, while
+/// real-time processing never takes the mutex. Reset only posts an atomic request.
 #[repr(C)]
 struct ApoCom {
-    // Drop leases before any of the allocations whose pages they cover.
-    resident_pages: Option<super::memory::LockedPages>,
-    config: Arc<super::apo_cfg_watcher::RtConfig>,
-    apo_cfg_watcher: Option<super::apo_cfg_watcher::ApoCfgWatcher>,
-    soundboard_name: Option<String>,
-    injection: UnsafeCell<Option<super::soundboard::Injection>>,
-    injection_stop: Option<Arc<AtomicBool>>,
+    // Drop control's page leases before the allocations whose pages they cover.
+    control: Mutex<ControlState>,
+    config: Arc<RtConfig>,
+    processing: ProcessingCell,
     inner_unknown: InterfaceHeader<IUnknown_Vtbl>,
     apo: InterfaceHeader<IAudioProcessingObject_Vtbl>,
     process_control: InterfaceHeader<IAudioProcessingObjectConfiguration_Vtbl>,
@@ -79,41 +75,40 @@ struct ApoCom {
     system_effects: InterfaceHeader<IAudioSystemEffects3_Vtbl>,
     controlling_unknown: *mut c_void,
     inner_refs: AtomicU32,
-    initialized: AtomicBool,
-    locked: AtomicBool,
-    control_guard: Mutex<()>,
-    dsp_in_use: AtomicBool,
     reset_requested: AtomicBool,
-    effect_enabled: AtomicBool,
-    discovery_only: AtomicBool,
     process_calls: AtomicU64,
     processed_frames: AtomicU64,
-    input_channels: AtomicU32,
-    max_input_frames: AtomicU32,
-    latency_hns: AtomicI64,
-    dsp: UnsafeCell<Option<Resident<AudioProcessor>>>,
+}
+
+/// Non-RT state serialized with session preparation. Queries may wait for model
+/// construction, page locking and injection startup; the RT path never uses it.
+struct ControlState {
+    // This lease also covers the APO and RtConfig allocations.
+    resident_pages: Option<LockedPages>,
+    config_watcher: Option<ApoCfgWatcher>,
+    soundboard_name: Option<String>,
+    injection_stop: Option<Arc<AtomicBool>>,
+    initialized: bool,
+    discovery_only: bool,
+    supports_effects: bool,
+    // Query snapshots: channels may come from negotiation before a session exists;
+    // latency comes from the last successful lock. Unlock preserves both values.
+    input_channels: u32,
+    latency_hns: i64,
+}
+
+impl ApoCom {
+    fn control(&self) -> MutexGuard<'_, ControlState> {
+        self.control
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
 }
 
 impl Drop for ApoCom {
     fn drop(&mut self) {
         // The detached configuration watcher may outlive this COM instance.
         self.config.clear_effects_events();
-    }
-}
-
-struct DspAccess<'a>(&'a AtomicBool);
-
-impl<'a> DspAccess<'a> {
-    fn try_acquire(busy: &'a AtomicBool) -> Option<Self> {
-        busy.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .ok()
-            .map(|_| Self(busy))
-    }
-}
-
-impl Drop for DspAccess<'_> {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
     }
 }
 
@@ -266,8 +261,8 @@ unsafe extern "system" fn inner_release(this: *mut c_void) -> u32 {
             etw::INFO,
             etw::LIFECYCLE,
             "Destroy instance={object:p} initialized={} locked={} process_calls={} processed_frames={} live_objects={live_objects}",
-            unsafe { (*object).initialized.load(Ordering::Relaxed) },
-            unsafe { (*object).locked.load(Ordering::Relaxed) },
+            unsafe { (*object).control().initialized },
+            unsafe { (*object).processing.is_accepting() },
             unsafe { (*object).process_calls.load(Ordering::Relaxed) },
             unsafe { (*object).processed_frames.load(Ordering::Relaxed) }
         );
@@ -334,12 +329,19 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
     }
     unsafe {
         raw.write(ApoCom {
-            resident_pages: None,
-            config: Arc::new(super::apo_cfg_watcher::RtConfig::default()),
-            apo_cfg_watcher: None,
-            soundboard_name: None,
-            injection: UnsafeCell::new(None),
-            injection_stop: None,
+            control: Mutex::new(ControlState {
+                resident_pages: None,
+                config_watcher: None,
+                soundboard_name: None,
+                injection_stop: None,
+                initialized: false,
+                discovery_only: false,
+                supports_effects: true,
+                input_channels: 0,
+                latency_hns: 0,
+            }),
+            config: Arc::new(RtConfig::default()),
+            processing: ProcessingCell::new(),
             inner_unknown: InterfaceHeader {
                 vtable: &INNER_UNKNOWN,
                 object: ptr::null_mut(),
@@ -362,19 +364,9 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
             },
             controlling_unknown: ptr::null_mut(),
             inner_refs: AtomicU32::new(1),
-            initialized: AtomicBool::new(false),
-            locked: AtomicBool::new(false),
-            control_guard: Mutex::new(()),
-            dsp_in_use: AtomicBool::new(false),
             reset_requested: AtomicBool::new(false),
-            effect_enabled: AtomicBool::new(true),
-            discovery_only: AtomicBool::new(false),
             process_calls: AtomicU64::new(0),
             processed_frames: AtomicU64::new(0),
-            input_channels: AtomicU32::new(0),
-            max_input_frames: AtomicU32::new(0),
-            latency_hns: AtomicI64::new(0),
-            dsp: UnsafeCell::new(None),
         })
     };
     let object = unsafe { &mut *raw };
