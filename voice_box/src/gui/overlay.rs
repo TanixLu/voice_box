@@ -7,8 +7,9 @@ use windows::{
             HiDpi::GetDpiForSystem,
             Shell::{DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass},
             WindowsAndMessaging::{
-                FindWindowW, GetWindowThreadProcessId, SPI_GETWORKAREA, SWP_FRAMECHANGED,
-                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+                FindWindowW, GW_HWNDPREV, GetWindow, GetWindowThreadProcessId, HWND_TOPMOST,
+                SPI_GETWORKAREA, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+                SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
                 SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowPos, SystemParametersInfoW,
                 WM_NCCALCSIZE, WM_NCDESTROY,
             },
@@ -122,8 +123,8 @@ fn draw(
     duration_secs: Option<f64>,
     repeat: bool,
 ) {
-    if let Err(error) = remove_native_frame() {
-        tracing::warn!("Failed to remove overlay window frame: {error:#}");
+    if let Err(error) = configure_native_window() {
+        tracing::warn!("Failed to configure overlay window: {error:#}");
     }
     let rect = ui.max_rect();
     let painter = ui.painter();
@@ -187,7 +188,7 @@ fn draw(
     );
 }
 
-fn remove_native_frame() -> anyhow::Result<()> {
+fn configure_native_window() -> anyhow::Result<()> {
     unsafe {
         let title = voice_box_shared::utils::wide_null(NATIVE_TITLE);
         let window = FindWindowW(None, PCWSTR(title.as_ptr()))?;
@@ -207,6 +208,18 @@ fn remove_native_frame() -> anyhow::Result<()> {
                 0,
                 0,
                 SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+            )?;
+        }
+        // Topmost games re-raise themselves above us; reclaim the top of the z-order.
+        if GetWindow(window, GW_HWNDPREV).is_ok() {
+            SetWindowPos(
+                window,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER,
             )?;
         }
     }
