@@ -1,16 +1,10 @@
 use std::{
     ffi::OsStr,
-    ffi::OsString,
-    fs::{self, OpenOptions},
-    io,
     os::windows::ffi::OsStrExt,
-    os::windows::ffi::OsStringExt,
     os::windows::io::{FromRawHandle, OwnedHandle},
-    path::{Path, PathBuf},
     sync::OnceLock,
 };
 
-use atomic_write_file::AtomicWriteFile;
 use serde::{Deserialize, Serialize};
 use windows::Win32::{
     Foundation::{ERROR_ALREADY_EXISTS, GetLastError},
@@ -19,20 +13,13 @@ use windows::Win32::{
         APO_FLAG_INPLACE, APO_FLAG_SAMPLESPERFRAME_MUST_MATCH, APO_REG_PROPERTIES,
         IAudioProcessingObject,
     },
-    System::{
-        Com::CoTaskMemFree, Performance::QueryPerformanceFrequency,
-        SystemInformation::GetSystemDirectoryW, Threading::CreateMutexW,
-    },
-    UI::Shell::{FOLDERID_ProgramData, KF_FLAG_DEFAULT, SHGetKnownFolderPath},
+    System::{Performance::QueryPerformanceFrequency, Threading::CreateMutexW},
 };
 use windows_core::{GUID, Interface as _, PCWSTR};
 
 pub const APO_CLSID: GUID = GUID::from_u128(0xae672075_b244_4417_b5a5_fbd45b7f0268);
 pub const APO_NAME: &str = "VoiceBox APO";
 pub const COPYRIGHT: &str = "Copyright (C) 2026 Tanix";
-
-pub const PREVIEW_MAX_RECORD_SECONDS: u32 = 60;
-pub const PREVIEW_MAX_SAMPLES: usize = 16 * 1024 * 1024;
 
 pub fn apo_registration_properties() -> APO_REG_PROPERTIES {
     let mut properties = APO_REG_PROPERTIES {
@@ -67,100 +54,6 @@ fn write_wide(destination: &mut [u16], text: &str) {
 
 pub fn wide_null(value: impl AsRef<OsStr>) -> Vec<u16> {
     value.as_ref().encode_wide().chain(Some(0)).collect()
-}
-
-pub enum WriteMode {
-    AtomicReplace,
-    Append,
-}
-
-pub fn write_file_with_parents(
-    path: impl AsRef<Path>,
-    mode: WriteMode,
-    write: impl FnOnce(&mut dyn io::Write) -> io::Result<()>,
-) -> io::Result<()> {
-    let path = path.as_ref();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    match mode {
-        WriteMode::AtomicReplace => {
-            let mut file = AtomicWriteFile::open(path)?;
-            write(&mut file)?;
-            file.commit()
-        }
-        WriteMode::Append => {
-            let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-            write(&mut file)
-        }
-    }
-}
-
-// ===== System Directory Paths =====
-pub fn system_dir() -> &'static Path {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        let mut buffer = vec![0_u16; 260];
-        loop {
-            let length = unsafe { GetSystemDirectoryW(Some(buffer.as_mut_slice())) } as usize;
-            if length == 0 {
-                panic!(
-                    "Failed to get system directory: {}",
-                    io::Error::last_os_error()
-                );
-            }
-            if length < buffer.len() {
-                return PathBuf::from(OsString::from_wide(&buffer[..length]));
-            }
-            buffer.resize(length.max(buffer.len() + 1), 0);
-        }
-    })
-}
-pub fn conhost_path() -> &'static Path {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| system_dir().join("conhost.exe"))
-}
-pub fn powershell_path() -> &'static Path {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| system_dir().join(r"WindowsPowerShell\v1.0\powershell.exe"))
-}
-pub fn apo_dll_path() -> &'static Path {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| system_dir().join("voice_box_apo.dll"))
-}
-
-// ===== Data Directory Paths =====
-pub fn data_dir() -> &'static Path {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        let folder = unsafe { SHGetKnownFolderPath(&FOLDERID_ProgramData, KF_FLAG_DEFAULT, None) }
-            .unwrap_or_else(|e| panic!("Failed to get ProgramData directory: {}", e));
-        let path = unsafe { PathBuf::from(OsString::from_wide(folder.as_wide())) };
-        unsafe {
-            CoTaskMemFree(Some(folder.0.cast()));
-        }
-        path.join("VoiceBox")
-    })
-}
-pub fn database_path() -> &'static Path {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| data_dir().join("data.db"))
-}
-pub fn ui_state_path() -> &'static Path {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| data_dir().join("ui.ron"))
-}
-pub fn settings_path() -> &'static Path {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| data_dir().join("settings.json"))
-}
-pub fn log_path() -> &'static Path {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| data_dir().join("app.log"))
-}
-pub fn rotated_log_path() -> &'static Path {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| data_dir().join("app.log.1"))
 }
 
 pub fn win_qpf() -> i64 {

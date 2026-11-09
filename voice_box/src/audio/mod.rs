@@ -25,6 +25,9 @@ use windows::Win32::{
 
 use crate::i18n::Message;
 
+pub const PREVIEW_MAX_RECORD_SECONDS: u32 = 60;
+pub const PREVIEW_MAX_SAMPLES: usize = 16 * 1024 * 1024;
+
 struct AudioEvent(HANDLE);
 impl AudioEvent {
     fn wait(&self) -> anyhow::Result<()> {

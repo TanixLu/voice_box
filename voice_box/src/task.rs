@@ -12,6 +12,9 @@ use std::{
 
 use crate::i18n::{Details, Message, Text};
 
+/// Tells the owner of a task to look at it again, such as by repainting the UI.
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
 enum Event<T> {
     Started(Instant),
     Finished(anyhow::Result<T>),
@@ -31,12 +34,13 @@ impl<T: Send + 'static> Task<T> {
     /// when the flag it receives is set.
     pub fn spawn(
         name: &'static str,
-        wake: impl Fn() + Send + 'static,
+        wake: &Wake,
         work: impl FnOnce(&AtomicBool, &dyn Fn()) -> anyhow::Result<T> + Send + 'static,
     ) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = Arc::clone(&cancel);
         let (sender, events) = mpsc::channel();
+        let wake = Arc::clone(wake);
         let spawned = std::thread::Builder::new()
             .name(name.into())
             .spawn(move || {
@@ -79,7 +83,7 @@ impl<T: Send + 'static> Task<T> {
     /// For work that can be neither cancelled nor observed starting.
     pub fn run(
         name: &'static str,
-        wake: impl Fn() + Send + 'static,
+        wake: &Wake,
         work: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
     ) -> Self {
         Self::spawn(name, wake, move |_, _| work())

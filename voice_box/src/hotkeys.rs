@@ -18,6 +18,7 @@ use windows::Win32::{
 use crate::{
     i18n::{Message, Text, UserContext},
     model::{Hotkey, MODIFIERS, is_modifier, key_name},
+    task::Wake,
 };
 
 const SIMULATED_INPUT_TAG: usize = 0x5642_4b59;
@@ -114,15 +115,15 @@ pub struct Hotkeys {
 }
 struct Subclass {
     pressed: mpsc::Sender<Hotkey>,
-    wake: Box<dyn Fn()>,
+    wake: Wake,
 }
 impl Hotkeys {
     /// Must be called on the thread that created `window`.
-    pub fn new(window: HWND, wake: impl Fn() + 'static) -> anyhow::Result<Self> {
+    pub fn new(window: HWND, wake: Wake) -> anyhow::Result<Self> {
         let (sender, pressed) = mpsc::channel();
         let subclass = Box::new(Subclass {
             pressed: sender,
-            wake: Box::new(wake),
+            wake,
         });
         unsafe {
             SetWindowSubclass(

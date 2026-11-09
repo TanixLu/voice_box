@@ -23,11 +23,10 @@ use crate::{
     soundboard::{
         import::{ImportedSounds, import_files},
         library::Library,
-        playback::Config,
         player::Player,
         prefs::Prefs,
     },
-    task::Task,
+    task::{Task, Wake},
 };
 
 /// What the view should show after background work progressed.
@@ -51,30 +50,35 @@ enum LibraryTask {
 
 pub struct Soundboard {
     library: Library,
-    config: Config,
+    prefs: Prefs,
     player: Player,
     library_task: Option<LibraryTask>,
     shuffle: shuffle::Shuffle,
+    wake: Wake,
 }
 impl Soundboard {
-    pub fn new(library: Library, prefs: &Prefs) -> Self {
+    pub fn new(library: Library, prefs: Prefs, wake: Wake) -> Self {
         Self {
             library,
-            config: prefs.playback(),
-            player: Player::default(),
+            prefs,
+            player: Player::new(wake.clone()),
+            wake,
             library_task: None,
             shuffle: shuffle::Shuffle::default(),
         }
     }
-    pub fn configure(&mut self, prefs: &Prefs) {
-        let config = prefs.playback();
-        if config.microphone_device != self.config.microphone_device
-            || config.speaker_device != self.config.speaker_device
+    pub fn prefs(&self) -> &Prefs {
+        &self.prefs
+    }
+    pub fn configure(&mut self, prefs: Prefs) {
+        let (config, current) = (prefs.playback(), self.prefs.playback());
+        if config.microphone_device != current.microphone_device
+            || config.speaker_device != current.speaker_device
         {
             self.stop();
         }
-        self.player.configure(config.clone());
-        self.config = config;
+        self.player.configure(config);
+        self.prefs = prefs;
     }
     pub fn library(&self) -> &Library {
         &self.library
@@ -99,31 +103,30 @@ impl Soundboard {
         self.library.sounds.push(sound);
     }
     /// Applies `edit` to a copy of the library and saves it in the background.
-    /// The caller ensures no library task is running.
     pub fn edit(
         &mut self,
         edit: impl FnOnce(&mut Library) -> anyhow::Result<()> + Send + 'static,
-        wake: impl Fn() + Send + 'static,
-    ) {
+    ) -> anyhow::Result<()> {
+        ensure!(!self.library_busy(), Text::RenameBusy);
         let mut library = self.library.clone();
-        let task = Task::run("VoiceBoxLibrarySave", wake, move || {
+        let task = Task::run("VoiceBoxLibrarySave", &self.wake, move || {
             edit(&mut library)?;
             library.save()?;
             Ok(library)
         });
         self.library_task = Some(LibraryTask::Edit(task));
+        Ok(())
     }
     pub fn import(
         &mut self,
         select_files: impl FnOnce() -> anyhow::Result<Vec<PathBuf>> + Send + 'static,
-        wake: impl Fn() + Send + 'static,
     ) {
         if self.library_busy() {
             return;
         }
         // Importing disables playback controls; a queued replacement must not restart behind it.
         self.stop();
-        let task = Task::run("VoiceBoxSoundImport", wake, move || {
+        let task = Task::run("VoiceBoxSoundImport", &self.wake, move || {
             select_files().and_then(import_files)
         });
         self.library_task = Some(LibraryTask::Import(task));
@@ -132,7 +135,6 @@ impl Soundboard {
         &mut self,
         ids: &HashSet<SoundId>,
         select_folder: impl FnOnce() -> anyhow::Result<Option<PathBuf>> + Send + 'static,
-        wake: impl Fn() + Send + 'static,
     ) {
         if self.library_busy() {
             return;
@@ -145,12 +147,12 @@ impl Soundboard {
             .filter(|sound| ids.contains(&sound.id))
             .cloned()
             .collect();
-        let task = Task::run("VoiceBoxSoundExport", wake, move || {
+        let task = Task::run("VoiceBoxSoundExport", &self.wake, move || {
             select_folder()?.map_or(Ok(()), |folder| export::export_sounds(&sounds, &folder))
         });
         self.library_task = Some(LibraryTask::Export(task));
     }
-    pub fn remove(&mut self, ids: &HashSet<SoundId>, wake: impl Fn() + Send + 'static) {
+    pub fn remove(&mut self, ids: &HashSet<SoundId>) {
         if ids.is_empty() || self.library_busy() {
             return;
         }
@@ -163,7 +165,7 @@ impl Soundboard {
         self.player.cancel_queued();
         let selected = ids.clone();
         let mut library = self.library.clone();
-        let task = Task::run("VoiceBoxSoundRemoval", wake, move || {
+        let task = Task::run("VoiceBoxSoundRemoval", &self.wake, move || {
             // Waiting for playback, cascading BLOB deletion, transaction
             // commit and connection cleanup must all stay off the UI thread.
             if let Some(playback) = stopped_playback {
@@ -174,7 +176,7 @@ impl Soundboard {
         });
         self.library_task = Some(LibraryTask::Remove(ids.clone(), task));
     }
-    pub fn play(&mut self, index: usize, wake: impl Fn() + Send + 'static) -> anyhow::Result<()> {
+    pub fn play(&mut self, index: usize) -> anyhow::Result<()> {
         let Some(sound) = self.library.sounds.get(index) else {
             return Ok(());
         };
@@ -182,13 +184,13 @@ impl Soundboard {
             return Ok(());
         }
         ensure!(
-            !self.config.speaker_gain_percent.is_mute()
-                || !self.config.microphone_gain_percent.is_mute(),
+            !self.prefs.speaker_gain_percent.is_mute()
+                || !self.prefs.microphone_gain_percent.is_mute(),
             Text::OutputsMuted
         );
         self.shuffle.last = Some(sound.id);
         self.player
-            .play(sound.id, sound.duration_secs, self.config.clone(), wake);
+            .play(sound.id, sound.duration_secs, self.prefs.playback());
         Ok(())
     }
     pub fn stop(&mut self) {
@@ -201,8 +203,8 @@ impl Soundboard {
         let id = self.playback().sound_id?;
         self.library.sounds.iter().find(|sound| sound.id == id)
     }
-    pub fn poll(&mut self, wake: impl Fn() + Send + 'static) -> Vec<Update> {
-        let mut updates = self.player.poll(wake);
+    pub fn poll(&mut self) -> Vec<Update> {
+        let mut updates = self.player.poll();
         updates.extend(self.poll_library());
         updates
     }

@@ -38,13 +38,23 @@ pub struct Keys {
 
 impl Keys {
     /// The preference a non-sound target is stored in.
-    pub fn slot(&mut self, target: &Target) -> Option<&mut Option<Hotkey>> {
+    fn slot(&mut self, target: &Target) -> Option<&mut Option<Hotkey>> {
         match target {
             Target::Sounds(_) => None,
             Target::Hold => Some(&mut self.hold),
             Target::Stop => Some(&mut self.stop),
             Target::Random => Some(&mut self.random),
         }
+    }
+
+    /// Validates `key` for `target` and stores it in the matching preference.
+    /// Sound keys live in the library, so the caller saves those.
+    pub fn bind(&mut self, sounds: &[Sound], target: &Target, key: Hotkey) -> anyhow::Result<()> {
+        self.validate(sounds, target, key)?;
+        if let Some(slot) = self.slot(target) {
+            *slot = Some(key);
+        }
+        Ok(())
     }
 
     pub fn actions(&self, sounds: &[Sound]) -> HashMap<Hotkey, Action> {

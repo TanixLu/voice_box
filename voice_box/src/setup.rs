@@ -15,14 +15,12 @@ use winreg::{
 
 use voice_box_shared::{
     apo_cfg::APO_CFG_KEY,
-    utils::{
-        APO_CLSID, APO_NAME, COPYRIGHT, WriteMode, apo_dll_path, apo_registration_properties,
-        write_file_with_parents,
-    },
+    utils::{APO_CLSID, APO_NAME, COPYRIGHT, apo_registration_properties},
 };
 
 use crate::{
     i18n::{Message, Text, UserContext},
+    paths::{WriteMode, apo_dll_path, write_file_with_parents},
     registry::{read_registry_value, write_registry_value},
     static_data::apo_dll_bytes,
 };

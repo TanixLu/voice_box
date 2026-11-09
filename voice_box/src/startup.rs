@@ -24,10 +24,9 @@ use windows::{
     core::{BSTR, Interface},
 };
 
-use voice_box_shared::utils::{conhost_path, powershell_path, system_dir};
-
 use crate::{
     i18n::{Text, UserContext},
+    paths::{conhost_path, powershell_path, system_dir},
     static_data::startup_script,
     utils::{ComGuard, win_base64_encode, win_sha256},
 };

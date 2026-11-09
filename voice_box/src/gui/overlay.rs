@@ -37,7 +37,6 @@ impl Overlay {
         &mut self,
         ctx: &egui::Context,
         model: &Soundboard,
-        repeat: bool,
         enabled: bool,
     ) -> anyhow::Result<bool> {
         let sound = model
@@ -51,7 +50,7 @@ impl Overlay {
                     sound.name.clone(),
                     model.playback().elapsed_secs,
                     model.playback().duration_secs.or(Some(sound.duration_secs)),
-                    repeat,
+                    model.prefs().repeat,
                 ))
             }
             Err(error) => {

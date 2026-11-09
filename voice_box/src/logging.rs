@@ -6,10 +6,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::{
+    i18n::{Details, Message},
+    paths::{WriteMode, log_path, rotated_log_path, write_file_with_parents},
+};
 use tracing_subscriber::fmt::MakeWriter;
-use voice_box_shared::utils::{WriteMode, log_path, rotated_log_path, write_file_with_parents};
-
-use crate::i18n::{Details, Message};
 
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_EVENT_BYTES: usize = 64 * 1024;

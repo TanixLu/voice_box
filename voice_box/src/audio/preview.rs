@@ -7,11 +7,10 @@ use anyhow::ensure;
 use voice_box_shared::{
     apo_cfg::ApoCfg,
     dsp::{AudioProcessor, MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
-    utils::{PREVIEW_MAX_RECORD_SECONDS, PREVIEW_MAX_SAMPLES},
 };
 
 use crate::{
-    audio::capture::Recording,
+    audio::{PREVIEW_MAX_RECORD_SECONDS, PREVIEW_MAX_SAMPLES, capture::Recording},
     i18n::{Text, UserContext},
 };
 

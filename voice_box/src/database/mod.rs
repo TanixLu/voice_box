@@ -7,10 +7,11 @@ pub mod sounds;
 
 use std::time::Duration;
 
+use crate::{
+    i18n::{Text, UserContext},
+    paths::{data_dir, database_path},
+};
 use rusqlite::{Connection, OpenFlags};
-use voice_box_shared::utils::{data_dir, database_path};
-
-use crate::i18n::{Text, UserContext};
 
 pub fn init() -> anyhow::Result<()> {
     std::fs::create_dir_all(data_dir())?;

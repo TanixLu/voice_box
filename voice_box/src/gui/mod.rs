@@ -16,7 +16,7 @@ mod widgets;
 
 use egui_winit::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use strum::IntoEnumIterator;
-use voice_box_shared::{apo_cfg::ApoCfg, utils::ui_state_path};
+use voice_box_shared::apo_cfg::ApoCfg;
 use windows::Win32::Foundation::HWND;
 
 use crate::{
@@ -25,14 +25,41 @@ use crate::{
         voice::VoicePanel, widgets::section,
     },
     i18n::{self, Details, LanguagePreference, Message, Text, UserContext},
+    paths::ui_state_path,
     settings::Settings,
     soundboard::library::Library,
     static_data::ICON_PNG_DATA,
-    task::{self, Task},
+    task::{self, Task, Wake},
 };
 
-fn wake_ui(ctx: egui::Context) -> impl Fn() + Clone + Send + 'static {
-    move || ctx.request_repaint()
+/// What a part of the app is doing that the other parts must wait for.
+#[derive(Clone, Copy, Default)]
+pub struct Busy {
+    /// Background work that must finish before other edits, exit or uninstall.
+    pub working: bool,
+    /// Audio devices are in use for playback, recording or preview.
+    pub audio: bool,
+}
+impl Busy {
+    pub fn any(self) -> bool {
+        self.working || self.audio
+    }
+}
+impl std::ops::BitOr for Busy {
+    type Output = Self;
+    fn bitor(self, other: Self) -> Self {
+        Self {
+            working: self.working || other.working,
+            audio: self.audio || other.audio,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Part {
+    Microphones,
+    Voice,
+    Soundboard,
 }
 
 /// The root window, which eframe keeps for the whole run, for Win32 features that deliver messages to it.
@@ -114,6 +141,7 @@ enum Lifecycle {
 }
 
 struct VoiceBoxApp {
+    wake: Wake,
     tab: Tab,
     settings: Settings,
     settings_save: Option<Task<Settings>>,
@@ -143,35 +171,58 @@ impl VoiceBoxApp {
         ctx.set_theme(settings.theme_preference);
         apply_style(ctx);
         fonts::install(ctx);
+        let wake: Wake = {
+            let ctx = ctx.clone();
+            std::sync::Arc::new(move || ctx.request_repaint())
+        };
         let mut app = Self {
             tab: Tab::Voice,
-            soundboard: SoundboardPanel::new(ctx, window, library, &settings.soundboard),
+            soundboard: SoundboardPanel::new(
+                wake.clone(),
+                window,
+                library,
+                settings.soundboard.clone(),
+            ),
             settings,
             settings_save: None,
             startup: Startup::Pending,
             lifecycle: Lifecycle::Running,
-            microphones: MicrophonePanel::default(),
-            voice: VoicePanel::new(apo_config),
+            microphones: MicrophonePanel::new(wake.clone()),
+            voice: VoicePanel::new(apo_config, wake.clone()),
+            wake,
             first_show_pending: start_in_tray,
             tray,
             show_licenses: false,
             notice: None,
         };
-        app.microphones.refresh(ctx);
+        app.microphones.refresh();
         Ok(app)
+    }
+
+    /// What the app and every panel except `except` are doing.
+    fn busy(&self, except: Option<Part>) -> Busy {
+        let own = Busy {
+            working: self.settings_save.is_some()
+                || matches!(self.startup, Startup::Syncing(..))
+                || matches!(
+                    self.lifecycle,
+                    Lifecycle::Uninstalling(_) | Lifecycle::Exiting
+                ),
+            audio: false,
+        };
+        [
+            (Part::Microphones, self.microphones.busy()),
+            (Part::Voice, self.voice.busy()),
+            (Part::Soundboard, self.soundboard.busy()),
+        ]
+        .into_iter()
+        .filter(|(part, _)| Some(*part) != except)
+        .fold(own, |all, (_, busy)| all | busy)
     }
 
     /// Background work is running, or the app is going away.
     fn interaction_blocked(&self) -> bool {
-        self.settings_save.is_some()
-            || matches!(self.startup, Startup::Syncing(..))
-            || self.microphones.busy()
-            || self.voice.saving()
-            || self.soundboard.busy()
-            || matches!(
-                self.lifecycle,
-                Lifecycle::Uninstalling(_) | Lifecycle::Exiting
-            )
+        self.busy(None).working
     }
 
     fn request_exit(&mut self, ctx: &egui::Context) {
@@ -186,9 +237,9 @@ impl VoiceBoxApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
-    fn save_settings(&mut self, ctx: &egui::Context, settings: Settings) {
+    fn save_settings(&mut self, settings: Settings) {
         if self.settings_save.is_none() {
-            let task = Task::run("VoiceBoxSettingsSave", wake_ui(ctx.clone()), move || {
+            let task = Task::run("VoiceBoxSettingsSave", &self.wake, move || {
                 settings.save()?;
                 Ok(settings)
             });
@@ -200,20 +251,20 @@ impl VoiceBoxApp {
         let startup_changed = settings.startup_enabled != self.settings.startup_enabled;
         ctx.set_theme(settings.theme_preference);
         i18n::set_language(settings.language_preference.resolve());
-        self.soundboard.apply_prefs(&settings.soundboard);
+        self.soundboard.apply_prefs(settings.soundboard.clone());
         self.settings = settings;
         if startup_changed {
             let notice = self
                 .settings
                 .startup_enabled
                 .then_some(Text::StartupRegistered);
-            self.synchronize_startup(ctx, notice);
+            self.synchronize_startup(notice);
         }
     }
 
-    fn synchronize_startup(&mut self, ctx: &egui::Context, notice: Option<Text>) {
+    fn synchronize_startup(&mut self, notice: Option<Text>) {
         let enabled = self.settings.startup_enabled;
-        let task = Task::run("VoiceBoxStartupSync", wake_ui(ctx.clone()), move || {
+        let task = Task::run("VoiceBoxStartupSync", &self.wake, move || {
             crate::startup::synchronize_startup(enabled)
         });
         self.startup = Startup::Syncing(task, notice);
@@ -290,10 +341,10 @@ impl VoiceBoxApp {
                 startup_enabled: enabled,
                 ..self.settings.clone()
             };
-            self.save_settings(ui.ctx(), settings);
+            self.save_settings(settings);
             ui.close();
         } else if retry {
-            self.synchronize_startup(ui.ctx(), enabled.then_some(Text::StartupRegistered));
+            self.synchronize_startup(enabled.then_some(Text::StartupRegistered));
             ui.close();
         }
     }
@@ -314,7 +365,7 @@ impl VoiceBoxApp {
                 theme_preference,
                 ..self.settings.clone()
             };
-            self.save_settings(ui.ctx(), settings);
+            self.save_settings(settings);
         }
     }
 
@@ -329,7 +380,7 @@ impl VoiceBoxApp {
                 language_preference,
                 ..self.settings.clone()
             };
-            self.save_settings(ui.ctx(), settings);
+            self.save_settings(settings);
         }
     }
 
@@ -352,9 +403,7 @@ impl VoiceBoxApp {
 
                 if ui
                     .add_enabled(
-                        !self.interaction_blocked()
-                            && !self.voice.previewing()
-                            && !self.soundboard.playing(),
+                        !self.busy(None).any(),
                         egui::Button::new(Text::FullUninstall.text()),
                     )
                     .clicked()
@@ -393,18 +442,15 @@ impl VoiceBoxApp {
                         egui::vec2(width, 0.0),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
-                            let soundboard_busy = self.soundboard.active();
+                            let microphone_others = self.busy(Some(Part::Microphones));
+                            let voice_others = self.busy(Some(Part::Voice));
                             section(ui, |ui| {
-                                self.microphones
-                                    .ui(ui, self.voice.previewing() || soundboard_busy);
+                                self.microphones.ui(ui, microphone_others);
                             });
                             section(ui, |ui| self.voice.config_ui(ui));
                             section(ui, |ui| {
-                                self.voice.recording_ui(
-                                    ui,
-                                    self.microphones.busy() || soundboard_busy,
-                                    self.microphones.selected(),
-                                )
+                                let microphone = self.microphones.selected();
+                                self.voice.recording_ui(ui, voice_others, microphone)
                             });
                             self.microphones.status_ui(ui);
                         },
@@ -453,8 +499,8 @@ impl VoiceBoxApp {
                 match self.tab {
                     Tab::Voice => self.voice_tab_ui(ui),
                     Tab::Soundboard => {
-                        let busy = self.voice.previewing() || self.interaction_blocked();
-                        self.soundboard.ui(ui, busy)
+                        let others = self.busy(Some(Part::Soundboard));
+                        self.soundboard.ui(ui, others)
                     }
                 }
             });
@@ -462,16 +508,12 @@ impl VoiceBoxApp {
         let ctx = ui.ctx();
         self.licenses_ui(ctx);
         let blocked = self.interaction_blocked();
-        let saving = self.settings_save.is_some();
-        if let Some(prefs) = self
-            .soundboard
-            .windows(ctx, blocked, saving, soundboard_visible)
-        {
+        if let Some(prefs) = self.soundboard.windows(ctx, blocked, soundboard_visible) {
             let settings = Settings {
                 soundboard: prefs,
                 ..self.settings.clone()
             };
-            self.save_settings(ctx, settings);
+            self.save_settings(settings);
         }
         self.full_uninstall_ui(ctx);
         self.notice_ui(ctx);
@@ -482,7 +524,7 @@ impl eframe::App for VoiceBoxApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll(ctx);
         if matches!(self.startup, Startup::Pending) && !self.interaction_blocked() {
-            self.synchronize_startup(ctx, None);
+            self.synchronize_startup(None);
         }
         while let Ok(action) = self.tray.receiver.try_recv() {
             match action {
@@ -501,12 +543,11 @@ impl eframe::App for VoiceBoxApp {
         let exiting = matches!(self.lifecycle, Lifecycle::Exiting);
         close_to_tray(ctx, exiting, self.tray.available());
         self.tray.set_exit_enabled(!self.interaction_blocked());
-        let shortcuts_enabled = !self.interaction_blocked()
-            && !self.voice.previewing()
+        let shortcuts_enabled = !self.busy(Some(Part::Soundboard)).any()
             && !matches!(self.lifecycle, Lifecycle::ConfirmUninstall);
         self.soundboard.shortcuts(ctx, shortcuts_enabled);
         // Keep completions moving even when eframe skips painting a hidden window.
-        if self.interaction_blocked() || self.voice.previewing() || self.soundboard.active() {
+        if self.busy(None).any() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }

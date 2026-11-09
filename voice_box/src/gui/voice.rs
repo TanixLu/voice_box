@@ -4,14 +4,15 @@ use crate::{
     audio::session::{Activity, AudioSession},
     devices::Microphone,
     gui::{
-        wake_ui,
+        Busy,
         widgets::{hint, trailing_button, warning},
     },
     i18n::{Details, Message, Text},
-    task::{self, Task},
+    task::{self, Task, Wake},
 };
 
 pub struct VoicePanel {
+    wake: Wake,
     config: ApoCfg,
     saved: ApoCfg,
     save: Option<Task<ApoCfg>>,
@@ -21,21 +22,22 @@ pub struct VoicePanel {
 }
 
 impl VoicePanel {
-    pub fn new(config: ApoCfg) -> Self {
+    pub fn new(config: ApoCfg, wake: Wake) -> Self {
         Self {
+            session: AudioSession::new(wake.clone()),
+            wake,
             saved: config.clone(),
             config,
             save: None,
             save_error: Message::default(),
-            session: AudioSession::default(),
             preview_error: Message::default(),
         }
     }
-    pub fn saving(&self) -> bool {
-        self.save.is_some()
-    }
-    pub fn previewing(&self) -> bool {
-        self.session.busy()
+    pub fn busy(&self) -> Busy {
+        Busy {
+            working: self.save.is_some(),
+            audio: self.session.busy(),
+        }
     }
     pub fn poll(&mut self) {
         match task::finished(&mut self.save) {
@@ -55,7 +57,7 @@ impl VoicePanel {
     }
     pub fn config_ui(&mut self, ui: &mut egui::Ui) {
         let defaults = ApoCfg::default();
-        let busy = self.saving();
+        let busy = self.save.is_some();
         ui.strong(Text::VoiceConfig.text());
         ui.add_enabled_ui(!busy, |ui| {
             ui.checkbox(
@@ -133,14 +135,10 @@ impl VoicePanel {
             {
                 let config = self.config.clone();
                 self.save_error.clear();
-                self.save = Some(Task::run(
-                    "VoiceBoxApoCfgSave",
-                    wake_ui(ui.ctx().clone()),
-                    move || {
-                        config.save()?;
-                        Ok(config)
-                    },
-                ));
+                self.save = Some(Task::run("VoiceBoxApoCfgSave", &self.wake, move || {
+                    config.save()?;
+                    Ok(config)
+                }));
             }
             if ui
                 .add_enabled(!busy && dirty, egui::Button::new(Text::UndoChanges.text()))
@@ -167,10 +165,15 @@ impl VoicePanel {
         }
     }
 
-    pub fn recording_ui(&mut self, ui: &mut egui::Ui, busy: bool, microphone: Option<&Microphone>) {
+    pub fn recording_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        others: Busy,
+        microphone: Option<&Microphone>,
+    ) {
         ui.strong(Text::RecordingPreview.text());
         let activity = self.session.activity();
-        let idle = !busy && !self.session.busy();
+        let idle = !others.any() && !self.session.busy();
         let stopping = self.session.stopping();
         ui.horizontal_wrapped(|ui| {
             if ui
@@ -190,8 +193,7 @@ impl VoicePanel {
                     self.session.stop();
                 } else if let Some(mic) = microphone {
                     self.preview_error.clear();
-                    self.session
-                        .record(mic.device_id.clone(), wake_ui(ui.ctx().clone()));
+                    self.session.record(mic.device_id.clone());
                 }
             }
             if ui
@@ -211,7 +213,7 @@ impl VoicePanel {
                     self.session.stop();
                 } else {
                     self.preview_error.clear();
-                    self.session.play(None, wake_ui(ui.ctx().clone()));
+                    self.session.play(None);
                 }
             }
             // Place processed playback at the right on normal window sizes;
@@ -234,8 +236,7 @@ impl VoicePanel {
                     self.session.stop();
                 } else {
                     self.preview_error.clear();
-                    self.session
-                        .play(Some(self.config.clone()), wake_ui(ui.ctx().clone()));
+                    self.session.play(Some(self.config.clone()));
                 }
             }
         });

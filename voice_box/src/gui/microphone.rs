@@ -1,9 +1,9 @@
 use crate::{
     devices::{self, Microphone, PluginAction, PluginOperationResult},
-    gui::wake_ui,
+    gui::Busy,
     i18n::{Details, Message, Text},
     setup::PluginStatus,
-    task::Task,
+    task::{Task, Wake},
 };
 
 enum Outcome {
@@ -11,8 +11,8 @@ enum Outcome {
     Plugin(PluginOperationResult),
 }
 
-#[derive(Default)]
 pub struct MicrophonePanel {
+    wake: Wake,
     devices: Vec<Microphone>,
     selected: usize,
     preferred_guid: Option<String>,
@@ -41,14 +41,28 @@ pub fn display_name(microphone: &Microphone) -> String {
 }
 
 impl MicrophonePanel {
+    pub fn new(wake: Wake) -> Self {
+        Self {
+            wake,
+            devices: Vec::new(),
+            selected: 0,
+            preferred_guid: None,
+            confirm_uninstall: false,
+            job: None,
+            error: Message::default(),
+        }
+    }
     pub fn selected(&self) -> Option<&Microphone> {
         self.devices.get(self.selected)
     }
     pub fn cancel_uninstall(&mut self) {
         self.confirm_uninstall = false;
     }
-    pub fn busy(&self) -> bool {
-        self.job.is_some()
+    pub fn busy(&self) -> Busy {
+        Busy {
+            working: self.job.is_some(),
+            audio: false,
+        }
     }
     pub fn poll(&mut self) {
         let Some(result) = self.job.as_mut().and_then(|(_, task)| task.poll()) else {
@@ -94,35 +108,31 @@ impl MicrophonePanel {
     }
     fn start(
         &mut self,
-        ctx: &egui::Context,
         status: Text,
         work: impl FnOnce() -> anyhow::Result<Outcome> + Send + 'static,
     ) {
         self.confirm_uninstall = false;
         self.error.clear();
-        self.job = Some((
-            status,
-            Task::run("VoiceBoxMicrophones", wake_ui(ctx.clone()), work),
-        ));
+        self.job = Some((status, Task::run("VoiceBoxMicrophones", &self.wake, work)));
     }
-    pub fn refresh(&mut self, ctx: &egui::Context) {
-        self.start(ctx, Text::ReadingMicrophones, || {
+    pub fn refresh(&mut self) {
+        self.start(Text::ReadingMicrophones, || {
             devices::enumerate_microphones()
                 .map(|(devices, selected)| Outcome::Devices(devices, selected))
         });
     }
-    fn run_plugin_action(&mut self, ctx: &egui::Context, status: Text, action: PluginAction) {
+    fn run_plugin_action(&mut self, status: Text, action: PluginAction) {
         let guid = self.devices[self.selected].guid.clone();
         let guids = self.devices.iter().map(|mic| mic.guid.clone()).collect();
-        self.start(ctx, status, move || {
+        self.start(status, move || {
             Ok(Outcome::Plugin(devices::execute_plugin_action(
                 guid, guids, action,
             )))
         });
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, other_busy: bool) -> egui::Response {
-        let idle = !self.busy() && !other_busy;
+    pub fn ui(&mut self, ui: &mut egui::Ui, others: Busy) -> egui::Response {
+        let idle = self.job.is_none() && !others.any();
         ui.horizontal(|ui| {
             ui.strong(Text::Microphone.text());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -130,7 +140,7 @@ impl MicrophonePanel {
                     .add_enabled(idle, egui::Button::new(Text::Refresh.text()))
                     .clicked()
                 {
-                    self.refresh(ui.ctx());
+                    self.refresh();
                 }
             });
         });
@@ -191,7 +201,7 @@ impl MicrophonePanel {
         };
         if let Some(status) = status {
             ui.horizontal(|ui| {
-                if self.busy() {
+                if self.job.is_some() {
                     ui.spinner();
                 }
                 ui.add(egui::Label::new(status).truncate());
@@ -224,7 +234,7 @@ impl MicrophonePanel {
                     } else {
                         Text::InstallingPlugin
                     };
-                    self.run_plugin_action(ui.ctx(), status, PluginAction::Install);
+                    self.run_plugin_action(status, PluginAction::Install);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
@@ -255,11 +265,7 @@ impl MicrophonePanel {
             );
             ui.horizontal_wrapped(|ui| {
                 if ui.button(Text::ConfirmUninstall.text()).clicked() {
-                    self.run_plugin_action(
-                        ui.ctx(),
-                        Text::UninstallingPlugin,
-                        PluginAction::Uninstall,
-                    );
+                    self.run_plugin_action(Text::UninstallingPlugin, PluginAction::Uninstall);
                 }
                 if ui.button(Text::Cancel.text()).clicked() {
                     self.confirm_uninstall = false;

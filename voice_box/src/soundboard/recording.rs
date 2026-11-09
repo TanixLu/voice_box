@@ -15,7 +15,7 @@ use crate::{
     audio::{capture::Recording, loopback, playback::playback},
     i18n::{Text, UserContext},
     model::{Sound, is_valid_name},
-    task::Task,
+    task::{Task, Wake},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,13 +101,21 @@ enum Pending {
     Save(Selection, String),
 }
 
-#[derive(Default)]
 pub struct Recorder {
+    wake: Wake,
     task: Option<(Activity, Range<usize>, Task<Outcome>)>,
     pending: Option<Pending>,
     pub clip: Option<Clip>,
 }
 impl Recorder {
+    pub fn new(wake: Wake) -> Self {
+        Self {
+            wake,
+            task: None,
+            pending: None,
+            clip: None,
+        }
+    }
     pub fn activity(&self) -> Option<Activity> {
         match self.pending {
             Some(Pending::Record) => Some(Activity::Recording),
@@ -151,7 +159,7 @@ impl Recorder {
             Some(Activity::Recording | Activity::Saving)
         )
     }
-    pub fn record(&mut self, wake: impl Fn() + Send + 'static) {
+    pub fn record(&mut self) {
         if self.locked() {
             return;
         }
@@ -161,11 +169,11 @@ impl Recorder {
             // Release the preview stream before capturing, so it cannot enter the new recording.
             self.pending = Some(Pending::Record);
         } else {
-            self.begin_recording(wake);
+            self.begin_recording();
         }
     }
-    fn begin_recording(&mut self, wake: impl Fn() + Send + 'static) {
-        let task = Task::spawn("VoiceBoxSpeakerRecording", wake, |stop, started| {
+    fn begin_recording(&mut self) {
+        let task = Task::spawn("VoiceBoxSpeakerRecording", &self.wake, |stop, started| {
             loopback::capture(stop, started)
                 .map(Clip::new)
                 .map(Outcome::Recorded)
@@ -188,7 +196,7 @@ impl Recorder {
         self.pending = Some(Pending::Save(selection, name));
     }
     /// A saved clip is returned as an entry already committed to the database.
-    pub fn poll(&mut self, wake: impl Fn() + Send + 'static) -> anyhow::Result<Option<Sound>> {
+    pub fn poll(&mut self) -> anyhow::Result<Option<Sound>> {
         if let Some((.., task)) = &mut self.task
             && let Some(result) = task.poll()
         {
@@ -218,9 +226,9 @@ impl Recorder {
         }
         let audio = self.clip.as_ref().map(|clip| clip.audio.clone());
         match (self.pending.take(), audio) {
-            (Some(Pending::Record), _) => self.begin_recording(wake),
+            (Some(Pending::Record), _) => self.begin_recording(),
             (Some(Pending::Save(selection, name)), Some(audio)) => {
-                let task = Task::run("VoiceBoxSaveRecording", wake, move || {
+                let task = Task::run("VoiceBoxSaveRecording", &self.wake, move || {
                     save_clip(&audio, selection, &name).map(Outcome::Saved)
                 });
                 self.task = Some((Activity::Saving, selection.range(), task));
@@ -228,12 +236,16 @@ impl Recorder {
             (Some(Pending::Preview(range, when)), Some(audio)) if Instant::now() >= when => {
                 let channels = audio.channels as usize;
                 let samples = range.start * channels..range.end * channels;
-                let task = Task::spawn("VoiceBoxRecordingPreview", wake, move |stop, started| {
-                    if !stop.load(Ordering::Relaxed) {
-                        playback(&audio, &audio.samples[samples], stop, started)?;
-                    }
-                    Ok(Outcome::Previewed)
-                });
+                let task = Task::spawn(
+                    "VoiceBoxRecordingPreview",
+                    &self.wake,
+                    move |stop, started| {
+                        if !stop.load(Ordering::Relaxed) {
+                            playback(&audio, &audio.samples[samples], stop, started)?;
+                        }
+                        Ok(Outcome::Previewed)
+                    },
+                );
                 self.task = Some((Activity::Preview, range, task));
             }
             // Wait for the preview deadline; work without a clip can never start.

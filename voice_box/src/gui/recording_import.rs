@@ -4,9 +4,9 @@ use crate::{
     i18n::{Details, Message, Text},
     model::{Sound, is_valid_name},
     soundboard::recording::{Activity, Edge, Recorder, Selection},
+    task::Wake,
 };
 
-#[derive(Default)]
 pub struct RecordingImport {
     recorder: Recorder,
     selection: Option<Selection>,
@@ -15,6 +15,15 @@ pub struct RecordingImport {
     error: Message,
 }
 impl RecordingImport {
+    pub fn new(wake: Wake) -> Self {
+        Self {
+            recorder: Recorder::new(wake),
+            selection: None,
+            name: String::new(),
+            dragging: None,
+            error: Message::default(),
+        }
+    }
     pub fn saving(&self) -> bool {
         self.recorder.activity() == Some(Activity::Saving)
     }
@@ -22,7 +31,7 @@ impl RecordingImport {
     // Called in app logic, including when the main viewport is hidden.
     pub fn poll(&mut self, ctx: &egui::Context) -> Option<Sound> {
         let had_clip = self.recorder.clip.is_some();
-        match self.recorder.poll(super::wake_ui(ctx.clone())) {
+        match self.recorder.poll() {
             Ok(Some(sound)) => return Some(sound),
             Ok(None) => {}
             Err(error) => {
@@ -107,7 +116,7 @@ impl RecordingImport {
                     self.recorder.stop();
                 } else {
                     self.error.clear();
-                    self.recorder.record(super::wake_ui(ui.ctx().clone()));
+                    self.recorder.record();
                     self.selection = None;
                     self.dragging = None;
                 }

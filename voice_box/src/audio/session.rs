@@ -9,7 +9,7 @@ use crate::{
         capture::{Recording, capture},
         playback::playback,
     },
-    task::Task,
+    task::{Task, Wake},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,14 +29,22 @@ enum Outcome {
     Played(Option<ProcessedRecording>),
 }
 
-#[derive(Default)]
 pub struct AudioSession {
+    wake: Wake,
     task: Option<(Activity, Task<Outcome>)>,
     recording: Option<Arc<Recording>>,
     processed: Option<ProcessedRecording>,
 }
 
 impl AudioSession {
+    pub fn new(wake: Wake) -> Self {
+        Self {
+            wake,
+            task: None,
+            recording: None,
+            processed: None,
+        }
+    }
     pub fn busy(&self) -> bool {
         self.task.is_some()
     }
@@ -85,18 +93,18 @@ impl AudioSession {
         }
     }
 
-    pub fn record(&mut self, device_id: String, wake: impl Fn() + Send + 'static) {
+    pub fn record(&mut self, device_id: String) {
         if self.busy() {
             return;
         }
-        let task = Task::spawn("VoiceBoxRecording", wake, move |stop, started| {
+        let task = Task::spawn("VoiceBoxRecording", &self.wake, move |stop, started| {
             capture(&device_id, stop, started)
                 .map(|recording| Outcome::Recorded(Arc::new(recording)))
         });
         self.task = Some((Activity::Recording, task));
     }
 
-    pub fn play(&mut self, config: Option<ApoCfg>, wake: impl Fn() + Send + 'static) {
+    pub fn play(&mut self, config: Option<ApoCfg>) {
         let Some(recording) = self.recording.clone() else {
             return;
         };
@@ -114,7 +122,7 @@ impl AudioSession {
         } else {
             Activity::PlayingOriginal
         };
-        let task = Task::spawn("VoiceBoxPreview", wake, move |stop, started| {
+        let task = Task::spawn("VoiceBoxPreview", &self.wake, move |stop, started| {
             let processed = match config {
                 Some(config) => {
                     let samples = match cached {

@@ -13,6 +13,7 @@ use voice_box_shared::pcm_transport::{
 
 use crate::{
     audio::monitor::Monitor,
+    database::audio::AudioSource,
     devices,
     hotkeys::HeldKeys,
     i18n::{Details, Message, Text, UserContext},
@@ -135,30 +136,137 @@ fn drain_commands(
     }
 }
 
+/// One sound read from the library, restarted from the beginning when it repeats.
+struct Source {
+    id: SoundId,
+    decoder: SoundDecoder,
+    /// Frames decoded since the last start.
+    decoded: u64,
+    eof: bool,
+}
+
+impl Source {
+    fn open(id: SoundId) -> anyhow::Result<Self> {
+        Ok(Self {
+            id,
+            decoder: SoundDecoder::new(Box::new(AudioSource::open(id)?))?,
+            decoded: 0,
+            eof: false,
+        })
+    }
+
+    fn restart(&mut self) -> anyhow::Result<()> {
+        *self = Self::open(self.id)?;
+        Ok(())
+    }
+}
+
+/// PCM exported through shared memory to the APO on the soundboard microphone.
+#[derive(Default)]
+struct MicrophoneRoute {
+    writer: Option<PcmWriter>,
+    /// Zero while nothing is exported.
+    generation: u16,
+    cursor: u64,
+}
+
+impl MicrophoneRoute {
+    fn stop(&mut self) {
+        if let Some(writer) = &mut self.writer {
+            writer.stop();
+        }
+        self.generation = 0;
+    }
+
+    /// Starts a generation that re-exports the buffered audio, even when decoding has reached EOF.
+    fn start(
+        &mut self,
+        device: Option<&str>,
+        buffer: &PlaybackBuffer,
+        now: u64,
+    ) -> anyhow::Result<()> {
+        let writer = match self.writer.take() {
+            Some(writer) => writer,
+            None => {
+                let guid = devices::soundboard_microphone_guid(device)?;
+                PcmWriter::open(&pcm_transport_name(&guid)?)
+                    .user_context(Text::CreatePlaybackBuffer)?
+            }
+        };
+        self.generation = self.writer.insert(writer).next_generation();
+        self.cursor = buffer.base.max(now.saturating_sub(480));
+        Ok(())
+    }
+
+    /// Bakes this route's gain into PCM without clipping; the APO limits
+    /// only after resampling and mixing with the microphone.
+    fn write(&mut self, buffer: &PlaybackBuffer, gain: f32) {
+        let Some(writer) = self.writer.as_mut().filter(|_| self.generation != 0) else {
+            return;
+        };
+        let now = pcm_frame();
+        self.cursor = self.cursor.max(buffer.base).max(now.saturating_sub(480));
+        while self.cursor < buffer.end() {
+            let [left, right] = buffer.sample(self.cursor);
+            writer.write(self.cursor, self.generation, [left * gain, right * gain]);
+            self.cursor += 1;
+        }
+        writer.publish(self.generation, buffer.end(), now);
+    }
+}
+
+/// Monitoring on a speaker; after a failure it stays off until the next configuration.
+#[derive(Default)]
+struct SpeakerRoute {
+    monitor: Option<Monitor>,
+    failed: bool,
+}
+
+impl SpeakerRoute {
+    fn play(&mut self, settings: &Config, buffer: &PlaybackBuffer) -> anyhow::Result<()> {
+        if settings.speaker_gain_percent.is_mute() || self.failed {
+            self.monitor = None;
+            return Ok(());
+        }
+        let gain = settings.speaker_gain_percent.as_f32_gain();
+        let result = self
+            .monitor
+            .take()
+            .map_or_else(|| Monitor::open(settings.speaker_device.as_deref()), Ok)
+            .and_then(|monitor| {
+                // Opening a device or decoding a packet can take time. Read the
+                // current clock so the render queue does not use a stale timeline.
+                self.monitor.insert(monitor).fill(pcm_frame(), |frame| {
+                    let [left, right] = buffer.sample(frame);
+                    [left * gain, right * gain]
+                })
+            });
+        if result.is_err() {
+            self.monitor = None;
+            self.failed = true;
+        }
+        result
+    }
+}
+
 pub fn run(
-    mut id: SoundId,
+    id: SoundId,
     mut settings: Config,
     mut revision: u64,
     commands: &mpsc::Receiver<Command>,
     events: &mpsc::Sender<Event>,
 ) -> anyhow::Result<PlaybackOutcome> {
-    let mut decoder = SoundDecoder::new(Box::new(crate::database::audio::AudioSource::open(id)?))?;
-    let mut duration_secs = decoder.duration_secs;
-    let mut mapping: Option<PcmWriter> = None;
-    let mut generation = 0;
-    let mut microphone_cursor = 0;
+    let mut source = Source::open(id)?;
+    let mut microphone = MicrophoneRoute::default();
+    let mut speaker = SpeakerRoute::default();
     let mut pending = PlaybackBuffer::new(pcm_frame() + 4800);
     let mut played = 0_u64;
-    let mut decoded = 0_u64;
-    let mut eof = false;
-    let mut monitor: Option<Monitor> = None;
-    let mut monitor_failed = false;
     let mut held = HeldKeys::default();
     let mut held_binding = None;
     let mut progress = Instant::now();
     tracing::info!(
         sound_id = id,
-        duration_secs = ?duration_secs,
+        duration_secs = ?source.decoder.duration_secs,
         speaker_gain_percent = ?settings.speaker_gain_percent,
         microphone_gain_percent = ?settings.microphone_gain_percent,
         repeat = settings.repeat,
@@ -166,14 +274,18 @@ pub fn run(
     );
     let _ = events.send(Event::Started {
         revision,
-        duration_secs,
+        duration_secs: source.decoder.duration_secs,
     });
     // Queue the initial settings through the same output validation as live changes.
     let mut configure = Some(settings.clone());
     let reason = 'playback: loop {
         let mut now = pcm_frame();
         // Keep the EOF timestamp fixed while lagging outputs finish reading.
-        let advance_to = if eof { now.min(pending.end()) } else { now };
+        let advance_to = if source.eof {
+            now.min(pending.end())
+        } else {
+            now
+        };
         played += pending.advance(advance_to);
         // Coalesce rapid requests before decoding or touching WASAPI. A stop
         // cancels pending replacements; the controller retains later requests.
@@ -182,75 +294,49 @@ pub fn run(
             Err(reason) => break 'playback reason,
         };
         if configure.is_some() {
-            monitor_failed = false;
+            speaker.failed = false;
         }
         if let Some((next_id, next_revision)) = replacement {
             tracing::info!(
-                sound_id = id,
+                sound_id = source.id,
                 played_secs = played as f64 / f64::from(PCM_SAMPLE_RATE),
                 reason = "replaced",
                 "Soundboard sound finished"
             );
-            if let Some(mapping) = &mut mapping {
-                mapping.stop();
-            }
-            generation = 0;
-            decoder = SoundDecoder::new(Box::new(crate::database::audio::AudioSource::open(
-                next_id,
-            )?))?;
-            id = next_id;
+            microphone.stop();
+            source = Source::open(next_id)?;
             revision = next_revision;
-            duration_secs = decoder.duration_secs;
             now = pcm_frame();
             pending.reset(now + 4800);
             played = 0;
-            decoded = 0;
-            eof = false;
             progress = Instant::now();
             // Keep the render client running on its owning COM thread. Its short
             // queue drains while the new sound's timeline is prepared.
-            tracing::info!(sound_id = id, duration_secs = ?duration_secs,
-                speaker_stream_reused = monitor.is_some(), "Soundboard playback switched");
+            tracing::info!(sound_id = next_id, duration_secs = ?source.decoder.duration_secs,
+                speaker_stream_reused = speaker.monitor.is_some(), "Soundboard playback switched");
             let _ = events.send(Event::Started {
                 revision,
-                duration_secs,
+                duration_secs: source.decoder.duration_secs,
             });
         }
         if let Some(mut next) = configure.take() {
-            if next.microphone_gain_percent != settings.microphone_gain_percent && generation != 0 {
-                if let Some(mapping) = &mut mapping {
-                    mapping.stop();
-                }
-                generation = 0;
+            if next.microphone_gain_percent != settings.microphone_gain_percent {
+                microphone.stop();
             }
-            if !next.microphone_gain_percent.is_mute() && generation == 0 {
-                let result = (|| -> anyhow::Result<()> {
-                    if mapping.is_none() {
-                        let guid =
-                            devices::soundboard_microphone_guid(next.microphone_device.as_deref())?;
-                        mapping = Some(
-                            PcmWriter::open(&pcm_transport_name(&guid)?)
-                                .user_context(Text::CreatePlaybackBuffer)?,
-                        );
-                    }
-                    if let Some(mapping) = &mut mapping {
-                        generation = mapping.next_generation();
-                    }
-                    // Re-export the buffered audio, even when decoding has reached EOF.
-                    microphone_cursor = pending.base.max(now.saturating_sub(480));
-                    Ok(())
-                })();
-                if let Err(error) = result {
-                    let error = Message::MicrophoneOutputFailed {
-                        error: Details::new(error),
-                    };
-                    if next.speaker_gain_percent.is_mute() {
-                        return Err(anyhow::anyhow!(error));
-                    }
-                    tracing::warn!("{error}");
-                    let _ = events.send(Event::OutputError(revision, error));
-                    next.microphone_gain_percent = GainPercent::new(0);
+            if !next.microphone_gain_percent.is_mute()
+                && microphone.generation == 0
+                && let Err(error) =
+                    microphone.start(next.microphone_device.as_deref(), &pending, now)
+            {
+                let error = Message::MicrophoneOutputFailed {
+                    error: Details::new(error),
+                };
+                if next.speaker_gain_percent.is_mute() {
+                    return Err(anyhow::anyhow!(error));
                 }
+                tracing::warn!("{error}");
+                let _ = events.send(Event::OutputError(revision, error));
+                next.microphone_gain_percent = GainPercent::new(0);
             }
             settings = next;
             if pending.samples.is_empty() {
@@ -264,104 +350,53 @@ pub fn run(
         }
         if settings.hold_hotkey != held_binding {
             drop(held);
-            held = if let Some(key) = settings.hold_hotkey {
-                HeldKeys::press(key)?
-            } else {
-                HeldKeys::default()
+            held = match settings.hold_hotkey {
+                Some(key) => HeldKeys::press(key)?,
+                None => HeldKeys::default(),
             };
             held_binding = settings.hold_hotkey;
         }
-        if eof && settings.repeat {
-            decoder = SoundDecoder::new(Box::new(crate::database::audio::AudioSource::open(id)?))?;
-            decoded = 0;
-            eof = false;
+        if source.eof && settings.repeat {
+            source.restart()?;
         }
         let fill_end = (now + PCM_DECODE_AHEAD_FRAMES).min(pending.end() + 2400);
-        while !eof && pending.end() < fill_end {
+        while !source.eof && pending.end() < fill_end {
             // Decode at most 50 ms per pass so stop/configuration stay responsive.
-            match decoder.next_frame()? {
+            match source.decoder.next_frame()? {
                 Some(stereo) => {
                     pending.samples.push_back(stereo);
-                    decoded += 1;
+                    source.decoded += 1;
                 }
-                None if settings.repeat && decoded > 0 => {
-                    decoder = SoundDecoder::new(Box::new(
-                        crate::database::audio::AudioSource::open(id)?,
-                    ))?;
-                    decoded = 0;
-                }
+                None if settings.repeat && source.decoded > 0 => source.restart()?,
                 None => {
                     ensure!(
                         played > 0 || !pending.samples.is_empty(),
                         Text::NoPlayableAudio
                     );
-                    eof = true;
+                    source.eof = true;
                 }
             }
         }
-        if generation != 0
-            && let Some(mapping) = &mut mapping
-        {
-            let now = pcm_frame();
-            microphone_cursor = microphone_cursor
-                .max(pending.base)
-                .max(now.saturating_sub(480));
-            // Bake this route's gain into PCM without clipping; the APO limits
-            // only after resampling and mixing with the microphone.
-            let gain = settings.microphone_gain_percent.as_f32_gain();
-            while microphone_cursor < pending.end() {
-                let stereo = pending.sample(microphone_cursor);
-                mapping.write(
-                    microphone_cursor,
-                    generation,
-                    [stereo[0] * gain, stereo[1] * gain],
-                );
-                microphone_cursor += 1;
+        microphone.write(&pending, settings.microphone_gain_percent.as_f32_gain());
+        if let Err(error) = speaker.play(&settings, &pending) {
+            if settings.microphone_gain_percent.is_mute() {
+                return Err(error.user_context(Text::SpeakerPlaybackFailed));
             }
-            mapping.publish(generation, pending.end(), now);
+            tracing::warn!("Speaker playback failed; microphone output continues: {error:#}");
+            let _ = events.send(Event::OutputError(
+                revision,
+                Message::SpeakerMonitorFailed {
+                    error: Details::new(error),
+                },
+            ));
         }
-        if !settings.speaker_gain_percent.is_mute() && !monitor_failed {
-            let result = (|| -> anyhow::Result<()> {
-                if monitor.is_none() {
-                    monitor = Some(Monitor::open(settings.speaker_device.as_deref())?);
-                }
-                // Opening a device or decoding a packet can take time. Read the
-                // current clock so the render queue does not use a stale timeline.
-                monitor
-                    .as_mut()
-                    .expect("UNREACHABLE: monitor should exist after successful initialization")
-                    .fill(pcm_frame(), |frame| {
-                        let stereo = pending.sample(frame);
-                        [
-                            stereo[0] * settings.speaker_gain_percent.as_f32_gain(),
-                            stereo[1] * settings.speaker_gain_percent.as_f32_gain(),
-                        ]
-                    })
-            })();
-            if let Err(error) = result {
-                if settings.microphone_gain_percent.is_mute() {
-                    return Err(error.user_context(Text::SpeakerPlaybackFailed));
-                }
-                monitor = None;
-                monitor_failed = true;
-                tracing::warn!("Speaker playback failed; microphone output continues: {error:#}");
-                let _ = events.send(Event::OutputError(
-                    revision,
-                    Message::SpeakerMonitorFailed {
-                        error: Details::new(error),
-                    },
-                ));
-            }
-        } else {
-            monitor = None;
-        }
-        if eof && pending.end().saturating_add(PCM_MAX_CURSOR_DRIFT_FRAMES) <= now {
+        if source.eof && pending.end().saturating_add(PCM_MAX_CURSOR_DRIFT_FRAMES) <= now {
             break "completed";
         }
         if progress.elapsed() >= Duration::from_millis(100) {
             let mut elapsed_secs = played as f64 / f64::from(PCM_SAMPLE_RATE);
             if settings.repeat
-                && let Some(duration_secs) = duration_secs.filter(|&d| d > 0.0)
+                && let Some(duration_secs) = source.decoder.duration_secs.filter(|&d| d > 0.0)
             {
                 elapsed_secs %= duration_secs;
             }
@@ -382,7 +417,7 @@ pub fn run(
         std::thread::sleep(Duration::from_millis(30));
     }
     Ok(PlaybackOutcome {
-        sound_id: id,
+        sound_id: source.id,
         reason,
         played_secs,
     })

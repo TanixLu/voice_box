@@ -9,7 +9,7 @@ use crate::{
         Update,
         playback::{self, Command, Config, Event},
     },
-    task::Task,
+    task::{Task, Wake},
 };
 
 #[derive(Clone, Copy, Default)]
@@ -40,8 +40,8 @@ impl Completion {
     }
 }
 
-#[derive(Default)]
 pub struct Player {
+    wake: Wake,
     job: Option<Job>,
     revision: u64,
     queued: Option<Request>,
@@ -49,6 +49,16 @@ pub struct Player {
 }
 
 impl Player {
+    pub fn new(wake: Wake) -> Self {
+        Self {
+            wake,
+            job: None,
+            revision: 0,
+            queued: None,
+            status: PlaybackStatus::default(),
+        }
+    }
+
     pub fn status(&self) -> PlaybackStatus {
         self.status
     }
@@ -57,14 +67,8 @@ impl Player {
         self.job.is_some()
     }
 
-    pub fn play(
-        &mut self,
-        id: SoundId,
-        duration_secs: f64,
-        config: Config,
-        wake: impl Fn() + Send + 'static,
-    ) {
-        wake();
+    pub fn play(&mut self, id: SoundId, duration_secs: f64, config: Config) {
+        (self.wake)();
         self.revision = self.revision.wrapping_add(1);
         self.status = PlaybackStatus {
             sound_id: Some(id),
@@ -82,7 +86,7 @@ impl Player {
             let _ = job.sender.send(Command::Replace(id, self.revision, config));
             return;
         }
-        self.job = Some(start_worker(id, self.revision, config, wake));
+        self.job = Some(start_worker(id, self.revision, config, &self.wake));
     }
 
     pub fn stop(&mut self) {
@@ -111,7 +115,7 @@ impl Player {
         }
     }
 
-    pub fn poll(&mut self, wake: impl Fn() + Send + 'static) -> Vec<Update> {
+    pub fn poll(&mut self) -> Vec<Update> {
         let mut updates = Vec::new();
         if let Some(job) = &mut self.job {
             // Check completion first, so events sent just before it are still drained.
@@ -149,7 +153,7 @@ impl Player {
             && let Some(request) = self.queued.take()
         {
             updates.push(Update::Cleared);
-            self.play(request.id, request.duration_secs, request.config, wake);
+            self.play(request.id, request.duration_secs, request.config);
         }
         updates
     }
@@ -169,12 +173,7 @@ impl Drop for Player {
     }
 }
 
-fn start_worker(
-    id: SoundId,
-    revision: u64,
-    config: Config,
-    wake: impl Fn() + Send + 'static,
-) -> Job {
+fn start_worker(id: SoundId, revision: u64, config: Config, wake: &Wake) -> Job {
     let (sender, commands) = mpsc::channel();
     let (events, receiver) = mpsc::channel();
     let task = Task::run("VoiceBoxSoundboard", wake, move || {

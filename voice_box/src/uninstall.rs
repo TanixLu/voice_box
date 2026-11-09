@@ -25,13 +25,11 @@ use windows::{
     core::{Owned, PCWSTR},
 };
 
-use voice_box_shared::{
-    utils::wide_null,
-    utils::{apo_dll_path, data_dir, powershell_path, system_dir},
-};
+use voice_box_shared::utils::wide_null;
 
 use crate::{
     i18n::{Message, Text, UserContext, current_language},
+    paths::{apo_dll_path, data_dir, powershell_path, system_dir},
     setup,
     static_data::UNINSTALL_CLEANUP_SCRIPT,
     utils::{ComGuard, VOICE_BOX_SINGLE_INSTANCE},

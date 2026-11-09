@@ -9,6 +9,7 @@ use crate::{
     i18n::{Details, Message, Text},
     model::Hotkey,
     soundboard::bindings::{Action, Target},
+    task::Wake,
 };
 
 struct KeyCapture {
@@ -26,8 +27,8 @@ pub struct HotkeyManager {
     error: Message,
 }
 impl HotkeyManager {
-    pub fn new(ctx: &egui::Context, window: HWND) -> Self {
-        match Hotkeys::new(window, super::wake_ui(ctx.clone())) {
+    pub fn new(window: HWND, wake: Wake) -> Self {
+        match Hotkeys::new(window, wake) {
             Ok(listener) => Self {
                 listener: Some(listener),
                 ..Default::default()

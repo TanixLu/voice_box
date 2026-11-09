@@ -6,7 +6,6 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-atomic-write-file.workspace = true
 num-traits = "0.2.19"
 rubato = { version = "5.0", default-features = false }
 serde.workspace = true
@@ -21,8 +20,6 @@ windows = { workspace = true, features = [
     "Win32_System_Memory",
     "Win32_System_Performance",
     "Win32_System_Registry",
-    "Win32_System_SystemInformation",
     "Win32_System_Threading",
-    "Win32_UI_Shell",
 ] }
 windows-core.workspace = true

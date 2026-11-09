@@ -3594,6 +3594,7 @@ name = "voice_box"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "atomic-write-file",
  "eframe",
  "egui",
  "egui-winit",
@@ -3632,7 +3633,6 @@ name = "voice_box_shared"
 version = "1.0.0"
 dependencies = [
  "anyhow",
- "atomic-write-file",
  "num-traits",
  "rubato",
  "serde",

@@ -19,11 +19,11 @@ use windows::{
 
 use voice_box_shared::{
     dsp::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
-    utils::{PREVIEW_MAX_RECORD_SECONDS, PREVIEW_MAX_SAMPLES, wide_null},
+    utils::wide_null,
 };
 
 use crate::{
-    audio::{Stream, enumerator},
+    audio::{PREVIEW_MAX_RECORD_SECONDS, PREVIEW_MAX_SAMPLES, Stream, enumerator},
     i18n::{Text, UserContext},
     utils::ComGuard,
 };

@@ -8,6 +8,7 @@ mod hotkeys;
 mod i18n;
 mod logging;
 mod model;
+mod paths;
 mod registry;
 mod settings;
 mod setup;

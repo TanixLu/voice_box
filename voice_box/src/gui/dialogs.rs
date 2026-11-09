@@ -1,5 +1,5 @@
 use crate::{
-    gui::{Lifecycle, Startup, VoiceBoxApp, wake_ui, widgets::notice},
+    gui::{Lifecycle, Startup, VoiceBoxApp, widgets::notice},
     i18n::Text,
     static_data::LICENSES,
     task::Task,
@@ -28,15 +28,13 @@ impl VoiceBoxApp {
             ui.horizontal_wrapped(|ui| {
                 if ui
                     .add_enabled(
-                        !self.interaction_blocked()
-                            && !self.voice.previewing()
-                            && !self.soundboard.playing(),
+                        !self.busy(None).any(),
                         egui::Button::new(Text::Uninstall.text()),
                     )
                     .clicked()
                 {
                     self.startup = Startup::Unsynced;
-                    let task = Task::run("VoiceBoxUninstall", wake_ui(ctx.clone()), uninstall::run);
+                    let task = Task::run("VoiceBoxUninstall", &self.wake, uninstall::run);
                     self.lifecycle = Lifecycle::Uninstalling(task);
                 }
                 if ui.button(Text::Cancel.text()).clicked() {

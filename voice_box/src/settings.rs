@@ -2,13 +2,12 @@
 
 use std::{fs, io};
 
-use serde::{Deserialize, Serialize};
-use voice_box_shared::utils::{WriteMode, settings_path, write_file_with_parents};
-
 use crate::{
     i18n::{LanguagePreference, Text, UserContext},
+    paths::{WriteMode, settings_path, write_file_with_parents},
     soundboard::prefs::Prefs,
 };
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
