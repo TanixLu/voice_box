@@ -45,5 +45,7 @@ fn run() -> anyhow::Result<()> {
     ensure!(is_single_instance()?, Text::AnotherInstance);
     logging::init()?;
     database::init()?;
-    todo!()
+    let settings = settings::Settings::load()?;
+    set_language(settings.language_preference.resolve());
+    gui::run(settings, silent_start())
 }

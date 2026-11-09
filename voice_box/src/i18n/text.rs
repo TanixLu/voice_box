@@ -55,7 +55,6 @@ catalog! {
     NoRecordedAudio => ("No audio has been recorded yet. Wait before stopping the recording", "没有录到声音，请稍后再结束录音");
     InvalidKey => ("Invalid key", "无效按键");
     InvalidHoldKey => ("Invalid automatic hold key", "自动按键无效");
-    UnsupportedArguments => ("Unsupported command-line arguments. Use the application window.", "不支持此命令行参数，请在窗口中操作。");
     AdministratorRequired => ("VoiceBox requires administrator privileges. Right-click and select “Run as administrator”.", "VoiceBox 需要管理员权限，请右键选择“以管理员身份运行”。");
     InvalidApoPath => ("The APO DLL path is not valid Unicode", "APO DLL 路径不是有效的 Unicode");
     CreateRegistrationTransaction => ("Failed to create the APO registration transaction", "创建 APO 注册事务失败");
@@ -68,7 +67,6 @@ catalog! {
     ReadMicrophoneRegistry => ("Failed to read the microphone registry entry", "读取麦克风注册表项失败");
     CommitUninstallTransaction => ("Failed to commit the full uninstall registry transaction", "提交完全卸载注册事务失败");
     PluginVerificationFailed => ("Installation finished, but the plugin check failed. Refresh and try again", "安装操作已结束，但插件检查未通过，请刷新后重试");
-    CreateDataDirectory => ("Failed to create the VoiceBox data directory", "创建 VoiceBox 数据目录失败");
     NoAudioTrack => ("The file has no audio track", "文件没有音轨");
     InvalidAudioDuration => ("Invalid audio duration", "音频时长无效");
     InvalidTrackParameters => ("Invalid audio track parameters", "音轨参数无效");
@@ -89,7 +87,6 @@ catalog! {
     CaptureHotkeyHint => ("Press a shortcut. Press Esc to cancel", "请按下快捷键，按 Esc 取消");
     SoundNotFound => ("The sound does not exist", "音效不存在");
     InvalidSoundName => ("The name must not be empty or contain control characters", "音效名称不能为空，也不能包含控制字符");
-    RenameSoundFailed => ("Failed to rename the sound", "重命名音效失败");
     ReadSourceAudioPath => ("Failed to read the original audio path", "读取原音频路径失败");
     AudioIsNotFile => ("The selected audio is not a file", "所选音频不是文件");
     InvalidAudioFileName => ("Invalid audio file name", "音频文件名无效");
@@ -141,7 +138,6 @@ catalog! {
     RenameApplying => ("Renaming…", "正在重命名…");
     RenameValidationFailed => ("Invalid sound names or changed entries. Check the preview again.", "音效名称无效或选中项已变化，请重新检查预览。");
     RenameBusy => ("Wait for the current library operation to finish", "请等待当前音效库操作完成");
-    RenameThreadExited => ("The rename worker exited unexpectedly", "重命名任务意外退出");
     Done => ("Done", "完成");
     SelectSearchResults => ("Select all results", "全选当前结果");
     ClearSelection => ("Clear selection", "取消选择");

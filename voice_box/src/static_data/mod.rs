@@ -11,11 +11,11 @@ pub fn apo_dll_bytes() -> &'static [u8] {
     APO_DLL.as_ref()
 }
 
-pub static ICON_PNG_DATA: &'static [u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon.png"));
+pub static ICON_PNG_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon.png"));
 
-pub static UNINSTALL_CLEANUP_SCRIPT: &'static str = include_str!("uninstall_cleanup.ps1");
+pub static UNINSTALL_CLEANUP_SCRIPT: &str = include_str!("uninstall_cleanup.ps1");
 
-static STARTUP_SCRIPT: &'static str = include_str!("startup.ps1");
+static STARTUP_SCRIPT: &str = include_str!("startup.ps1");
 pub fn startup_script(
     startup_argument: &str,
     hash: &str,

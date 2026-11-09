@@ -139,12 +139,12 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     }
     // Check whether the DLL needs to be updated.
     let apo_dll = apo_dll_path();
-    if std::fs::read(&apo_dll).ok().as_deref() != Some(apo_dll_bytes()) {
+    if std::fs::read(apo_dll).ok().as_deref() != Some(apo_dll_bytes()) {
         return PluginStatus::NeedsUpdate;
     }
 
     // Check whether the registry needs to be updated.
-    let Ok(string_values) = string_registration_values(&apo_dll) else {
+    let Ok(string_values) = string_registration_values(apo_dll) else {
         return PluginStatus::NeedsUpdate;
     };
     for (reg_path, expected_value) in string_values {
@@ -239,9 +239,9 @@ pub fn with_audio_service_stopped(
 
 fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     let apo_dll_path = apo_dll_path();
-    let string_values = string_registration_values(&apo_dll_path)?;
+    let string_values = string_registration_values(apo_dll_path)?;
     // Update the DLL.
-    if std::fs::read(&apo_dll_path).ok().as_deref() != Some(apo_dll_bytes()) {
+    if std::fs::read(apo_dll_path).ok().as_deref() != Some(apo_dll_bytes()) {
         write_file_with_parents(apo_dll_path, WriteMode::AtomicReplace, |file| {
             file.write_all(apo_dll_bytes())
         })?;
