@@ -26,7 +26,6 @@ use windows::Win32::{
 };
 use windows_core::{GUID, Interface as _, PCWSTR};
 
-#[macro_export]
 macro_rules! field_name {
     ($obj:expr, $field:ident) => {{
         if false {
@@ -35,6 +34,7 @@ macro_rules! field_name {
         stringify!($field)
     }};
 }
+pub(crate) use field_name;
 
 pub const APO_CLSID: GUID = GUID::from_u128(0xae672075_b244_4417_b5a5_fbd45b7f0268);
 pub const APO_NAME: &str = "VoiceBox APO";

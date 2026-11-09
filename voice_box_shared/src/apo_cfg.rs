@@ -2,10 +2,7 @@
 
 use std::io::{self, Read};
 
-use crate::{
-    field_name,
-    utils::{GainDb, WriteMode, apo_cfg_path, write_file_with_parents},
-};
+use crate::utils::{GainDb, WriteMode, apo_cfg_path, field_name, write_file_with_parents};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct ApoCfg {
