@@ -83,50 +83,65 @@ impl Settings {
         .user_context(Text::SaveAppSettingsFailed)
     }
 
+    /// Every bound global shortcut; `sound_hotkeys` is indexed like the sound list.
+    pub fn shortcuts(
+        &self,
+        sound_hotkeys: impl IntoIterator<Item = Option<Hotkey>>,
+    ) -> impl Iterator<Item = (BindingTarget, Hotkey)> {
+        [
+            (BindingTarget::Stop, self.playback_stop_hotkey),
+            (BindingTarget::Random, self.playback_random_hotkey),
+        ]
+        .into_iter()
+        .chain(
+            sound_hotkeys
+                .into_iter()
+                .enumerate()
+                .map(|(index, key)| (BindingTarget::Sound(index), key)),
+        )
+        .filter_map(|(target, key)| Some((target, key?)))
+    }
+
     pub fn validate_binding(
         &self,
-        sound_hotkeys: impl Iterator<Item = Hotkey> + Clone,
+        sound_hotkeys: impl IntoIterator<Item = Option<Hotkey>>,
         target: BindingTarget,
         key: Hotkey,
     ) -> anyhow::Result<()> {
+        let hold = target == BindingTarget::Hold;
         ensure!(
-            if target == BindingTarget::Hold {
+            if hold {
                 key.is_valid_for_hold()
             } else {
                 key.is_valid()
             },
             Text::InvalidHotkey
         );
-        let duplicate = (target != BindingTarget::Stop && self.playback_stop_hotkey == Some(key))
-            || (target != BindingTarget::Random && self.playback_random_hotkey == Some(key))
-            || (matches!(target, BindingTarget::Stop | BindingTarget::Random)
-                && sound_hotkeys.clone().any(|bound| bound == key));
-        ensure!(
-            !duplicate || target == BindingTarget::Hold,
-            Message::HotkeyConflict { key }
-        );
-        let overlaps_hold = match target {
-            BindingTarget::Sound(_) | BindingTarget::Stop | BindingTarget::Random => self
-                .playback_auto_hold_hotkey
-                .is_some_and(|hold| hold.virtual_key_code == key.virtual_key_code),
-            BindingTarget::Hold => {
-                self.playback_stop_hotkey
-                    .is_some_and(|shortcut| shortcut.virtual_key_code == key.virtual_key_code)
-                    || self
-                        .playback_random_hotkey
-                        .is_some_and(|shortcut| shortcut.virtual_key_code == key.virtual_key_code)
-                    || sound_hotkeys
-                        .clone()
-                        .any(|shortcut| shortcut.virtual_key_code == key.virtual_key_code)
-            }
-        };
-        ensure!(!overlaps_hold, Text::HoldKeyConflict);
+        let same_base_key = |other: Hotkey| other.virtual_key_code == key.virtual_key_code;
+        let mut others = self
+            .shortcuts(sound_hotkeys)
+            .filter(|&(other_target, _)| other_target != target);
+        if hold {
+            ensure!(!others.any(|(_, other)| same_base_key(other)), Text::HoldKeyConflict);
+        } else {
+            // Sounds may share a shortcut; it then plays a random sound from the group.
+            let is_sound = |target| matches!(target, BindingTarget::Sound(_));
+            ensure!(
+                !others.any(|(other_target, other)| other == key
+                    && !(is_sound(target) && is_sound(other_target))),
+                Message::HotkeyConflict { key }
+            );
+            ensure!(
+                !self.playback_auto_hold_hotkey.is_some_and(same_base_key),
+                Text::HoldKeyConflict
+            );
+        }
         Ok(())
     }
 
     pub fn validate(
         &self,
-        sound_hotkeys: impl Iterator<Item = Hotkey> + Clone,
+        sound_hotkeys: impl Iterator<Item = Option<Hotkey>> + Clone,
     ) -> anyhow::Result<()> {
         for (target, key) in [
             (BindingTarget::Hold, self.playback_auto_hold_hotkey),

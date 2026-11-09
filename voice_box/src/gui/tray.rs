@@ -1,6 +1,5 @@
 use std::{cell::Cell, sync::mpsc};
 
-use egui_winit::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::{
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, WPARAM},
@@ -53,12 +52,8 @@ struct Data {
 }
 
 impl Tray {
-    pub fn new(cc: &eframe::CreationContext<'_>, start_in_tray: bool) -> anyhow::Result<Self> {
-        // get the HWND of the main window
-        let RawWindowHandle::Win32(handle) = cc.window_handle()?.as_raw() else {
-            anyhow::bail!("Expected a Win32 window");
-        };
-        let window = HWND(handle.hwnd.get() as _);
+    pub fn new(ctx: &egui::Context, start_in_tray: bool) -> anyhow::Result<Self> {
+        let window = super::main_window();
 
         let (sender, receiver) = mpsc::channel();
         unsafe {
@@ -85,7 +80,7 @@ impl Tray {
                 exit_enabled: Cell::new(false),
                 available: Cell::new(false),
                 startup_hidden: Cell::new(start_in_tray),
-                ctx: cc.egui_ctx.clone(),
+                ctx: ctx.clone(),
                 sender,
             });
             let tip = wide_null("VoiceBox");

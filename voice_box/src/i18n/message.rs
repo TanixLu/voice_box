@@ -135,7 +135,6 @@ messages! {
     ImportSoundsFailed { error: Details } => ("Failed to import sounds: {error}", "导入音效失败：{error}");
     PlaybackFailed { error: Details } => ("Playback failed: {error}", "播放失败：{error}");
     EnableHotkeysFailed { error: Details } => ("Cannot enable global hotkeys: {error}", "无法启用全局快捷键：{error}");
-    WaitHotkeysFailed { error: Details } => ("Failed to wait for global hotkeys: {error}", "等待全局快捷键失败：{error}");
     SpeakerMonitorFailed { error: Details } => ("Speaker playback failed; microphone output continues: {error}", "扬声器播放失败，麦克风发送继续：{error}");
     MicrophoneOutputFailed { error: Details } => ("Microphone output unavailable: {error}", "麦克风输出不可用：{error}");
     WaitAudioDeviceFailed { result: String } => ("Failed to wait for the audio device: {result}", "等待音频设备失败：{result}");

@@ -1,23 +1,33 @@
-//! Registered global shortcuts run on a message thread; simulated keys use RAII.
+//! Global shortcuts arrive on the main window; simulated keys use RAII.
 
-use std::{mem::size_of, sync::mpsc, thread::JoinHandle};
+use std::{
+    collections::{HashMap, HashSet},
+    mem::size_of,
+    sync::mpsc,
+};
 
 use serde::{Deserialize, Serialize};
 use windows::Win32::{
-    Foundation::{LPARAM, WPARAM},
-    System::Threading::GetCurrentThreadId,
+    Foundation::{HWND, LPARAM, LRESULT, WPARAM},
     UI::{
         Input::KeyboardAndMouse::*,
-        WindowsAndMessaging::{
-            GetMessageW, MSG, PM_NOREMOVE, PM_REMOVE, PeekMessageW, PostThreadMessageW, WM_APP,
-            WM_HOTKEY, WM_QUIT,
-        },
+        Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
+        WindowsAndMessaging::{WM_HOTKEY, WM_NCDESTROY},
     },
 };
 
-use crate::i18n::{Details, Message, Text, UserContext, current_language};
+use crate::i18n::{Message, Text, UserContext, current_language};
 
 const SIMULATED_INPUT_TAG: usize = 0x5642_4b59;
+
+/// Modifier flags in display and press order, with the key each one stands for.
+const MODIFIERS: [(HOT_KEY_MODIFIERS, VIRTUAL_KEY, &str); 4] = [
+    (MOD_CONTROL, VK_CONTROL, "Ctrl"),
+    (MOD_SHIFT, VK_SHIFT, "Shift"),
+    (MOD_ALT, VK_MENU, "Alt"),
+    (MOD_WIN, VK_LWIN, "Win"),
+];
+const ALL_MODIFIERS: u32 = MOD_CONTROL.0 | MOD_SHIFT.0 | MOD_ALT.0 | MOD_WIN.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct Hotkey {
@@ -30,29 +40,33 @@ impl Hotkey {
         self.is_valid_for_hold() && !is_modifier(self.virtual_key_code)
     }
     pub fn is_valid_for_hold(self) -> bool {
-        key_name(self.virtual_key_code).is_some() && self.modifiers & !0xf == 0
+        key_name(self.virtual_key_code).is_some() && self.modifiers & !ALL_MODIFIERS == 0
+    }
+    pub fn is_escape(self) -> bool {
+        self.virtual_key_code == VK_ESCAPE.0
     }
     pub fn label(self) -> String {
         self.label_in_language(current_language())
     }
     pub fn label_in_language(self, language: crate::i18n::Language) -> String {
-        let mut parts = Vec::new();
-        for (flag, name) in [(2, "Ctrl"), (4, "Shift"), (1, "Alt"), (8, "Win")] {
-            if self.modifiers & flag != 0 {
-                parts.push(name.to_owned());
-            }
-        }
-        parts.push(
-            key_name(self.virtual_key_code)
-                .unwrap_or_else(|| Text::InvalidKey.in_language(language).into()),
-        );
-        parts.join(" + ")
+        let key = key_name(self.virtual_key_code)
+            .unwrap_or_else(|| Text::InvalidKey.in_language(language).into());
+        self.modifier_keys()
+            .map(|(_, _, name)| name.to_owned())
+            .chain([key])
+            .collect::<Vec<_>>()
+            .join(" + ")
+    }
+    fn modifier_keys(self) -> impl Iterator<Item = (HOT_KEY_MODIFIERS, VIRTUAL_KEY, &'static str)> {
+        MODIFIERS
+            .into_iter()
+            .filter(move |(flag, ..)| self.modifiers & flag.0 != 0)
     }
     pub fn pressed() -> Option<Self> {
-        let modifiers = [(0x11, 2), (0x10, 4), (0x12, 1), (0x5b, 8), (0x5c, 8)]
+        let modifiers = MODIFIERS
             .into_iter()
-            .filter(|&(key, _)| is_key_down(key))
-            .fold(0, |flags, (_, flag)| flags | flag);
+            .filter(|&(_, key, _)| is_key_down(key.0) || (key == VK_LWIN && is_key_down(VK_RWIN.0)))
+            .fold(0, |flags, (flag, ..)| flags | flag.0);
         (8..=0xfe)
             .find(|&key| !is_modifier(key) && key_name(key).is_some() && is_key_down(key))
             .map(|virtual_key_code| Self {
@@ -61,18 +75,50 @@ impl Hotkey {
             })
     }
     pub fn pressed_modifier() -> Option<Self> {
-        [0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0x5b, 0x5c]
-            .into_iter()
-            .find(|&key| is_key_down(key))
-            .map(|virtual_key_code| Self {
-                virtual_key_code,
-                modifiers: 0,
-            })
+        [
+            VK_LSHIFT,
+            VK_RSHIFT,
+            VK_LCONTROL,
+            VK_RCONTROL,
+            VK_LMENU,
+            VK_RMENU,
+            VK_LWIN,
+            VK_RWIN,
+        ]
+        .into_iter()
+        .find(|key| is_key_down(key.0))
+        .map(|key| Self {
+            virtual_key_code: key.0,
+            modifiers: 0,
+        })
+    }
+    /// Registration id; virtual-key codes fit in the low byte.
+    fn id(self) -> i32 {
+        i32::from(self.virtual_key_code) | ((self.modifiers as i32) << 8)
+    }
+    fn from_id(id: i32) -> Self {
+        Self {
+            virtual_key_code: (id & 0xff) as u16,
+            modifiers: (id >> 8) as u32,
+        }
     }
 }
 
 fn is_modifier(key: u16) -> bool {
-    matches!(key, 0x10..=0x12 | 0x5b..=0x5c | 0xa0..=0xa5)
+    matches!(
+        VIRTUAL_KEY(key),
+        VK_SHIFT
+            | VK_CONTROL
+            | VK_MENU
+            | VK_LWIN
+            | VK_RWIN
+            | VK_LSHIFT
+            | VK_RSHIFT
+            | VK_LCONTROL
+            | VK_RCONTROL
+            | VK_LMENU
+            | VK_RMENU
+    )
 }
 
 fn key_name(key: u16) -> Option<String> {
@@ -130,187 +176,119 @@ fn is_key_down(key: u16) -> bool {
     unsafe { GetAsyncKeyState(i32::from(key)) < 0 }
 }
 
-const WM_COMMAND: u32 = WM_APP + 1;
-
-struct Registration(Hotkey);
+struct Registration {
+    window: HWND,
+    key: Hotkey,
+}
 impl Registration {
-    fn id(key: Hotkey) -> i32 {
-        i32::from(key.virtual_key_code) | ((key.modifiers as i32) << 8)
-    }
-
-    fn new(key: Hotkey) -> anyhow::Result<Self> {
+    fn new(window: HWND, key: Hotkey) -> anyhow::Result<Self> {
         anyhow::ensure!(key.is_valid(), Message::InvalidHotkey { key });
         unsafe {
             RegisterHotKey(
-                None,
-                Self::id(key),
+                Some(window),
+                key.id(),
                 HOT_KEY_MODIFIERS(key.modifiers) | MOD_NOREPEAT,
                 u32::from(key.virtual_key_code),
             )
         }
         .with_user_context(|| Message::RegisterHotkey { key })?;
-        Ok(Self(key))
+        Ok(Self { window, key })
     }
 }
 impl Drop for Registration {
     fn drop(&mut self) {
-        if let Err(error) = unsafe { UnregisterHotKey(None, Self::id(self.0)) } {
-            tracing::warn!("Failed to unregister {}: {error}", self.0.label());
+        if let Err(error) = unsafe { UnregisterHotKey(Some(self.window), self.key.id()) } {
+            tracing::warn!("Failed to unregister {}: {error}", self.key.label());
         }
     }
 }
 
-#[derive(Default)]
-struct RegisteredHotkeys {
-    registrations: Vec<Registration>,
-    bindings: Vec<Option<Hotkey>>,
-    revision: u64,
-}
-impl RegisteredHotkeys {
-    fn validate(&self, key: Hotkey) -> anyhow::Result<()> {
-        if !self
-            .registrations
-            .iter()
-            .any(|registered| registered.0 == key)
-        {
-            drop(Registration::new(key)?);
-        }
-        Ok(())
-    }
-
-    fn configure(&mut self, revision: u64, bindings: Vec<Option<Hotkey>>) -> anyhow::Result<()> {
-        let mut added = Vec::new();
-        for key in bindings.iter().flatten().copied() {
-            if !self
-                .registrations
-                .iter()
-                .chain(&added)
-                .any(|registered| registered.0 == key)
-            {
-                // Keep existing registrations until every new shortcut succeeds.
-                added.push(Registration::new(key)?);
-            }
-        }
-        self.registrations.extend(added);
-        self.registrations
-            .retain(|registered| bindings.contains(&Some(registered.0)));
-        self.bindings = bindings;
-        self.revision = revision;
-        // Discard notifications queued for the previous action mapping.
-        let mut msg = MSG::default();
-        while unsafe { PeekMessageW(&mut msg, None, WM_HOTKEY, WM_HOTKEY, PM_REMOVE).as_bool() } {}
-        Ok(())
-    }
-}
-
-enum Command {
-    Configure(u64, Vec<Option<Hotkey>>, mpsc::Sender<anyhow::Result<()>>),
-    Validate(Hotkey, mpsc::Sender<anyhow::Result<()>>),
-}
-
-pub enum Event {
-    Trigger { index: usize, revision: u64 },
-    Error(Message),
-}
+/// Global shortcuts delivered as `WM_HOTKEY` to a window owned by the calling thread.
+///
+/// Window messages, unlike thread messages, are still dispatched while that thread
+/// runs a modal loop such as a popup menu or a window drag.
 pub struct Hotkeys {
-    sender: mpsc::Sender<Command>,
-    pub receiver: mpsc::Receiver<Event>,
-    thread_id: u32,
-    thread: Option<JoinHandle<()>>,
+    window: HWND,
+    registrations: HashMap<Hotkey, Registration>,
+    pub pressed: mpsc::Receiver<Hotkey>,
+    // Boxed so its address stays fixed while the window subclass points at it.
+    _subclass: Box<Subclass>,
+}
+struct Subclass {
+    pressed: mpsc::Sender<Hotkey>,
+    wake: Box<dyn Fn()>,
 }
 impl Hotkeys {
-    pub fn new(wake: impl Fn() + Send + 'static) -> anyhow::Result<Self> {
-        let (sender, commands) = mpsc::channel();
-        let (events, receiver) = mpsc::channel();
-        let (ready, started) = mpsc::channel();
-        let thread = std::thread::Builder::new()
-            .name("VoiceBoxHotkeys".into())
-            .spawn(move || {
-                let mut msg = MSG::default();
-                // PostThreadMessage requires the destination queue to exist first.
-                let _ = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE) };
-                if ready.send(unsafe { GetCurrentThreadId() }).is_err() {
-                    return;
-                }
-                let mut registered = RegisteredHotkeys::default();
-                loop {
-                    let result = unsafe { GetMessageW(&mut msg, None, 0, 0) }.0;
-                    if result == -1 {
-                        let error = windows::core::Error::from_thread();
-                        let _ = events.send(Event::Error(Message::WaitHotkeysFailed {
-                            error: Details::new(error),
-                        }));
-                        wake();
-                        break;
-                    }
-                    if result == 0 {
-                        break;
-                    }
-                    if msg.message == WM_COMMAND {
-                        for command in commands.try_iter() {
-                            let (reply, result) = match command {
-                                Command::Configure(revision, bindings, reply) => {
-                                    (reply, registered.configure(revision, bindings))
-                                }
-                                Command::Validate(key, reply) => (reply, registered.validate(key)),
-                            };
-                            let _ = reply.send(result);
-                        }
-                    } else if msg.message == WM_HOTKEY
-                        && let Some(index) = registered.bindings.iter().position(|binding| {
-                            binding.is_some_and(|key| Registration::id(key) == msg.wParam.0 as i32)
-                        })
-                    {
-                        let _ = events.send(Event::Trigger {
-                            index,
-                            revision: registered.revision,
-                        });
-                        wake();
-                    }
-                }
-                // Registrations are released here, on the thread that owns them.
-            })?;
-        let thread_id = started.recv().user_context(Text::HotkeyThreadStart)?;
+    /// Must be called on the thread that created `window`.
+    pub fn new(window: HWND, wake: impl Fn() + 'static) -> anyhow::Result<Self> {
+        let (sender, pressed) = mpsc::channel();
+        let subclass = Box::new(Subclass {
+            pressed: sender,
+            wake: Box::new(wake),
+        });
+        unsafe {
+            SetWindowSubclass(
+                window,
+                Some(window_proc),
+                0,
+                (&*subclass as *const Subclass) as usize,
+            )
+        }
+        .ok()?;
         Ok(Self {
-            sender,
-            receiver,
-            thread_id,
-            thread: Some(thread),
+            window,
+            registrations: HashMap::new(),
+            pressed,
+            _subclass: subclass,
         })
     }
 
-    fn request(
-        &self,
-        command: impl FnOnce(mpsc::Sender<anyhow::Result<()>>) -> Command,
-    ) -> anyhow::Result<()> {
-        let (reply, result) = mpsc::channel();
-        self.sender
-            .send(command(reply))
-            .user_context(Text::HotkeyThreadExited)?;
-        unsafe { PostThreadMessageW(self.thread_id, WM_COMMAND, WPARAM(0), LPARAM(0)) }
-            .user_context(Text::NotifyHotkeyThread)?;
-        result.recv().user_context(Text::HotkeyResultMissing)?
-    }
-
-    pub fn configure(&self, revision: u64, bindings: Vec<Option<Hotkey>>) -> anyhow::Result<()> {
-        self.request(|reply| Command::Configure(revision, bindings, reply))
+    pub fn configure(&mut self, keys: HashSet<Hotkey>) -> anyhow::Result<()> {
+        // Keep existing registrations until every new shortcut succeeds.
+        let added = keys
+            .iter()
+            .filter(|key| !self.registrations.contains_key(key))
+            .map(|&key| Ok((key, Registration::new(self.window, key)?)))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        self.registrations.retain(|key, _| keys.contains(key));
+        self.registrations.extend(added);
+        Ok(())
     }
 
     pub fn validate(&self, key: Hotkey) -> anyhow::Result<()> {
-        self.request(|reply| Command::Validate(key, reply))
+        if !self.registrations.contains_key(&key) {
+            drop(Registration::new(self.window, key)?);
+        }
+        Ok(())
     }
 }
 impl Drop for Hotkeys {
     fn drop(&mut self) {
-        if let Err(error) =
-            unsafe { PostThreadMessageW(self.thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) }
-        {
-            tracing::warn!("Failed to stop hotkey thread: {error}");
-            return;
+        self.registrations.clear();
+        let _ = unsafe { RemoveWindowSubclass(self.window, Some(window_proc), 0) };
+    }
+}
+
+unsafe extern "system" fn window_proc(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    subclass_id: usize,
+    data: usize,
+) -> LRESULT {
+    if message == WM_HOTKEY {
+        // The boxed data stays alive until `Hotkeys` removes this subclass.
+        let subclass = unsafe { &*(data as *const Subclass) };
+        let _ = subclass.pressed.send(Hotkey::from_id(wparam.0 as i32));
+        (subclass.wake)();
+        return LRESULT(0);
+    }
+    unsafe {
+        if message == WM_NCDESTROY {
+            let _ = RemoveWindowSubclass(window, Some(window_proc), subclass_id);
         }
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        DefSubclassProc(window, message, wparam, lparam)
     }
 }
 
@@ -320,13 +298,10 @@ impl HeldKeys {
     pub fn press(key: Hotkey) -> anyhow::Result<Self> {
         anyhow::ensure!(key.is_valid_for_hold(), Text::InvalidHoldKey);
         let mut held = Self::default();
-        let mut keys = Vec::new();
-        for (flag, vk) in [(2, 0x11), (4, 0x10), (1, 0x12), (8, 0x5b)] {
-            if key.modifiers & flag != 0 {
-                keys.push(vk);
-            }
-        }
-        keys.push(key.virtual_key_code);
+        let keys = key
+            .modifier_keys()
+            .map(|(_, vk, _)| vk.0)
+            .chain([key.virtual_key_code]);
         for vk in keys {
             // Never release a key the user was already holding themselves.
             if !is_key_down(vk) {

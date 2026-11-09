@@ -1,7 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
-    hotkeys::{self, Hotkey, Hotkeys},
+    hotkeys::{Hotkey, Hotkeys},
     i18n::{Details, Message, Text},
     settings::BindingTarget,
     soundboard::sound::SoundId,
@@ -19,6 +19,7 @@ pub struct CapturedBinding {
     pub key: Hotkey,
 }
 
+#[derive(Clone, Copy)]
 pub enum PlaybackAction {
     Stop,
     Random(Option<Hotkey>),
@@ -27,9 +28,8 @@ pub enum PlaybackAction {
 #[derive(Default)]
 pub struct HotkeyManager {
     listener: Option<Hotkeys>,
-    bindings: Vec<Option<Hotkey>>,
-    attempted_bindings: Vec<Option<Hotkey>>,
-    revision: u64,
+    /// Last key set sent to the hotkey thread, so a failure is not retried every frame.
+    attempted: HashSet<Hotkey>,
     capture: Option<KeyCapture>,
     registration_error: Message,
     pub message: Message,
@@ -37,24 +37,17 @@ pub struct HotkeyManager {
 }
 impl HotkeyManager {
     pub fn new(ctx: &egui::Context) -> Self {
-        let (listener, message) = match Hotkeys::new(super::wake_ui(ctx.clone())) {
-            Ok(listener) => (Some(listener), Message::default()),
-            Err(error) => (
-                None,
-                Message::EnableHotkeysFailed {
+        match Hotkeys::new(super::main_window(), super::wake_ui(ctx.clone())) {
+            Ok(listener) => Self {
+                listener: Some(listener),
+                ..Default::default()
+            },
+            Err(error) => Self {
+                message: Message::EnableHotkeysFailed {
                     error: Details::new(error),
                 },
-            ),
-        };
-        Self {
-            listener,
-            bindings: Vec::new(),
-            attempted_bindings: Vec::new(),
-            revision: 0,
-            capture: None,
-            registration_error: Message::default(),
-            message,
-            settings_message: Message::default(),
+                ..Default::default()
+            },
         }
     }
     pub fn target(&self) -> Option<BindingTarget> {
@@ -82,6 +75,9 @@ impl HotkeyManager {
     pub fn cancel_capture(&mut self) {
         self.capture = None;
     }
+    pub fn shutdown(&mut self) {
+        self.listener = None;
+    }
     pub fn validate(&self, key: Hotkey) -> anyhow::Result<()> {
         self.listener
             .as_ref()
@@ -91,60 +87,49 @@ impl HotkeyManager {
     pub fn poll(
         &mut self,
         enabled: bool,
-        bindings: impl IntoIterator<Item = Option<Hotkey>>,
+        shortcuts: impl IntoIterator<Item = (BindingTarget, Hotkey)>,
     ) -> Vec<PlaybackAction> {
-        let enabled = enabled && self.capture.is_none();
-        let bindings: Vec<_> = if enabled {
-            bindings.into_iter().collect()
-        } else {
-            Vec::new()
+        let Some(hotkeys) = &mut self.listener else {
+            return Vec::new();
         };
-        let changed = bindings != self.bindings;
-        let mut triggers = Vec::new();
-        if let Some(hotkeys) = &self.listener {
-            while let Ok(event) = hotkeys.receiver.try_recv() {
-                match event {
-                    hotkeys::Event::Trigger { index, revision }
-                        if enabled && !changed && revision == self.revision =>
-                    {
-                        triggers.push(index)
-                    }
-                    hotkeys::Event::Error(error) => self.registration_error = error,
-                    _ => {}
-                }
-            }
-            if bindings != self.attempted_bindings {
-                let revision = self.revision.wrapping_add(1);
-                match hotkeys.configure(revision, bindings.clone()) {
-                    Ok(()) => {
-                        self.revision = revision;
-                        self.bindings = bindings.clone();
-                        self.registration_error.clear();
-                    }
-                    Err(error) => self.registration_error = Message::error(error),
-                }
-                self.attempted_bindings = bindings;
-            }
-        }
-
-        // Stop takes precedence over playback queued in the same frame.
-        if triggers.contains(&0) {
-            vec![PlaybackAction::Stop]
-        } else {
-            triggers
+        let bindings: HashMap<Hotkey, PlaybackAction> = if enabled && self.capture.is_none() {
+            shortcuts
                 .into_iter()
-                .filter_map(|index| {
-                    if index == 1 {
-                        Some(PlaybackAction::Random(None))
-                    } else {
-                        self.bindings
-                            .get(index)
-                            .copied()
-                            .flatten()
-                            .map(|key| PlaybackAction::Random(Some(key)))
-                    }
+                .map(|(target, key)| {
+                    let action = match target {
+                        BindingTarget::Stop => PlaybackAction::Stop,
+                        BindingTarget::Random => PlaybackAction::Random(None),
+                        BindingTarget::Sound(_) | BindingTarget::Hold => {
+                            PlaybackAction::Random(Some(key))
+                        }
+                    };
+                    (key, action)
                 })
                 .collect()
+        } else {
+            HashMap::new()
+        };
+        let actions: Vec<_> = hotkeys
+            .pressed
+            .try_iter()
+            .filter_map(|key| bindings.get(&key).copied())
+            .collect();
+        let keys: HashSet<_> = bindings.into_keys().collect();
+        if keys != self.attempted {
+            match hotkeys.configure(keys.clone()) {
+                Ok(()) => self.registration_error.clear(),
+                Err(error) => self.registration_error = Message::error(error),
+            }
+            self.attempted = keys;
+        }
+        // Stop takes precedence over playback queued in the same frame.
+        if actions
+            .iter()
+            .any(|action| matches!(action, PlaybackAction::Stop))
+        {
+            vec![PlaybackAction::Stop]
+        } else {
+            actions
         }
     }
 
@@ -178,7 +163,7 @@ impl HotkeyManager {
         let target = capture.target;
         let ids = capture.ids.take();
         self.capture = None;
-        if key.virtual_key_code == 0x1b {
+        if key.is_escape() {
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             return None;
         }
@@ -191,12 +176,16 @@ impl HotkeyManager {
         Some(CapturedBinding { target, ids, key })
     }
 
-    pub fn capture_result(&mut self, target: BindingTarget, result: anyhow::Result<()>) {
-        let message = if matches!(target, BindingTarget::Sound(_)) {
+    fn message_for(&mut self, target: BindingTarget) -> &mut Message {
+        if matches!(target, BindingTarget::Sound(_)) {
             &mut self.message
         } else {
             &mut self.settings_message
-        };
+        }
+    }
+
+    pub fn capture_result(&mut self, target: BindingTarget, result: anyhow::Result<()>) {
+        let message = self.message_for(target);
         match result {
             Ok(()) => message.clear(),
             Err(error) => {
@@ -206,25 +195,14 @@ impl HotkeyManager {
         }
     }
 
-    pub fn begin_capture(&mut self, target: BindingTarget) {
+    /// `ids` binds every selected sound at once instead of only `target`.
+    pub fn begin_capture(&mut self, target: BindingTarget, ids: Option<HashSet<SoundId>>) {
         self.capture = Some(KeyCapture {
             target,
-            ids: None,
+            ids,
             armed: false,
             modifier: None,
         });
-        if matches!(target, BindingTarget::Sound(_)) {
-            self.message.clear();
-        } else {
-            self.settings_message.clear();
-        }
-    }
-
-    pub fn begin_batch_capture(&mut self, target: BindingTarget, ids: &HashSet<SoundId>) {
-        self.begin_capture(target);
-        self.capture
-            .as_mut()
-            .expect("UNREACHABLE: begin_capture should initialize capture")
-            .ids = Some(ids.clone());
+        self.message_for(target).clear();
     }
 }

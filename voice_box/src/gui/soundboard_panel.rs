@@ -123,7 +123,7 @@ impl SoundboardPanel {
                     .library()
                     .sounds
                     .iter()
-                    .filter_map(|sound| sound.hotkey),
+                    .map(|sound| sound.hotkey),
             )
         });
         match result {
@@ -322,7 +322,7 @@ impl SoundboardPanel {
                 .remove(&HashSet::from([id]), super::wake_ui(ctx.clone())),
             Action::Capture(target) => {
                 self.model.stop();
-                hotkeys.begin_capture(target);
+                hotkeys.begin_capture(target, None);
             }
             Action::ClearHotkey(index) => {
                 let id = self.model.library().sounds[index].id;
@@ -460,7 +460,7 @@ impl SoundboardPanel {
                     .position(|sound| ids.contains(&sound.id))
                 {
                     self.model.stop();
-                    hotkeys.begin_batch_capture(BindingTarget::Sound(index), &ids);
+                    hotkeys.begin_capture(BindingTarget::Sound(index), Some(ids));
                 }
                 ctx.request_repaint();
             }
@@ -531,7 +531,7 @@ impl SoundboardPanel {
             Action::Save(settings) => self.save_soundboard_settings(ctx, settings, jobs, hotkeys),
             Action::Capture(target) => {
                 self.model.stop();
-                hotkeys.begin_capture(target);
+                hotkeys.begin_capture(target, None);
                 ctx.request_repaint();
             }
         }
@@ -564,7 +564,7 @@ impl SoundboardPanel {
                     .library()
                     .sounds
                     .iter()
-                    .filter_map(|sound| sound.hotkey),
+                    .map(|sound| sound.hotkey),
                 capture.target,
                 capture.key,
             )

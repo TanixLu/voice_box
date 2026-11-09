@@ -57,10 +57,6 @@ catalog! {
     MicrophoneUnresponsive => ("No audio was received from the microphone. Check its connection and microphone permissions", "麦克风未返回音频，请检查设备连接和麦克风权限");
     NoRecordedAudio => ("No audio has been recorded yet. Wait before stopping the recording", "没有录到声音，请稍后再结束录音");
     InvalidKey => ("Invalid key", "无效按键");
-    HotkeyThreadStart => ("Failed to start the hotkey thread", "快捷键线程启动失败");
-    HotkeyThreadExited => ("The hotkey thread has exited", "快捷键线程已退出");
-    NotifyHotkeyThread => ("Cannot notify the hotkey thread", "无法通知快捷键线程");
-    HotkeyResultMissing => ("The hotkey thread did not return a result", "快捷键线程未返回结果");
     InvalidHoldKey => ("Invalid automatic hold key", "自动按键无效");
     UnsupportedArguments => ("Unsupported command-line arguments. Use the application window.", "不支持此命令行参数，请在窗口中操作。");
     AdministratorRequired => ("VoiceBox requires administrator privileges. Right-click and select “Run as administrator”.", "VoiceBox 需要管理员权限，请右键选择“以管理员身份运行”。");
@@ -261,6 +257,7 @@ catalog! {
     ShowMainWindow => ("Show main window", "显示主界面");
     Exit => ("Exit", "退出");
     CreateTray => ("Failed to create the tray icon", "创建托盘图标失败");
+    MainWindowUnavailable => ("Cannot access the main window", "无法获取主窗口");
     FullUninstall => ("Uninstall VoiceBox", "完全卸载");
     Startup => ("Start with Windows", "开机自启");
     StartupLabel => ("Startup", "自启");
