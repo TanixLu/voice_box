@@ -20,19 +20,21 @@ mod utils;
 
 use anyhow::ensure;
 use tracing::{error, info};
+use voice_box_shared::utils::win_try_create_named_mutex;
 
 use crate::{
     i18n::{LanguagePreference, Message, Text, set_language},
     startup::silent_start,
-    utils::{is_single_instance, win_is_admin, win_popup_error},
+    utils::{VOICE_BOX_SINGLE_INSTANCE, win_is_admin, win_popup_error},
 };
 
 fn main() {
-    match run() {
+    let silent = silent_start();
+    match run(silent) {
         Ok(_) => info!("VoiceBox exited successfully"),
         Err(err) => {
             error!("Application error: {err:?}");
-            if !silent_start() {
+            if !silent {
                 win_popup_error(&Message::error(err).text());
             }
             std::process::exit(1);
@@ -40,13 +42,15 @@ fn main() {
     }
 }
 
-fn run() -> anyhow::Result<()> {
+fn run(silent: bool) -> anyhow::Result<()> {
     set_language(LanguagePreference::System.resolve());
     ensure!(win_is_admin(), Text::AdministratorRequired);
-    ensure!(is_single_instance()?, Text::AnotherInstance);
+    // Held until the GUI exits; the uninstall cleanup opens it before then.
+    let instance = win_try_create_named_mutex(VOICE_BOX_SINGLE_INSTANCE)?;
+    ensure!(instance.is_some(), Text::AnotherInstance);
     logging::init()?;
     database::init()?;
     let settings = settings::Settings::load()?;
     set_language(settings.language_preference.resolve());
-    gui::run(settings, silent_start())
+    gui::run(settings, silent)
 }

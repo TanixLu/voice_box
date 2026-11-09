@@ -2,6 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use windows::Win32::Foundation::HWND;
+
 use crate::{
     hotkeys::{self, Hotkeys},
     i18n::{Details, Message, Text},
@@ -24,8 +26,8 @@ pub struct HotkeyManager {
     error: Message,
 }
 impl HotkeyManager {
-    pub fn new(ctx: &egui::Context) -> Self {
-        match Hotkeys::new(super::main_window(), super::wake_ui(ctx.clone())) {
+    pub fn new(ctx: &egui::Context, window: HWND) -> Self {
+        match Hotkeys::new(window, super::wake_ui(ctx.clone())) {
             Ok(listener) => Self {
                 listener: Some(listener),
                 ..Default::default()

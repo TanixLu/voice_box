@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use anyhow::ensure;
+use windows::Win32::Foundation::HWND;
 
 use crate::{
     devices::{self, Microphone, Speaker},
@@ -44,11 +45,11 @@ pub struct SoundboardPanel {
 }
 
 impl SoundboardPanel {
-    pub fn new(ctx: &egui::Context, library: Library, prefs: &Prefs) -> Self {
+    pub fn new(ctx: &egui::Context, window: HWND, library: Library, prefs: &Prefs) -> Self {
         Self {
             model: Soundboard::new(library, prefs),
             prefs: prefs.clone(),
-            hotkeys: HotkeyManager::new(ctx),
+            hotkeys: HotkeyManager::new(ctx, window),
             settings: SoundSettings::default(),
             settings_error: Message::default(),
             capture_message: Message::default(),

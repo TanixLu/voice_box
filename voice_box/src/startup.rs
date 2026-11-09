@@ -1,6 +1,6 @@
 //! One machine-wide, administrator-managed logon task; the database owns its intent.
 
-use std::{os::windows::fs::MetadataExt, path::Path, sync::OnceLock};
+use std::{os::windows::fs::MetadataExt, path::Path};
 
 use anyhow::{Context, ensure};
 use windows::{
@@ -48,8 +48,7 @@ macro_rules! get {
 }
 
 pub fn silent_start() -> bool {
-    static SILENT_START: OnceLock<bool> = OnceLock::new();
-    *SILENT_START.get_or_init(|| std::env::args().any(|arg| arg == SILENT_START_ARG))
+    std::env::args().any(|arg| arg == SILENT_START_ARG)
 }
 
 /// Returns true only when an enabled task was registered or repaired.

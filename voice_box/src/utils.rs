@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, os::windows::io::OwnedHandle, rc::Rc, sync::OnceLock};
+use std::{marker::PhantomData, rc::Rc};
 
 use serde::{Deserialize, Serialize};
 use windows::{
@@ -17,7 +17,7 @@ use windows::{
 };
 use windows_core::{PCWSTR, w};
 
-use voice_box_shared::utils::{wide_null, win_try_create_named_mutex};
+use voice_box_shared::utils::wide_null;
 
 pub const VOICE_BOX_SINGLE_INSTANCE: &str = r"Global\VoiceBoxSingleInstance";
 
@@ -132,14 +132,4 @@ pub fn win_popup_error(msg: &str) {
 
 pub fn win_is_admin() -> bool {
     unsafe { IsUserAnAdmin().as_bool() }
-}
-
-pub fn is_single_instance() -> anyhow::Result<bool> {
-    static SINGLE_INSTANCE: OnceLock<windows::core::Result<Option<OwnedHandle>>> = OnceLock::new();
-
-    let single_instance = SINGLE_INSTANCE
-        .get_or_init(|| win_try_create_named_mutex(VOICE_BOX_SINGLE_INSTANCE))
-        .as_ref()?;
-
-    Ok(single_instance.is_some())
 }

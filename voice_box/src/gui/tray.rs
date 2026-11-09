@@ -52,9 +52,7 @@ struct Data {
 }
 
 impl Tray {
-    pub fn new(ctx: &egui::Context, start_in_tray: bool) -> anyhow::Result<Self> {
-        let window = super::main_window();
-
+    pub fn new(ctx: &egui::Context, window: HWND, start_in_tray: bool) -> anyhow::Result<Self> {
         let (sender, receiver) = mpsc::channel();
         unsafe {
             // LR_SHARED leaves the embedded icon owned by the executable module.

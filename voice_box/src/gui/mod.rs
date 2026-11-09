@@ -14,8 +14,6 @@ mod tray;
 mod voice;
 mod widgets;
 
-use std::sync::OnceLock;
-
 use egui_winit::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use strum::IntoEnumIterator;
 use voice_box_shared::{apo_cfg::ApoCfg, utils::ui_state_path};
@@ -37,23 +35,12 @@ fn wake_ui(ctx: egui::Context) -> impl Fn() + Clone + Send + 'static {
     move || ctx.request_repaint()
 }
 
-/// Root window handle; eframe keeps one root window for the whole run on Windows.
-static MAIN_WINDOW: OnceLock<isize> = OnceLock::new();
-
-fn record_main_window(cc: &eframe::CreationContext<'_>) -> anyhow::Result<()> {
+/// The root window, which eframe keeps for the whole run, for Win32 features that deliver messages to it.
+fn main_window(cc: &eframe::CreationContext<'_>) -> anyhow::Result<HWND> {
     let RawWindowHandle::Win32(handle) = cc.window_handle()?.as_raw() else {
         anyhow::bail!("Expected a Win32 window");
     };
-    let _ = MAIN_WINDOW.set(handle.hwnd.get());
-    Ok(())
-}
-
-/// The main window, for Win32 features that deliver messages to it.
-fn main_window() -> HWND {
-    let handle = MAIN_WINDOW
-        .get()
-        .expect("UNREACHABLE: the main window is recorded before the app is built");
-    HWND(*handle as _)
+    Ok(HWND(handle.hwnd.get() as _))
 }
 
 fn close_to_tray(ctx: &egui::Context, exiting: bool, tray_available: bool) {
@@ -135,7 +122,8 @@ struct VoiceBoxApp {
     microphones: MicrophonePanel,
     voice: VoicePanel,
     soundboard: SoundboardPanel,
-    start_in_tray: bool,
+    /// Launched hidden and not yet shown; cleared on the first tray "Show".
+    first_show_pending: bool,
     tray: tray::Tray,
     show_licenses: bool,
     notice: Option<(Text, Message)>,
@@ -150,21 +138,21 @@ impl VoiceBoxApp {
         start_in_tray: bool,
     ) -> anyhow::Result<Self> {
         let ctx = &cc.egui_ctx;
-        record_main_window(cc).user_context(Text::MainWindowUnavailable)?;
-        let tray = tray::Tray::new(ctx, start_in_tray).user_context(Text::CreateTray)?;
+        let window = main_window(cc).user_context(Text::MainWindowUnavailable)?;
+        let tray = tray::Tray::new(ctx, window, start_in_tray).user_context(Text::CreateTray)?;
         ctx.set_theme(settings.theme_preference);
         apply_style(ctx);
         fonts::install(ctx);
         let mut app = Self {
             tab: Tab::Voice,
-            soundboard: SoundboardPanel::new(ctx, library, &settings.soundboard),
+            soundboard: SoundboardPanel::new(ctx, window, library, &settings.soundboard),
             settings,
             settings_save: None,
             startup: Startup::Pending,
             lifecycle: Lifecycle::Running,
             microphones: MicrophonePanel::default(),
             voice: VoicePanel::new(apo_config),
-            start_in_tray,
+            first_show_pending: start_in_tray,
             tray,
             show_licenses: false,
             notice: None,
@@ -255,7 +243,7 @@ impl VoiceBoxApp {
             };
             if let Some(message) = message {
                 self.notice = Some((Text::Startup, message));
-                if !self.start_in_tray {
+                if !self.first_show_pending {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                 }
@@ -500,7 +488,7 @@ impl eframe::App for VoiceBoxApp {
             match action {
                 tray::Action::Show => {
                     // eframe may already consider its suppressed first show visible.
-                    if std::mem::take(&mut self.start_in_tray) {
+                    if std::mem::take(&mut self.first_show_pending) {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                     }
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
