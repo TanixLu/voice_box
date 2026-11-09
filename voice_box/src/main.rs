@@ -45,13 +45,13 @@ fn main() {
 
 fn run(silent: bool) -> anyhow::Result<()> {
     set_language(LanguagePreference::System.resolve());
+    let settings = settings::Settings::load()?;
+    set_language(settings.language_preference.resolve());
     ensure!(win_is_admin(), Text::AdministratorRequired);
     // Held until the GUI exits; the uninstall cleanup opens it before then.
     let instance = win_try_create_named_mutex(VOICE_BOX_SINGLE_INSTANCE)?;
     ensure!(instance.is_some(), Text::AnotherInstance);
     logging::init()?;
     database::init()?;
-    let settings = settings::Settings::load()?;
-    set_language(settings.language_preference.resolve());
     gui::run(settings, silent)
 }
