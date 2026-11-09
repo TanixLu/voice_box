@@ -114,6 +114,7 @@ catalog! {
     Close => ("Close", "关闭");
     InvalidHotkey => ("Invalid hotkey", "无效快捷键");
     HoldKeyConflict => ("The automatic hold key cannot use the same primary key as a play or stop shortcut", "自动按键不能与播放或停止快捷键使用同一个主键");
+    LoadAppSettingsFailed => ("Failed to load application settings", "加载应用设置失败");
     SaveAppSettingsFailed => ("Failed to save application settings", "保存应用设置失败");
     SaveSoundLibrary => ("Failed to save sound library metadata", "保存音效库元数据失败");
     OpenSoundSettingsFirst => ("Open sound settings first", "请先打开音效设置");

@@ -3,7 +3,6 @@
 pub mod audio;
 mod codecs;
 mod maintenance;
-pub mod settings;
 pub mod sounds;
 
 use std::time::Duration;

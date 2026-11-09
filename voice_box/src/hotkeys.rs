@@ -2,6 +2,7 @@
 
 use std::{mem::size_of, sync::mpsc, thread::JoinHandle};
 
+use serde::{Deserialize, Serialize};
 use windows::Win32::{
     Foundation::{LPARAM, WPARAM},
     System::Threading::GetCurrentThreadId,
@@ -18,7 +19,7 @@ use crate::i18n::{Details, Message, Text, UserContext, current_language};
 
 const SIMULATED_INPUT_TAG: usize = 0x5642_4b59;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct Hotkey {
     pub virtual_key_code: u16,
     pub modifiers: u32,

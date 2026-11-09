@@ -4,6 +4,7 @@ mod text;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use num_enum::{IntoPrimitive, TryFromPrimitive};
+use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
 pub use crate::i18n::{
@@ -29,7 +30,7 @@ pub fn set_language(language: Language) {
     LANGUAGE.store(language.into(), Ordering::Relaxed);
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, EnumIter)]
+#[derive(Clone, Copy, PartialEq, Eq, EnumIter, Deserialize, Serialize)]
 pub enum LanguagePreference {
     System,
     English,

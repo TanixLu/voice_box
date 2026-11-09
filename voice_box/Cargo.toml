@@ -14,13 +14,14 @@ eframe = { version = "0.37", default-features = false, features = [
     "persistence",
     "system_fonts",
 ] }
-egui = { version = "0.37", default-features = false }
-egui-winit = { version = "0.37", default-features = false, features = ["serde"] }
+egui = { version = "0.37", default-features = false, features = ["serde"] }
+egui-winit = { version = "0.37", default-features = false }
 lz4_flex.workspace = true
 num_enum.workspace = true
 restart-manager = "0.1.0"
 rusqlite = { version = "0.41.0", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 strum.workspace = true
 symphonia = { version = "0.6.1", default-features = false, features = [
     "mp3",

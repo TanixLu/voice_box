@@ -157,19 +157,23 @@ pub fn apo_cfg_path() -> &'static Path {
 }
 pub fn database_path() -> &'static Path {
     static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| data_dir().join("voice_box.db"))
+    CACHE.get_or_init(|| data_dir().join("data.db"))
 }
 pub fn ui_state_path() -> &'static Path {
     static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| data_dir().join("voice_box.ron"))
+    CACHE.get_or_init(|| data_dir().join("ui.ron"))
+}
+pub fn settings_path() -> &'static Path {
+    static CACHE: OnceLock<PathBuf> = OnceLock::new();
+    CACHE.get_or_init(|| data_dir().join("settings.json"))
 }
 pub fn log_path() -> &'static Path {
     static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| data_dir().join("voice_box.log"))
+    CACHE.get_or_init(|| data_dir().join("app.log"))
 }
 pub fn rotated_log_path() -> &'static Path {
     static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| data_dir().join("voice_box.log.1"))
+    CACHE.get_or_init(|| data_dir().join("app.log.1"))
 }
 
 pub fn win_qpf() -> i64 {

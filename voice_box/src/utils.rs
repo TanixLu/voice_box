@@ -1,5 +1,6 @@
 use std::{marker::PhantomData, os::windows::io::OwnedHandle, rc::Rc, sync::OnceLock};
 
+use serde::{Deserialize, Serialize};
 use windows::{
     Win32::{
         Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME},
@@ -20,8 +21,14 @@ use voice_box_shared::utils::{wide_null, win_try_create_named_mutex};
 
 pub const VOICE_BOX_SINGLE_INSTANCE: &str = r"Global\VoiceBoxSingleInstance";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct GainPercent(u16);
+
+impl<'de> Deserialize<'de> for GainPercent {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        u16::deserialize(deserializer).map(Self::new)
+    }
+}
 
 impl GainPercent {
     pub const MAX_VALUE: u16 = 200;
