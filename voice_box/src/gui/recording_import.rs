@@ -1,7 +1,7 @@
 use crate::{
     audio::loopback::MAX_RECORD_SECONDS,
     gui::widgets::{ButtonIcon, hint, icon_button, warning},
-    i18n::{Message, Text},
+    i18n::{Details, Message, Text},
     soundboard::{
         recording::{Activity, Edge, Recorder, Selection},
         sound::{Sound, is_valid_name},
@@ -14,6 +14,7 @@ pub struct RecordingImport {
     selection: Option<Selection>,
     name: String,
     dragging: Option<Edge>,
+    error: Message,
 }
 impl RecordingImport {
     pub fn saving(&self) -> bool {
@@ -23,8 +24,14 @@ impl RecordingImport {
     // Called in app logic, including when the main viewport is hidden.
     pub fn poll(&mut self, ctx: &egui::Context) -> Option<Sound> {
         let had_clip = self.recorder.clip.is_some();
-        if let Some(sound) = self.recorder.poll(super::wake_ui(ctx.clone())) {
-            return Some(sound);
+        match self.recorder.poll(super::wake_ui(ctx.clone())) {
+            Ok(Some(sound)) => return Some(sound),
+            Ok(None) => {}
+            Err(error) => {
+                self.error = Message::OperationFailed {
+                    error: Details::new(error),
+                }
+            }
         }
         if !had_clip && let Some(clip) = &self.recorder.clip {
             self.selection = Some(Selection::full(&clip.audio));
@@ -71,9 +78,9 @@ impl RecordingImport {
                         self.record_ui(ui);
                         ui.add_space(8.0);
                         self.editor_ui(ui);
-                        if !self.recorder.error.is_empty() {
+                        if !self.error.is_empty() {
                             ui.add_space(8.0);
-                            warning(ui, &self.recorder.error.text());
+                            warning(ui, &self.error.text());
                         }
                     });
                 ui.add_space(12.0);
@@ -101,6 +108,7 @@ impl RecordingImport {
                 if recording {
                     self.recorder.stop();
                 } else {
+                    self.error.clear();
                     self.recorder.record(super::wake_ui(ui.ctx().clone()));
                     self.selection = None;
                     self.dragging = None;
@@ -213,9 +221,11 @@ impl RecordingImport {
             if previewing {
                 self.recorder.stop();
             } else {
+                self.error.clear();
                 self.recorder.queue_preview(selection.range(), true);
             }
         } else if let Some(edge) = changed {
+            self.error.clear();
             self.recorder
                 .queue_preview(selection.preview(edge, rate), false);
         }
@@ -237,6 +247,7 @@ impl RecordingImport {
                 )
                 .clicked()
             {
+                self.error.clear();
                 self.recorder.save(selection, self.name.clone());
             }
             if saving {

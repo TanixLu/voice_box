@@ -3,14 +3,21 @@ use voice_box_shared::{apo_cfg::ApoCfg, utils::GainDb};
 use crate::{
     audio::session::{Activity, AudioSession},
     devices::Microphone,
-    gui::widgets::{hint, trailing_button, warning},
-    i18n::{Message, Text},
+    gui::{
+        wake_ui,
+        widgets::{hint, trailing_button, warning},
+    },
+    i18n::{Details, Message, Text},
+    task::{self, Task},
 };
 
 pub struct VoicePanel {
     config: ApoCfg,
     saved: ApoCfg,
-    pub session: AudioSession,
+    save: Option<Task<ApoCfg>>,
+    save_error: Message,
+    session: AudioSession,
+    preview_error: Message,
 }
 
 impl VoicePanel {
@@ -18,15 +25,37 @@ impl VoicePanel {
         Self {
             saved: config.clone(),
             config,
+            save: None,
+            save_error: Message::default(),
             session: AudioSession::default(),
+            preview_error: Message::default(),
         }
     }
-    pub fn mark_saved(&mut self, config: ApoCfg) {
-        self.saved = config;
+    pub fn saving(&self) -> bool {
+        self.save.is_some()
     }
-    pub fn config_ui(&mut self, ui: &mut egui::Ui, busy: bool) -> Option<ApoCfg> {
+    pub fn previewing(&self) -> bool {
+        self.session.busy()
+    }
+    pub fn poll(&mut self) {
+        match task::finished(&mut self.save) {
+            Some(Ok(config)) => self.saved = config,
+            Some(Err(error)) => {
+                self.save_error = Message::OperationFailed {
+                    error: Details::new(error),
+                }
+            }
+            None => {}
+        }
+        if let Some(Err(error)) = self.session.poll() {
+            self.preview_error = Message::PreviewFailed {
+                error: Details::new(error),
+            };
+        }
+    }
+    pub fn config_ui(&mut self, ui: &mut egui::Ui) {
         let defaults = ApoCfg::default();
-        let mut save_requested = false;
+        let busy = self.saving();
         ui.strong(Text::VoiceConfig.text());
         ui.add_enabled_ui(!busy, |ui| {
             ui.checkbox(
@@ -102,7 +131,16 @@ impl VoicePanel {
                 .add_enabled(!busy && dirty, egui::Button::new(Text::SaveChanges.text()))
                 .clicked()
             {
-                save_requested = true;
+                let config = self.config.clone();
+                self.save_error.clear();
+                self.save = Some(Task::run(
+                    "VoiceBoxApoCfgSave",
+                    wake_ui(ui.ctx().clone()),
+                    move || {
+                        config.save()?;
+                        Ok(config)
+                    },
+                ));
             }
             if ui
                 .add_enabled(!busy && dirty, egui::Button::new(Text::UndoChanges.text()))
@@ -120,12 +158,13 @@ impl VoicePanel {
                 self.config = defaults;
             }
         });
-        if self.config != self.saved {
+        if !self.save_error.is_empty() {
+            warning(ui, &self.save_error.text());
+        } else if self.config != self.saved {
             warning(ui, Text::UnsavedVoiceConfig.text());
         } else {
             hint(ui, Text::VoiceConfigApplied.text());
         }
-        save_requested.then(|| self.config.clone())
     }
 
     pub fn recording_ui(&mut self, ui: &mut egui::Ui, busy: bool, microphone: Option<&Microphone>) {
@@ -150,8 +189,9 @@ impl VoicePanel {
                 if activity == Some(Activity::Recording) {
                     self.session.stop();
                 } else if let Some(mic) = microphone {
+                    self.preview_error.clear();
                     self.session
-                        .record(mic.device_id.clone(), super::wake_ui(ui.ctx().clone()));
+                        .record(mic.device_id.clone(), wake_ui(ui.ctx().clone()));
                 }
             }
             if ui
@@ -170,7 +210,8 @@ impl VoicePanel {
                 if activity == Some(Activity::PlayingOriginal) {
                     self.session.stop();
                 } else {
-                    self.session.play(None, super::wake_ui(ui.ctx().clone()));
+                    self.preview_error.clear();
+                    self.session.play(None, wake_ui(ui.ctx().clone()));
                 }
             }
             // Place processed playback at the right on normal window sizes;
@@ -192,8 +233,9 @@ impl VoicePanel {
                 if activity == Some(Activity::PlayingProcessed) {
                     self.session.stop();
                 } else {
+                    self.preview_error.clear();
                     self.session
-                        .play(Some(self.config.clone()), super::wake_ui(ui.ctx().clone()));
+                        .play(Some(self.config.clone()), wake_ui(ui.ctx().clone()));
                 }
             }
         });
@@ -209,21 +251,19 @@ impl VoicePanel {
                 }
                 .text(),
             );
-        } else if self.session.failed {
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(self.session.message.text())
-                        .color(ui.visuals().error_fg_color),
-                )
-                .wrap(),
-            );
-        } else if !self.session.message.is_empty() {
+        } else if !self.preview_error.is_empty() {
+            warning(ui, &self.preview_error.text());
+        } else if let Some(activity) = self.session.activity().filter(|_| self.session.starting()) {
             ui.horizontal(|ui| {
-                if self.session.busy() {
-                    ui.spinner();
-                }
-                ui.add(egui::Label::new(self.session.message.text()).wrap());
+                ui.spinner();
+                ui.label(match activity {
+                    Activity::Recording => Text::OpeningMicrophone.text(),
+                    Activity::PlayingOriginal => Text::OpeningPlaybackDevice.text(),
+                    Activity::PlayingProcessed => Text::PreparingProcessedAudio.text(),
+                });
             });
+        } else if let Some(duration_secs) = self.session.recording_duration_secs() {
+            ui.label(Message::Recorded { duration_secs }.text());
         }
     }
 }

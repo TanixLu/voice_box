@@ -2,7 +2,6 @@ mod batch_rename;
 mod dialogs;
 mod fonts;
 mod hotkey_binding;
-mod jobs;
 mod microphone;
 mod overlay;
 mod picker;
@@ -25,17 +24,17 @@ use windows::Win32::Foundation::HWND;
 use crate::{
     gui::{
         hotkey_binding::{HotkeyManager, PlaybackAction},
-        jobs::{JobResult, Jobs},
         microphone::MicrophonePanel,
         soundboard_panel::SoundboardPanel,
         style::apply_style,
         voice::VoicePanel,
         widgets::section,
     },
-    i18n::{Details, LanguagePreference, Message, Text, UserContext},
-    settings,
+    i18n::{self, Details, LanguagePreference, Message, Text, UserContext},
+    settings::Settings,
     soundboard::library::Library,
     static_data::ICON_PNG_DATA,
+    task::{self, Task},
 };
 
 fn wake_ui(ctx: egui::Context) -> impl Fn() + Clone + Send + 'static {
@@ -70,8 +69,11 @@ fn close_to_tray(ctx: &egui::Context, exiting: bool, tray_available: bool) {
     }
 }
 
-pub fn run(settings: settings::Settings, start_in_tray: bool) -> anyhow::Result<()> {
-    let apo_config = ApoCfg::read()?;
+pub fn run(settings: Settings, start_in_tray: bool) -> anyhow::Result<()> {
+    let apo_config = ApoCfg::load().unwrap_or_else(|error| {
+        tracing::warn!("Failed to load the APO configuration; using defaults: {error:#}");
+        ApoCfg::default()
+    });
     let library = Library::try_load()?;
     let icon = eframe::icon_data::from_png_bytes(ICON_PNG_DATA)?;
     let options = eframe::NativeOptions {
@@ -113,23 +115,35 @@ enum Tab {
     Soundboard,
 }
 
+/// The logon task's state; a notice is shown once a sync finishes.
+enum Startup {
+    Pending,
+    Syncing(Task<bool>, Option<Text>),
+    Synced,
+    Unsynced,
+}
+
+enum Lifecycle {
+    Running,
+    ConfirmUninstall,
+    Uninstalling(Task<()>),
+    Exiting,
+}
+
 struct VoiceBoxApp {
     tab: Tab,
+    settings: Settings,
+    settings_save: Option<Task<Settings>>,
+    startup: Startup,
+    lifecycle: Lifecycle,
     microphones: MicrophonePanel,
     voice: VoicePanel,
     soundboard: SoundboardPanel,
     hotkeys: HotkeyManager,
-    jobs: Jobs,
-    startup_pending: bool,
-    startup_synchronized: bool,
-    startup_message: Option<Message>,
     start_in_tray: bool,
     tray: tray::Tray,
-    exit_requested: bool,
-    confirm_full_uninstall: bool,
-    uninstalling: bool,
-    uninstall_requested: bool,
     show_licenses: bool,
+    notice: Option<(Text, Message)>,
     overlay: overlay::Overlay,
     overlay_visible: bool,
 }
@@ -138,7 +152,7 @@ impl VoiceBoxApp {
     fn new(
         cc: &eframe::CreationContext<'_>,
         apo_config: ApoCfg,
-        settings: settings::Settings,
+        settings: Settings,
         library: Library,
         start_in_tray: bool,
     ) -> anyhow::Result<Self> {
@@ -150,65 +164,143 @@ impl VoiceBoxApp {
         fonts::install(ctx);
         let mut app = Self {
             tab: Tab::Voice,
-            microphones: MicrophonePanel::new(None),
+            soundboard: SoundboardPanel::new(library, &settings),
+            settings,
+            settings_save: None,
+            startup: Startup::Pending,
+            lifecycle: Lifecycle::Running,
+            microphones: MicrophonePanel::default(),
             voice: VoicePanel::new(apo_config),
-            soundboard: SoundboardPanel::new(settings, library),
             hotkeys: HotkeyManager::new(ctx),
-            jobs: Jobs::default(),
-            startup_pending: true,
-            startup_synchronized: false,
-            startup_message: None,
             start_in_tray,
             tray,
-            exit_requested: false,
-            confirm_full_uninstall: false,
-            uninstalling: false,
-            uninstall_requested: false,
             show_licenses: false,
+            notice: None,
             overlay: overlay::Overlay::default(),
             overlay_visible: false,
         };
-        app.microphones.refresh(ctx, &mut app.jobs);
+        app.microphones.refresh(ctx);
         Ok(app)
     }
 
+    /// Background work is running, or the app is going away.
     fn interaction_blocked(&self) -> bool {
-        self.soundboard.interaction_blocked(&self.jobs)
-            || self.uninstalling
-            || self.uninstall_requested
+        self.settings_save.is_some()
+            || matches!(self.startup, Startup::Syncing(..))
+            || self.microphones.busy()
+            || self.voice.saving()
+            || self.soundboard.busy()
+            || matches!(
+                self.lifecycle,
+                Lifecycle::Uninstalling(_) | Lifecycle::Exiting
+            )
     }
 
     fn request_exit(&mut self, ctx: &egui::Context) {
         if !self.interaction_blocked() {
-            self.exit_requested = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.exit(ctx);
+        }
+    }
+
+    fn exit(&mut self, ctx: &egui::Context) {
+        self.lifecycle = Lifecycle::Exiting;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    fn save_settings(&mut self, ctx: &egui::Context, settings: Settings) {
+        if self.settings_save.is_none() {
+            let task = Task::run("VoiceBoxSettingsSave", wake_ui(ctx.clone()), move || {
+                settings.save()?;
+                Ok(settings)
+            });
+            self.settings_save = Some(task);
+        }
+    }
+
+    fn apply_settings(&mut self, ctx: &egui::Context, settings: Settings) {
+        let startup_changed = settings.startup_enabled != self.settings.startup_enabled;
+        ctx.set_theme(settings.theme_preference);
+        i18n::set_language(settings.language_preference.resolve());
+        self.soundboard.apply_settings(&settings);
+        self.settings = settings;
+        if startup_changed {
+            let notice = self
+                .settings
+                .startup_enabled
+                .then_some(Text::StartupRegistered);
+            self.synchronize_startup(ctx, notice);
         }
     }
 
     fn synchronize_startup(&mut self, ctx: &egui::Context, notice: Option<Text>) {
-        let enabled = self.soundboard.model.settings.startup_enabled;
-        self.startup_synchronized = false;
-        if !self
-            .jobs
-            .begin(ctx, Text::SyncStartup, move || JobResult::Startup {
-                result: crate::startup::synchronize_startup(enabled),
-                notice,
-            })
-        {
-            self.startup_message = Some(self.jobs.status.clone());
+        let enabled = self.settings.startup_enabled;
+        let task = Task::run("VoiceBoxStartupSync", wake_ui(ctx.clone()), move || {
+            crate::startup::synchronize_startup(enabled)
+        });
+        self.startup = Startup::Syncing(task, notice);
+    }
+
+    fn poll(&mut self, ctx: &egui::Context) {
+        match task::finished(&mut self.settings_save) {
+            Some(Ok(settings)) => self.apply_settings(ctx, settings),
+            Some(Err(error)) => self.notice = Some((Text::Settings, Message::error(error))),
+            None => {}
         }
+        if let Startup::Syncing(task, notice) = &mut self.startup
+            && let Some(result) = task.poll()
+        {
+            let notice = *notice;
+            self.startup = if result.is_ok() {
+                Startup::Synced
+            } else {
+                Startup::Unsynced
+            };
+            let message = match result {
+                Ok(changed) if changed || notice.is_some() => {
+                    Some(notice.unwrap_or(Text::StartupReRegistered).into())
+                }
+                Ok(_) => None,
+                Err(error) => Some(Message::error(error)),
+            };
+            if let Some(message) = message {
+                self.notice = Some((Text::Startup, message));
+                if !self.start_in_tray {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                }
+            }
+        }
+        if let Lifecycle::Uninstalling(task) = &mut self.lifecycle
+            && let Some(result) = task.poll()
+        {
+            match result {
+                Ok(()) => self.exit(ctx),
+                Err(error) => {
+                    self.lifecycle = Lifecycle::Running;
+                    let error = Message::UninstallFailed {
+                        error: Details::new(error),
+                    };
+                    self.notice = Some((Text::UninstallVoiceBox, error));
+                }
+            }
+        }
+        self.microphones.poll();
+        self.voice.poll();
+        self.soundboard.poll(ctx);
     }
 
     fn startup_ui(&mut self, ui: &mut egui::Ui) {
-        let previous = self.soundboard.model.settings.startup_enabled;
+        let previous = self.settings.startup_enabled;
         let mut enabled = previous;
         ui.label(Text::StartupLabel.text());
+        let pending = matches!(self.startup, Startup::Pending);
+        let synced = matches!(self.startup, Startup::Synced);
         let retry = ui
-            .add_enabled_ui(!self.startup_pending && !self.interaction_blocked(), |ui| {
+            .add_enabled_ui(!pending && !self.interaction_blocked(), |ui| {
                 ui.selectable_value(&mut enabled, true, Text::StartupOn.text());
                 ui.selectable_value(&mut enabled, false, Text::StartupOff.text());
-                if !self.startup_synchronized {
+                if !synced {
                     ui.label(Text::StartupNotSynced.text());
                     return ui.button(Text::RetryStartup.text()).clicked();
                 }
@@ -216,11 +308,11 @@ impl VoiceBoxApp {
             })
             .inner;
         if previous != enabled {
-            let mut settings = self.soundboard.model.settings.clone();
-            settings.startup_enabled = enabled;
-            if !self.jobs.save_settings(ui.ctx(), settings) {
-                self.startup_message = Some(self.jobs.status.clone());
-            }
+            let settings = Settings {
+                startup_enabled: enabled,
+                ..self.settings.clone()
+            };
+            self.save_settings(ui.ctx(), settings);
             ui.close();
         } else if retry {
             self.synchronize_startup(ui.ctx(), enabled.then_some(Text::StartupRegistered));
@@ -230,8 +322,7 @@ impl VoiceBoxApp {
 
     fn theme_ui(&mut self, ui: &mut egui::Ui) {
         use egui::ThemePreference;
-        let previous = self.soundboard.model.settings.theme_preference;
-        let mut theme_preference = previous;
+        let mut theme_preference = self.settings.theme_preference;
         ui.label(Text::ThemeLabel.text());
         for (preference, label) in [
             (ThemePreference::System, Text::FollowSystem),
@@ -240,29 +331,31 @@ impl VoiceBoxApp {
         ] {
             ui.selectable_value(&mut theme_preference, preference, label.text());
         }
-        if previous != theme_preference {
-            let mut settings = self.soundboard.model.settings.clone();
-            settings.theme_preference = theme_preference;
-            self.jobs.save_settings(ui.ctx(), settings);
+        if theme_preference != self.settings.theme_preference {
+            let settings = Settings {
+                theme_preference,
+                ..self.settings.clone()
+            };
+            self.save_settings(ui.ctx(), settings);
         }
     }
 
     fn language_ui(&mut self, ui: &mut egui::Ui) {
-        let previous = self.soundboard.model.settings.language_preference;
-        let mut language_preference = previous;
+        let mut language_preference = self.settings.language_preference;
         ui.label(Text::LanguageLabel.text());
         for preference in LanguagePreference::iter() {
             ui.selectable_value(&mut language_preference, preference, preference.text());
         }
-        if previous != language_preference {
-            let mut settings = self.soundboard.model.settings.clone();
-            settings.language_preference = language_preference;
-            self.jobs.save_settings(ui.ctx(), settings);
+        if language_preference != self.settings.language_preference {
+            let settings = Settings {
+                language_preference,
+                ..self.settings.clone()
+            };
+            self.save_settings(ui.ctx(), settings);
         }
     }
 
     fn more_menu_ui(&mut self, ui: &mut egui::Ui) {
-        // Placeholder for future implementation of the "More" menu functionality.
         let more = ui.button(Text::More.text());
         egui::Popup::menu(&more)
             .align(egui::RectAlign::BOTTOM)
@@ -282,14 +375,14 @@ impl VoiceBoxApp {
                 if ui
                     .add_enabled(
                         !self.interaction_blocked()
-                            && !self.voice.session.busy()
-                            && !self.soundboard.model.playing(),
+                            && !self.voice.previewing()
+                            && !self.soundboard.model().playing(),
                         egui::Button::new(Text::FullUninstall.text()),
                     )
                     .clicked()
                 {
                     self.microphones.cancel_uninstall();
-                    self.confirm_full_uninstall = true;
+                    self.lifecycle = Lifecycle::ConfirmUninstall;
                     ui.close();
                 }
                 if ui.button(Text::Licenses.text()).clicked() {
@@ -322,31 +415,20 @@ impl VoiceBoxApp {
                         egui::vec2(width, 0.0),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
+                            let soundboard_busy = self.soundboard.model().busy();
                             section(ui, |ui| {
-                                self.microphones.ui(
-                                    ui,
-                                    self.voice.session.busy() || self.soundboard.model.busy(),
-                                    &mut self.jobs,
-                                );
+                                self.microphones
+                                    .ui(ui, self.voice.previewing() || soundboard_busy);
                             });
-                            section(ui, |ui| {
-                                if let Some(config) = self.voice.config_ui(ui, self.jobs.busy()) {
-                                    self.jobs.begin(ui.ctx(), Text::SavingApoCfg, move || {
-                                        JobResult::Saved {
-                                            result: config.save(),
-                                            config,
-                                        }
-                                    });
-                                }
-                            });
+                            section(ui, |ui| self.voice.config_ui(ui));
                             section(ui, |ui| {
                                 self.voice.recording_ui(
                                     ui,
-                                    self.jobs.busy() || self.soundboard.model.busy(),
+                                    self.microphones.busy() || soundboard_busy,
                                     self.microphones.selected(),
                                 )
                             });
-                            self.microphones.status_ui(ui, &self.jobs);
+                            self.microphones.status_ui(ui);
                         },
                     );
                 });
@@ -356,7 +438,7 @@ impl VoiceBoxApp {
     fn show(&mut self, ui: &mut egui::Ui) {
         if !self.interaction_blocked() {
             self.soundboard
-                .poll_capture(ui.ctx(), &mut self.jobs, &mut self.hotkeys);
+                .poll_capture(ui.ctx(), &self.settings, &mut self.hotkeys);
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 self.soundboard.cancel_rename();
             }
@@ -371,7 +453,7 @@ impl VoiceBoxApp {
                 self.soundboard.cancel_delete();
             }
         }
-        if self.uninstalling {
+        if matches!(self.lifecycle, Lifecycle::Uninstalling(_)) {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(64.0);
@@ -379,7 +461,7 @@ impl VoiceBoxApp {
                     ui.add_space(20.0);
                     ui.spinner();
                     ui.add_space(12.0);
-                    ui.label(self.jobs.status.text());
+                    ui.label(Text::PreparingUninstall.text());
                 });
             });
             return;
@@ -405,40 +487,40 @@ impl VoiceBoxApp {
                 }
                 match self.tab {
                     Tab::Voice => self.voice_tab_ui(ui),
-                    Tab::Soundboard => self.soundboard.ui(
-                        ui,
-                        &mut self.jobs,
-                        self.voice.session.busy(),
-                        &mut self.hotkeys,
-                    ),
+                    Tab::Soundboard => {
+                        let busy = self.voice.previewing() || self.interaction_blocked();
+                        self.soundboard
+                            .ui(ui, &self.settings, busy, &mut self.hotkeys)
+                    }
                 }
             });
 
-        self.licenses_ui(ui.ctx());
-        self.soundboard
-            .settings_ui(ui.ctx(), &mut self.jobs, &mut self.hotkeys);
-        self.soundboard.recording_ui(ui.ctx());
+        let ctx = ui.ctx();
+        self.licenses_ui(ctx);
+        let saving = self.settings_save.is_some();
+        if let Some(settings) =
+            self.soundboard
+                .settings_ui(ctx, &self.settings, saving, &mut self.hotkeys)
+        {
+            self.save_settings(ctx, settings);
+        }
+        self.soundboard.recording_ui(ctx);
         if !self.interaction_blocked() && !self.soundboard.recording_open() {
             self.soundboard
-                .finish_rename(ui.ctx(), &mut self.jobs, self.tab == Tab::Soundboard);
+                .finish_rename(ctx, self.tab == Tab::Soundboard);
         }
-        self.soundboard.file_error_ui(ui.ctx());
-        self.full_uninstall_ui(ui.ctx());
-        self.startup_message_ui(ui.ctx());
+        self.soundboard.file_error_ui(ctx);
+        self.full_uninstall_ui(ctx);
+        self.notice_ui(ctx);
     }
 }
 
 impl eframe::App for VoiceBoxApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.poll_job(ctx);
-        if self.startup_pending && !self.interaction_blocked() {
-            self.startup_pending = false;
+        self.poll(ctx);
+        if matches!(self.startup, Startup::Pending) && !self.interaction_blocked() {
             self.synchronize_startup(ctx, None);
         }
-        self.voice.session.poll();
-        self.soundboard.model.poll(wake_ui(ctx.clone()));
-        self.soundboard.finish_delete();
-        self.soundboard.poll_recording(ctx);
         while let Ok(action) = self.tray.receiver.try_recv() {
             match action {
                 tray::Action::Show => {
@@ -453,11 +535,8 @@ impl eframe::App for VoiceBoxApp {
                 tray::Action::Exit => self.request_exit(ctx),
             }
         }
-        close_to_tray(
-            ctx,
-            self.exit_requested || self.uninstall_requested,
-            self.tray.available(),
-        );
+        let exiting = matches!(self.lifecycle, Lifecycle::Exiting);
+        close_to_tray(ctx, exiting, self.tray.available());
         self.tray.set_exit_enabled(!self.interaction_blocked());
         let focused = ctx.input(|input| {
             input.viewport().focused == Some(true) && input.viewport().minimized != Some(true)
@@ -466,40 +545,36 @@ impl eframe::App for VoiceBoxApp {
             self.hotkeys.cancel_capture();
         }
         let shortcuts_enabled = !self.interaction_blocked()
-            && !self.voice.session.busy()
-            && self.soundboard.model.file_error.is_none()
+            && !self.voice.previewing()
+            && !self.soundboard.notice_open()
             && !self.soundboard.recording_open()
-            && !self.confirm_full_uninstall
+            && !matches!(self.lifecycle, Lifecycle::ConfirmUninstall)
             && !(focused && (self.soundboard.renaming() || ctx.text_edit_focused()));
-        let model = &self.soundboard.model;
-        let shortcuts = model
+        let sounds = &self.soundboard.model().library().sounds;
+        let shortcuts = self
             .settings
-            .shortcuts(model.library().sounds.iter().map(|sound| sound.hotkey));
+            .shortcuts(sounds.iter().map(|sound| sound.hotkey));
         for action in self.hotkeys.poll(shortcuts_enabled, shortcuts) {
             match action {
-                PlaybackAction::Stop => self.soundboard.model.stop(),
+                PlaybackAction::Stop => self.soundboard.stop(),
                 PlaybackAction::Random(hotkey) => {
                     self.soundboard
                         .play_random_sound(ctx, hotkey, &mut self.hotkeys)
                 }
             }
         }
-        if self.uninstall_requested {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
         // Bootstrap the child while minimized; visible children keep UI passes running.
-        if self.soundboard.model.settings.playback_show_overlay
-            && self.soundboard.model.playing()
+        if self.settings.playback_show_overlay
+            && self.soundboard.model().playing()
             && !self.overlay_visible
             && ctx.input(|input| input.viewport().visible() == Some(false))
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
         }
         // Keep completions moving even when eframe skips painting a hidden window.
-        if self.jobs.busy()
-            || self.voice.session.busy()
-            || self.soundboard.model.busy()
+        if self.interaction_blocked()
+            || self.voice.previewing()
+            || self.soundboard.model().busy()
             || self.soundboard.recording_open()
         {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -510,28 +585,29 @@ impl eframe::App for VoiceBoxApp {
         self.show(ui);
         // Include operations started during this UI pass before the native menu can open.
         self.tray.set_exit_enabled(!self.interaction_blocked());
-        self.overlay_visible = false;
-        let overlay_enabled = self.soundboard.model.settings.playback_show_overlay
-            && !self.uninstalling
-            && !self.uninstall_requested;
-        match self
-            .overlay
-            .show(ui.ctx(), &self.soundboard.model, overlay_enabled)
-        {
-            Ok(visible) => self.overlay_visible = visible,
+        let enabled = self.settings.playback_show_overlay
+            && matches!(
+                self.lifecycle,
+                Lifecycle::Running | Lifecycle::ConfirmUninstall
+            );
+        let repeat = self.settings.playback_repeat;
+        let model = self.soundboard.model();
+        self.overlay_visible = match self.overlay.show(ui.ctx(), model, repeat, enabled) {
+            Ok(visible) => visible,
             Err(error) => {
                 tracing::warn!("Failed to show playback overlay: {error:#}");
-                self.soundboard.model.set_error(Message::ShowOverlayFailed {
+                self.soundboard.set_error(Message::ShowOverlayFailed {
                     error: Details::new(error),
                 });
+                false
             }
-        }
+        };
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // Unregister while the main window still exists.
         self.hotkeys.shutdown();
-        self.soundboard.model.stop();
+        self.soundboard.stop();
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

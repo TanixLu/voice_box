@@ -3635,6 +3635,8 @@ dependencies = [
  "atomic-write-file",
  "num-traits",
  "rubato",
+ "serde",
+ "serde_json",
  "ul_unas_rs",
  "windows",
  "windows-core",

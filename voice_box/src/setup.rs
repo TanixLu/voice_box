@@ -14,7 +14,7 @@ use winreg::{
 };
 
 use voice_box_shared::{
-    apo_cfg::ApoCfg,
+    apo_cfg::APO_CFG_KEY,
     utils::{
         APO_CLSID, APO_NAME, COPYRIGHT, WriteMode, apo_dll_path, apo_registration_properties,
         write_file_with_parents,
@@ -136,9 +136,6 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
         .any(|effect| effect.eq_ignore_ascii_case(&plugin_guid))
     {
         return PluginStatus::NotInstalled;
-    }
-    if !ApoCfg::read().is_ok() {
-        return PluginStatus::NeedsUpdate;
     }
     // Check whether the DLL needs to be updated.
     let apo_dll = apo_dll_path();
@@ -399,6 +396,7 @@ pub fn unregister_all() -> anyhow::Result<()> {
     for path in [
         format!(r"SOFTWARE\Classes\CLSID\{guid}"),
         format!(r"SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}"),
+        APO_CFG_KEY.to_owned(),
     ] {
         delete_tree_transacted(&root, &path, &transaction).with_user_context(|| {
             Message::DeleteApoRegistration {

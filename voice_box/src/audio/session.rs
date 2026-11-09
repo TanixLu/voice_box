@@ -1,13 +1,6 @@
 //! Cancellable background recording, offline preview and playback.
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
-    time::Instant,
-};
+use std::sync::{Arc, atomic::Ordering};
 
 use voice_box_shared::apo_cfg::ApoCfg;
 
@@ -16,7 +9,7 @@ use crate::{
         capture::{Recording, capture},
         playback::playback,
     },
-    i18n::{Details, Message, Text},
+    task::Task,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,131 +29,80 @@ enum Outcome {
     Played(Option<ProcessedRecording>),
 }
 
-enum Event {
-    Started,
-    Finished(anyhow::Result<Outcome>),
-}
-
-struct Job {
-    activity: Activity,
-    stop: Arc<AtomicBool>,
-    receiver: mpsc::Receiver<Event>,
-    started: Option<Instant>,
-}
-
 #[derive(Default)]
 pub struct AudioSession {
-    job: Option<Job>,
+    task: Option<(Activity, Task<Outcome>)>,
     recording: Option<Arc<Recording>>,
     processed: Option<ProcessedRecording>,
-    pub message: Message,
-    pub failed: bool,
 }
 
 impl AudioSession {
     pub fn busy(&self) -> bool {
-        self.job.is_some()
+        self.task.is_some()
     }
     pub fn activity(&self) -> Option<Activity> {
-        self.job.as_ref().map(|job| job.activity)
+        self.task.as_ref().map(|(activity, _)| *activity)
+    }
+    /// The device is still being opened or the audio prepared.
+    pub fn starting(&self) -> bool {
+        self.task
+            .as_ref()
+            .is_some_and(|(_, task)| task.started_at().is_none())
     }
     pub fn has_recording(&self) -> bool {
         self.recording.is_some()
     }
-    pub fn stopping(&self) -> bool {
-        self.job
+    pub fn recording_duration_secs(&self) -> Option<f64> {
+        self.recording
             .as_ref()
-            .is_some_and(|job| job.stop.load(Ordering::Relaxed))
+            .map(|recording| recording.duration_secs())
+    }
+    pub fn stopping(&self) -> bool {
+        self.task
+            .as_ref()
+            .is_some_and(|(_, task)| task.cancelling())
     }
     pub fn recording_elapsed_secs(&self) -> Option<f64> {
-        self.job
-            .as_ref()
-            .filter(|job| job.activity == Activity::Recording)
-            .and_then(|job| job.started)
-            .map(|started| started.elapsed().as_secs_f64())
+        match &self.task {
+            Some((Activity::Recording, task)) => {
+                task.started_at().map(|at| at.elapsed().as_secs_f64())
+            }
+            _ => None,
+        }
     }
     pub fn playback_progress_secs(&self) -> Option<(f64, f64)> {
-        let job = self.job.as_ref()?;
-        if job.activity == Activity::Recording {
+        let (activity, task) = self.task.as_ref()?;
+        if *activity == Activity::Recording {
             return None;
         }
-        let started = job.started?;
-        let duration_secs = self.recording.as_ref()?.duration_secs();
-        Some((
-            started.elapsed().as_secs_f64().min(duration_secs),
-            duration_secs,
-        ))
+        let elapsed_secs = task.started_at()?.elapsed().as_secs_f64();
+        let duration_secs = self.recording_duration_secs()?;
+        Some((elapsed_secs.min(duration_secs), duration_secs))
     }
     pub fn stop(&self) {
-        if let Some(job) = &self.job {
-            job.stop.store(true, Ordering::Relaxed);
-        }
-    }
-
-    fn begin(
-        &mut self,
-        wake: impl Fn() + Send + 'static,
-        activity: Activity,
-        message: Text,
-        operation: impl FnOnce(&AtomicBool, &dyn Fn()) -> anyhow::Result<Outcome> + Send + 'static,
-    ) {
-        if self.busy() {
-            return;
-        }
-        let stop = Arc::new(AtomicBool::new(false));
-        let worker_stop = Arc::clone(&stop);
-        let (sender, receiver) = mpsc::channel();
-        self.message = message.into();
-        self.failed = false;
-        match std::thread::Builder::new()
-            .name("VoiceBoxAudioSession".into())
-            .spawn(move || {
-                let started = || {
-                    tracing::info!(?activity, "Audio session started");
-                    let _ = sender.send(Event::Started);
-                    wake();
-                };
-                let result = operation(&worker_stop, &started);
-                if let Err(error) = &result {
-                    tracing::error!(?activity, "Audio session failed: {error:#}");
-                }
-                let _ = sender.send(Event::Finished(result));
-                wake();
-            }) {
-            Ok(_) => {
-                self.job = Some(Job {
-                    activity,
-                    stop,
-                    receiver,
-                    started: None,
-                })
-            }
-            Err(error) => {
-                tracing::error!(?activity, "Failed to spawn audio session: {error}");
-                self.message = Message::CannotStartPreview {
-                    error: Details::new(error),
-                };
-                self.failed = true;
-            }
+        if let Some((_, task)) = &self.task {
+            task.cancel();
         }
     }
 
     pub fn record(&mut self, device_id: String, wake: impl Fn() + Send + 'static) {
-        self.begin(
-            wake,
-            Activity::Recording,
-            Text::OpeningMicrophone,
-            move |stop, started| {
-                capture(&device_id, stop, started)
-                    .map(|recording| Outcome::Recorded(Arc::new(recording)))
-            },
-        );
+        if self.busy() {
+            return;
+        }
+        let task = Task::spawn("VoiceBoxRecording", wake, move |stop, started| {
+            capture(&device_id, stop, started)
+                .map(|recording| Outcome::Recorded(Arc::new(recording)))
+        });
+        self.task = Some((Activity::Recording, task));
     }
 
     pub fn play(&mut self, config: Option<ApoCfg>, wake: impl Fn() + Send + 'static) {
         let Some(recording) = self.recording.clone() else {
             return;
         };
+        if self.busy() {
+            return;
+        }
         let cached = config.as_ref().and_then(|config| {
             self.processed
                 .as_ref()
@@ -172,104 +114,50 @@ impl AudioSession {
         } else {
             Activity::PlayingOriginal
         };
-        self.begin(
-            wake,
-            activity,
-            if config.is_some() {
-                Text::PreparingProcessedAudio
-            } else {
-                Text::OpeningPlaybackDevice
-            },
-            move |stop, started| {
-                let processed = if let Some(config) = config {
+        let task = Task::spawn("VoiceBoxPreview", wake, move |stop, started| {
+            let processed = match config {
+                Some(config) => {
                     let samples = match cached {
                         Some(samples) => samples,
                         None => Arc::new(super::preview::process(&recording, &config)?),
                     };
                     Some(ProcessedRecording { config, samples })
-                } else {
-                    None
-                };
-                if !stop.load(Ordering::Relaxed) {
-                    let samples = processed
-                        .as_ref()
-                        .map_or(recording.samples.as_slice(), |processed| {
-                            processed.samples.as_slice()
-                        });
-                    playback(&recording, samples, stop, started)?;
                 }
-                Ok(Outcome::Played(processed))
-            },
-        );
+                None => None,
+            };
+            if !stop.load(Ordering::Relaxed) {
+                let samples = processed
+                    .as_ref()
+                    .map_or(recording.samples.as_slice(), |processed| {
+                        processed.samples.as_slice()
+                    });
+                playback(&recording, samples, stop, started)?;
+            }
+            Ok(Outcome::Played(processed))
+        });
+        self.task = Some((activity, task));
     }
 
-    pub fn poll(&mut self) {
-        loop {
-            let Some(job) = &mut self.job else {
-                return;
-            };
-            let event = match job.receiver.try_recv() {
-                Ok(event) => event,
-                Err(mpsc::TryRecvError::Empty) => return,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    tracing::error!(activity = ?job.activity, "Audio session exited without a result");
-                    self.job = None;
-                    self.message = Text::PreviewIncomplete.into();
-                    self.failed = true;
-                    return;
-                }
-            };
-            match event {
-                Event::Started => {
-                    job.started = Some(Instant::now());
-                    self.message = match job.activity {
-                        Activity::Recording => Text::Recording,
-                        Activity::PlayingOriginal | Activity::PlayingProcessed => Text::Playing,
-                    }
-                    .into();
-                }
-                Event::Finished(result) => {
-                    self.job = None;
-                    match result {
-                        Ok(Outcome::Recorded(recording)) => {
-                            tracing::info!(
-                                duration_secs = recording.duration_secs(),
-                                sample_rate = recording.sample_rate,
-                                channels = recording.channels,
-                                "Microphone recording completed"
-                            );
-                            self.message = Message::Recorded {
-                                duration_secs: recording.duration_secs(),
-                            };
-                            self.recording = Some(recording);
-                            self.processed = None;
-                        }
-                        Ok(Outcome::Played(processed)) => {
-                            if let Some(processed) = processed {
-                                self.processed = Some(processed);
-                            }
-                            if let Some(recording) = &self.recording {
-                                self.message = Message::Recorded {
-                                    duration_secs: recording.duration_secs(),
-                                };
-                            }
-                        }
-                        Err(error) => {
-                            self.message = Message::PreviewFailed {
-                                error: Details::new(error),
-                            };
-                            self.failed = true;
-                        }
-                    }
-                    return;
+    /// Returns the result of an activity once it finishes.
+    pub fn poll(&mut self) -> Option<anyhow::Result<()>> {
+        let result = self.task.as_mut()?.1.poll()?;
+        self.task = None;
+        Some(result.map(|outcome| match outcome {
+            Outcome::Recorded(recording) => {
+                tracing::info!(
+                    duration_secs = recording.duration_secs(),
+                    sample_rate = recording.sample_rate,
+                    channels = recording.channels,
+                    "Microphone recording completed"
+                );
+                self.recording = Some(recording);
+                self.processed = None;
+            }
+            Outcome::Played(processed) => {
+                if processed.is_some() {
+                    self.processed = processed;
                 }
             }
-        }
-    }
-}
-
-impl Drop for AudioSession {
-    fn drop(&mut self) {
-        self.stop();
+        }))
     }
 }

@@ -1,10 +1,24 @@
-//! Machine-wide apo.cfg shared by the GUI and APO watcher.
+//! Machine-wide APO configuration, stored as JSON in the registry for the GUI and APO.
 
-use std::io::{self, Read};
+use serde::{Deserialize, Serialize};
+use windows::{
+    Win32::{
+        Foundation::ERROR_FILE_NOT_FOUND,
+        System::Registry::{
+            HKEY_LOCAL_MACHINE, REG_SZ, RRF_RT_REG_SZ, RegGetValueW, RegSetKeyValueW,
+        },
+    },
+    core::HSTRING,
+};
 
-use crate::utils::{GainDb, WriteMode, apo_cfg_path, field_name, write_file_with_parents};
+use crate::utils::GainDb;
 
-#[derive(Clone, PartialEq, Eq)]
+/// Under HKEY_LOCAL_MACHINE, which the audio engine's service account can read and watch.
+pub const APO_CFG_KEY: &str = r"SOFTWARE\VoiceBox";
+const APO_CFG_VALUE: &str = "ApoConfig";
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ApoCfg {
     pub denoising_enabled: bool,
     pub gain_db: GainDb,
@@ -22,66 +36,48 @@ impl Default for ApoCfg {
 }
 
 impl ApoCfg {
-    const MAX_CFG_BYTES: usize = 16_384;
-
-    pub fn read() -> io::Result<Self> {
-        let mut bytes = Vec::new();
-        std::fs::File::open(apo_cfg_path())?
-            .take((Self::MAX_CFG_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() > Self::MAX_CFG_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "The VoiceBox APO configuration file is too large",
-            ));
+    /// The saved configuration, or the defaults when none has been saved.
+    pub fn load() -> anyhow::Result<Self> {
+        let (key, value) = (HSTRING::from(APO_CFG_KEY), HSTRING::from(APO_CFG_VALUE));
+        let mut bytes = 0;
+        let query = |data: Option<*mut _>, bytes: &mut u32| unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                &key,
+                &value,
+                RRF_RT_REG_SZ,
+                None,
+                data,
+                Some(bytes),
+            )
+        };
+        let status = query(None, &mut bytes);
+        if status == ERROR_FILE_NOT_FOUND {
+            return Ok(Self::default());
         }
-        let text = std::str::from_utf8(&bytes)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let mut cfg = Self::default();
-        for line in text.split_inclusive('\n') {
-            let entry = line.trim();
-            if entry.chars().any(|c| c.is_control() && c != '\t') {
-                continue;
-            }
-            let Some((key, value)) = entry.split_once('=') else {
-                continue;
-            };
-            let key = key.trim();
-            let value = value.trim();
-            if key == field_name!(cfg, denoising_enabled) {
-                if let Ok(v) = value.parse() {
-                    cfg.denoising_enabled = v;
-                }
-            } else if key == field_name!(cfg, gain_db) {
-                if let Ok(v) = value.parse() {
-                    cfg.gain_db = GainDb::new(v);
-                }
-            } else if key == field_name!(cfg, playback_include_microphone_audio) {
-                if let Ok(v) = value.parse() {
-                    cfg.playback_include_microphone_audio = v;
-                }
-            }
-        }
-        Ok(cfg)
+        status.ok()?;
+        let mut text = vec![0_u16; bytes as usize / 2];
+        query(Some(text.as_mut_ptr().cast()), &mut bytes).ok()?;
+        let text = String::from_utf16(&text[..bytes as usize / 2])?;
+        Ok(serde_json::from_str(text.trim_end_matches('\0'))?)
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
-        let bytes = format!(
-            "{}={}\n{}={}\n{}={}\n",
-            field_name!(self, denoising_enabled),
-            self.denoising_enabled,
-            field_name!(self, gain_db),
-            self.gain_db.as_i8(),
-            field_name!(self, playback_include_microphone_audio),
-            self.playback_include_microphone_audio,
-        )
-        .into_bytes();
-        if bytes.len() > Self::MAX_CFG_BYTES {
-            anyhow::bail!("The VoiceBox APO configuration file is too large");
+        let text: Vec<u16> = serde_json::to_string(self)?
+            .encode_utf16()
+            .chain([0])
+            .collect();
+        unsafe {
+            RegSetKeyValueW(
+                HKEY_LOCAL_MACHINE,
+                &HSTRING::from(APO_CFG_KEY),
+                &HSTRING::from(APO_CFG_VALUE),
+                REG_SZ.0,
+                Some(text.as_ptr().cast()),
+                size_of_val(text.as_slice()) as u32,
+            )
         }
-        write_file_with_parents(apo_cfg_path(), WriteMode::AtomicReplace, |file| {
-            file.write_all(&bytes)
-        })?;
+        .ok()?;
         Ok(())
     }
 }

@@ -13,6 +13,7 @@ mod setup;
 mod soundboard;
 mod startup;
 mod static_data;
+mod task;
 mod uninstall;
 mod utils;
 

@@ -3,11 +3,7 @@
 use std::{
     io::Write,
     ops::Range,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
+    sync::{Arc, atomic::Ordering},
     time::{Duration, Instant},
 };
 
@@ -17,8 +13,9 @@ use voice_box_shared::pcm_transport::{PCM_CHANNELS, PcmFrame};
 
 use crate::{
     audio::{capture::Recording, loopback, playback::playback},
-    i18n::{Details, Message, Text, UserContext},
+    i18n::{Text, UserContext},
     soundboard::sound::{Sound, is_valid_name},
+    task::Task,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,266 +94,153 @@ enum Outcome {
     Previewed,
     Saved(Sound),
 }
-enum Event {
-    Started(Instant),
-    Finished(anyhow::Result<Outcome>),
-}
-struct Job {
-    activity: Activity,
-    stop: Arc<AtomicBool>,
-    receiver: mpsc::Receiver<Event>,
-    started: Option<Instant>,
-    range: Range<usize>,
+/// The next job; it starts once the running one has released its device.
+enum Pending {
+    Record,
+    Preview(Range<usize>, Instant),
+    Save(Selection, String),
 }
 
 #[derive(Default)]
 pub struct Recorder {
-    job: Option<Job>,
-    pending_preview: Option<(Range<usize>, Instant)>,
-    pending_save: Option<(Selection, String)>,
-    pending_record: bool,
+    task: Option<(Activity, Range<usize>, Task<Outcome>)>,
+    pending: Option<Pending>,
     pub clip: Option<Clip>,
-    pub error: Message,
 }
 impl Recorder {
     pub fn activity(&self) -> Option<Activity> {
-        if self.pending_record {
-            Some(Activity::Recording)
-        } else if self.pending_save.is_some() {
-            Some(Activity::Saving)
-        } else {
-            self.job.as_ref().map(|job| job.activity)
+        match self.pending {
+            Some(Pending::Record) => Some(Activity::Recording),
+            Some(Pending::Save(..)) => Some(Activity::Saving),
+            _ => self.task.as_ref().map(|(activity, ..)| *activity),
         }
     }
     pub fn busy(&self) -> bool {
-        self.job.is_some()
-            || self.pending_preview.is_some()
-            || self.pending_save.is_some()
-            || self.pending_record
+        self.task.is_some() || self.pending.is_some()
     }
     pub fn stopping(&self) -> bool {
-        !self.pending_record
+        !matches!(self.pending, Some(Pending::Record))
             && self
-                .job
+                .task
                 .as_ref()
-                .is_some_and(|job| job.stop.load(Ordering::Relaxed))
+                .is_some_and(|(.., task)| task.cancelling())
     }
     pub fn elapsed_secs(&self) -> Option<f64> {
-        if self.pending_record {
+        if matches!(self.pending, Some(Pending::Record)) {
             return None;
         }
-        self.job
-            .as_ref()?
-            .started
-            .map(|start| start.elapsed().as_secs_f64())
+        let started = self.task.as_ref()?.2.started_at()?;
+        Some(started.elapsed().as_secs_f64())
     }
     pub fn preview_frame(&self) -> Option<usize> {
-        let job = self.job.as_ref()?;
-        if job.activity != Activity::Preview {
+        let (Activity::Preview, range, _) = self.task.as_ref()? else {
             return None;
-        }
-        Some(
-            (job.range.start
-                + (self.elapsed_secs()? * f64::from(self.clip.as_ref()?.audio.sample_rate))
-                    as usize)
-                .min(job.range.end),
-        )
+        };
+        let rate = f64::from(self.clip.as_ref()?.audio.sample_rate);
+        Some((range.start + (self.elapsed_secs()? * rate) as usize).min(range.end))
     }
     pub fn stop(&mut self) {
-        self.pending_preview = None;
-        self.pending_save = None;
-        self.pending_record = false;
-        if let Some(job) = &self.job {
-            job.stop.store(true, Ordering::Relaxed);
+        self.pending = None;
+        if let Some((.., task)) = &self.task {
+            task.cancel();
         }
     }
-    fn begin(
-        &mut self,
-        activity: Activity,
-        range: Range<usize>,
-        wake: impl Fn() + Send + 'static,
-        operation: impl FnOnce(&AtomicBool, &dyn Fn()) -> anyhow::Result<Outcome> + Send + 'static,
-    ) {
-        if self.job.is_some() {
-            return;
-        }
-        let stop = Arc::new(AtomicBool::new(false));
-        let worker_stop = stop.clone();
-        let (sender, receiver) = mpsc::channel();
-        self.error.clear();
-        match std::thread::Builder::new()
-            .name("VoiceBoxRecordingImport".into())
-            .spawn(move || {
-                let started = || {
-                    if activity == Activity::Recording {
-                        tracing::info!("Speaker recording started");
-                    }
-                    let _ = sender.send(Event::Started(Instant::now()));
-                    wake();
-                };
-                let result = operation(&worker_stop, &started);
-                if let Err(error) = &result {
-                    tracing::error!(?activity, "Recording import failed: {error:#}");
-                }
-                let _ = sender.send(Event::Finished(result));
-                wake();
-            }) {
-            Ok(_) => {
-                self.job = Some(Job {
-                    activity,
-                    stop,
-                    receiver,
-                    started: None,
-                    range,
-                })
-            }
-            Err(error) => {
-                tracing::error!(
-                    ?activity,
-                    "Failed to spawn recording import operation: {error}"
-                );
-                self.error = Message::CannotStartOperation {
-                    error: Details::new(error),
-                };
-            }
-        }
-    }
-    pub fn record(&mut self, wake: impl Fn() + Send + 'static) {
-        if matches!(
+    fn locked(&self) -> bool {
+        matches!(
             self.activity(),
             Some(Activity::Recording | Activity::Saving)
-        ) {
+        )
+    }
+    pub fn record(&mut self, wake: impl Fn() + Send + 'static) {
+        if self.locked() {
             return;
         }
         self.stop();
         self.clip = None;
-        if self.job.is_some() {
+        if self.task.is_some() {
             // Release the preview stream before capturing, so it cannot enter the new recording.
-            self.pending_record = true;
+            self.pending = Some(Pending::Record);
         } else {
             self.begin_recording(wake);
         }
     }
     fn begin_recording(&mut self, wake: impl Fn() + Send + 'static) {
-        self.begin(Activity::Recording, 0..0, wake, |stop, started| {
+        let task = Task::spawn("VoiceBoxSpeakerRecording", wake, |stop, started| {
             loopback::capture(stop, started)
                 .map(Clip::new)
                 .map(Outcome::Recorded)
         });
+        self.task = Some((Activity::Recording, 0..0, task));
     }
     pub fn queue_preview(&mut self, range: Range<usize>, immediate: bool) {
-        if matches!(
-            self.activity(),
-            Some(Activity::Recording | Activity::Saving)
-        ) {
+        if self.locked() {
             return;
         }
         self.stop();
-        self.pending_preview = Some((
-            range,
-            Instant::now()
-                + if immediate {
-                    Duration::ZERO
-                } else {
-                    Duration::from_millis(150)
-                },
-        ));
+        let delay = Duration::from_millis(if immediate { 0 } else { 150 });
+        self.pending = Some(Pending::Preview(range, Instant::now() + delay));
     }
     pub fn save(&mut self, selection: Selection, name: String) {
-        if self.clip.is_none()
-            || matches!(
-                self.activity(),
-                Some(Activity::Recording | Activity::Saving)
-            )
-        {
+        if self.clip.is_none() || self.locked() {
             return;
         }
         self.stop();
-        self.pending_save = Some((selection, name));
+        self.pending = Some(Pending::Save(selection, name));
     }
-    fn begin_save(&mut self, selection: Selection, name: String, wake: impl Fn() + Send + 'static) {
-        let Some(clip) = &self.clip else {
-            return;
-        };
-        let audio = clip.audio.clone();
-        self.begin(Activity::Saving, selection.range(), wake, move |_, _| {
-            save_clip(&audio, selection, &name).map(Outcome::Saved)
-        });
-    }
-    // Returns an audio entry already committed to the database.
-    pub fn poll(&mut self, wake: impl Fn() + Send + 'static) -> Option<Sound> {
-        while let Some(job) = &mut self.job {
-            match job.receiver.try_recv() {
-                Ok(Event::Started(started)) => job.started = Some(started),
-                Ok(Event::Finished(result)) => {
-                    self.job = None;
-                    match result {
-                        Ok(Outcome::Recorded(clip)) => {
-                            tracing::info!(
-                                duration_secs = clip.audio.duration_secs(),
-                                sample_rate = clip.audio.sample_rate,
-                                channels = clip.audio.channels,
-                                "Speaker recording completed"
-                            );
-                            self.clip = Some(clip);
-                        }
-                        Ok(Outcome::Previewed) => {}
-                        Ok(Outcome::Saved(sound)) => return Some(sound),
-                        Err(error) => {
-                            self.error = Message::OperationFailed {
-                                error: Details::new(error),
-                            };
-                            self.pending_preview = None;
-                        }
-                    }
-                }
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    tracing::error!(
-                        activity = ?job.activity,
-                        "Recording import operation exited without a result"
+    /// A saved clip is returned as an entry already committed to the database.
+    pub fn poll(&mut self, wake: impl Fn() + Send + 'static) -> anyhow::Result<Option<Sound>> {
+        if let Some((.., task)) = &mut self.task
+            && let Some(result) = task.poll()
+        {
+            self.task = None;
+            match result {
+                Ok(Outcome::Recorded(clip)) => {
+                    tracing::info!(
+                        duration_secs = clip.audio.duration_secs(),
+                        sample_rate = clip.audio.sample_rate,
+                        channels = clip.audio.channels,
+                        "Speaker recording completed"
                     );
-                    self.job = None;
-                    self.pending_preview = None;
-                    self.error = Text::RecorderExited.into();
+                    self.clip = Some(clip);
+                }
+                Ok(Outcome::Previewed) => {}
+                Ok(Outcome::Saved(sound)) => return Ok(Some(sound)),
+                Err(error) => {
+                    if matches!(self.pending, Some(Pending::Preview(..))) {
+                        self.pending = None;
+                    }
+                    return Err(error);
                 }
             }
         }
-        if self.job.is_none() && self.pending_record {
-            self.pending_record = false;
-            self.begin_recording(wake);
-        } else if self.job.is_none()
-            && let Some((selection, name)) = self.pending_save.take()
-        {
-            self.begin_save(selection, name, wake);
-        } else if self.job.is_none()
-            && self
-                .pending_preview
-                .as_ref()
-                .is_some_and(|(_, when)| Instant::now() >= *when)
-        {
-            let (range, _) = self
-                .pending_preview
-                .take()
-                .expect("UNREACHABLE: pending preview should exist after checking its deadline");
-            if let Some(clip) = &self.clip {
-                let audio = clip.audio.clone();
-                let samples =
-                    range.start * audio.channels as usize..range.end * audio.channels as usize;
-                self.begin(Activity::Preview, range, wake, move |stop, started| {
+        if self.task.is_some() {
+            return Ok(None);
+        }
+        let audio = self.clip.as_ref().map(|clip| clip.audio.clone());
+        match (self.pending.take(), audio) {
+            (Some(Pending::Record), _) => self.begin_recording(wake),
+            (Some(Pending::Save(selection, name)), Some(audio)) => {
+                let task = Task::run("VoiceBoxSaveRecording", wake, move || {
+                    save_clip(&audio, selection, &name).map(Outcome::Saved)
+                });
+                self.task = Some((Activity::Saving, selection.range(), task));
+            }
+            (Some(Pending::Preview(range, when)), Some(audio)) if Instant::now() >= when => {
+                let channels = audio.channels as usize;
+                let samples = range.start * channels..range.end * channels;
+                let task = Task::spawn("VoiceBoxRecordingPreview", wake, move |stop, started| {
                     if !stop.load(Ordering::Relaxed) {
                         playback(&audio, &audio.samples[samples], stop, started)?;
                     }
                     Ok(Outcome::Previewed)
                 });
+                self.task = Some((Activity::Preview, range, task));
             }
+            // Wait for the preview deadline; work without a clip can never start.
+            (pending @ Some(Pending::Preview(..)), Some(_)) => self.pending = pending,
+            _ => {}
         }
-        None
-    }
-}
-impl Drop for Recorder {
-    fn drop(&mut self) {
-        self.stop();
+        Ok(None)
     }
 }
 

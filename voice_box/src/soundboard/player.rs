@@ -1,20 +1,16 @@
 //! Playback lifecycle and acknowledgements, addressed by stable sound IDs.
 
-use std::{sync::mpsc, thread::JoinHandle};
+use std::sync::mpsc;
 
 use crate::{
-    i18n::{Details, Message, Text},
+    i18n::{Details, Message},
     soundboard::{
+        Update,
         playback::{self, Command, Config, Event},
         sound::SoundId,
     },
+    task::Task,
 };
-
-pub enum Update {
-    Started,
-    Restarted,
-    Error(Message),
-}
 
 #[derive(Clone, Copy, Default)]
 pub struct PlaybackStatus {
@@ -32,15 +28,15 @@ struct Request {
 struct Job {
     sender: mpsc::Sender<Command>,
     receiver: mpsc::Receiver<Event>,
-    thread: JoinHandle<()>,
+    task: Task<()>,
 }
 
 /// May be waited on by a background deletion job, never by the UI thread.
-pub struct Completion(JoinHandle<()>);
+pub struct Completion(Task<()>);
 
 impl Completion {
     pub fn wait(self) {
-        let _ = self.0.join();
+        self.0.join();
     }
 }
 
@@ -67,7 +63,7 @@ impl Player {
         duration_secs: f64,
         config: Config,
         wake: impl Fn() + Send + 'static,
-    ) -> anyhow::Result<()> {
+    ) {
         wake();
         self.revision = self.revision.wrapping_add(1);
         self.status = PlaybackStatus {
@@ -84,16 +80,9 @@ impl Player {
                 config: config.clone(),
             });
             let _ = job.sender.send(Command::Replace(id, self.revision, config));
-            return Ok(());
+            return;
         }
-        match start_worker(id, self.revision, config, wake) {
-            Ok(job) => self.job = Some(job),
-            Err(error) => {
-                self.status.sound_id = None;
-                return Err(error);
-            }
-        }
-        Ok(())
+        self.job = Some(start_worker(id, self.revision, config, wake));
     }
 
     pub fn stop(&mut self) {
@@ -106,7 +95,7 @@ impl Player {
     pub fn stop_and_release(&mut self) -> Option<Completion> {
         self.stop();
         self.status.sound_id = None;
-        self.job.take().map(|job| Completion(job.thread))
+        self.job.take().map(|job| Completion(job.task))
     }
 
     pub fn cancel_queued(&mut self) {
@@ -124,60 +113,50 @@ impl Player {
 
     pub fn poll(&mut self, wake: impl Fn() + Send + 'static) -> Vec<Update> {
         let mut updates = Vec::new();
-        while let Some(job) = &self.job {
-            match job.receiver.try_recv() {
-                Ok(Event::Started {
-                    revision,
-                    duration_secs,
-                }) if revision == self.revision => {
-                    self.queued = None;
-                    self.status.duration_secs = duration_secs.or(self.status.duration_secs);
-                    updates.push(Update::Started);
-                }
-                Ok(Event::Progress {
-                    revision,
-                    elapsed_secs,
-                }) if revision == self.revision => {
-                    self.status.elapsed_secs = elapsed_secs;
-                }
-                Ok(Event::OutputError(revision, error)) if revision == self.revision => {
-                    updates.push(Update::Error(error));
-                }
-                Ok(Event::Finished(result)) => {
-                    self.finish();
-                    if let Err(error) = result {
-                        updates.push(Update::Error(Message::PlaybackFailed {
-                            error: Details::new(error),
-                        }));
+        if let Some(job) = &mut self.job {
+            // Check completion first, so events sent just before it are still drained.
+            let finished = job.task.poll();
+            for event in job.receiver.try_iter() {
+                match event {
+                    Event::Started {
+                        revision,
+                        duration_secs,
+                    } if revision == self.revision => {
+                        self.queued = None;
+                        self.status.duration_secs = duration_secs.or(self.status.duration_secs);
+                        updates.push(Update::Cleared);
                     }
-                    break;
+                    Event::Progress {
+                        revision,
+                        elapsed_secs,
+                    } if revision == self.revision => self.status.elapsed_secs = elapsed_secs,
+                    Event::OutputError(revision, error) if revision == self.revision => {
+                        updates.push(Update::Error(error));
+                    }
+                    _ => {}
                 }
-                Ok(_) => {}
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    tracing::error!(sound_id = ?self.status.sound_id, "Soundboard playback exited without a result");
-                    self.finish();
-                    updates.push(Update::Error(Text::PlaybackThreadExited.into()));
-                    break;
+            }
+            if let Some(result) = finished {
+                self.finish();
+                if let Err(error) = result {
+                    updates.push(Update::Error(Message::PlaybackFailed {
+                        error: Details::new(error),
+                    }));
                 }
             }
         }
         if self.job.is_none()
             && let Some(request) = self.queued.take()
         {
-            updates.push(Update::Restarted);
-            if let Err(error) = self.play(request.id, request.duration_secs, request.config, wake) {
-                updates.push(Update::Error(Message::StartPlaybackFailed {
-                    error: Details::new(error),
-                }));
-            }
+            updates.push(Update::Cleared);
+            self.play(request.id, request.duration_secs, request.config, wake);
         }
         updates
     }
 
     fn finish(&mut self) {
         if let Some(job) = self.job.take() {
-            let _ = job.thread.join();
+            job.task.join();
         }
         self.status.sound_id = None;
     }
@@ -195,33 +174,22 @@ fn start_worker(
     revision: u64,
     config: Config,
     wake: impl Fn() + Send + 'static,
-) -> anyhow::Result<Job> {
+) -> Job {
     let (sender, commands) = mpsc::channel();
     let (events, receiver) = mpsc::channel();
-    let thread = std::thread::Builder::new()
-        .name("VoiceBoxSoundboard".into())
-        .spawn(move || {
-            let started = std::time::Instant::now();
-            let result = playback::run(id, config, revision, &commands, &events);
-            match &result {
-                Err(error) => tracing::error!(
-                    elapsed_secs = started.elapsed().as_secs_f64(),
-                    "Soundboard failed: {error:#}"
-                ),
-                Ok(outcome) => tracing::info!(
-                    sound_id = outcome.sound_id,
-                    reason = outcome.reason,
-                    played_secs = outcome.played_secs,
-                    elapsed_secs = started.elapsed().as_secs_f64(),
-                    "Soundboard playback finished"
-                ),
-            }
-            let _ = events.send(Event::Finished(result.map(|_| ())));
-            wake();
-        })?;
-    Ok(Job {
+    let task = Task::run("VoiceBoxSoundboard", wake, move || {
+        let outcome = playback::run(id, config, revision, &commands, &events)?;
+        tracing::info!(
+            sound_id = outcome.sound_id,
+            reason = outcome.reason,
+            played_secs = outcome.played_secs,
+            "Soundboard playback finished"
+        );
+        Ok(())
+    });
+    Job {
         sender,
         receiver,
-        thread,
-    })
+        task,
+    }
 }

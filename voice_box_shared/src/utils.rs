@@ -11,6 +11,7 @@ use std::{
 };
 
 use atomic_write_file::AtomicWriteFile;
+use serde::{Deserialize, Serialize};
 use windows::Win32::{
     Foundation::{ERROR_ALREADY_EXISTS, GetLastError},
     Media::Audio::Apo::{
@@ -25,16 +26,6 @@ use windows::Win32::{
     UI::Shell::{FOLDERID_ProgramData, KF_FLAG_DEFAULT, SHGetKnownFolderPath},
 };
 use windows_core::{GUID, Interface as _, PCWSTR};
-
-macro_rules! field_name {
-    ($obj:expr, $field:ident) => {{
-        if false {
-            let _ = &$obj.$field;
-        }
-        stringify!($field)
-    }};
-}
-pub(crate) use field_name;
 
 pub const APO_CLSID: GUID = GUID::from_u128(0xae672075_b244_4417_b5a5_fbd45b7f0268);
 pub const APO_NAME: &str = "VoiceBox APO";
@@ -151,10 +142,6 @@ pub fn data_dir() -> &'static Path {
         path.join("VoiceBox")
     })
 }
-pub fn apo_cfg_path() -> &'static Path {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE.get_or_init(|| data_dir().join("apo.cfg"))
-}
 pub fn database_path() -> &'static Path {
     static CACHE: OnceLock<PathBuf> = OnceLock::new();
     CACHE.get_or_init(|| data_dir().join("data.db"))
@@ -207,8 +194,21 @@ pub fn win_try_create_named_mutex(name: &str) -> windows_core::Result<Option<Own
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "i8", into = "i8")]
 pub struct GainDb(i8);
+
+impl From<i8> for GainDb {
+    fn from(value: i8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<GainDb> for i8 {
+    fn from(gain: GainDb) -> Self {
+        gain.0
+    }
+}
 
 impl GainDb {
     pub const MIN_VALUE: i8 = -60;

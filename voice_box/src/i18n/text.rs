@@ -4,7 +4,7 @@ use crate::i18n::{Language, current_language};
 
 macro_rules! catalog {
     ($($key:ident => ($en:literal, $zh:literal);)*) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub enum Text { $($key,)* }
 
         impl Text {
@@ -31,9 +31,6 @@ catalog! {
     OpeningMicrophone => ("Opening microphone…", "正在打开麦克风…");
     PreparingProcessedAudio => ("Preparing processed audio…", "正在准备处理后的声音…");
     OpeningPlaybackDevice => ("Opening playback device…", "正在打开播放设备…");
-    PreviewIncomplete => ("Preview did not complete. Please try again.", "试听操作未完成，请重试。");
-    Recording => ("Recording…", "正在录音…");
-    Playing => ("Playing…", "正在播放…");
     InvalidRecordingData => ("Invalid recording data", "录音数据无效");
     ProcessPreview => ("Failed to process the preview recording", "处理试听录音失败");
     OpenPlaybackDevice => ("Failed to open the playback device", "开启播放设备失败");
@@ -72,8 +69,6 @@ catalog! {
     CommitUninstallTransaction => ("Failed to commit the full uninstall registry transaction", "提交完全卸载注册事务失败");
     PluginVerificationFailed => ("Installation finished, but the plugin check failed. Refresh and try again", "安装操作已结束，但插件检查未通过，请刷新后重试");
     CreateDataDirectory => ("Failed to create the VoiceBox data directory", "创建 VoiceBox 数据目录失败");
-    ReadApoCfgPreserved => ("Failed to read VoiceBox APO configuration. The original file has been preserved", "读取 VoiceBox APO 配置文件失败，保留原文件");
-    SaveApoCfgFailed => ("Cannot save VoiceBox APO configuration", "无法保存 VoiceBox APO 配置文件");
     NoAudioTrack => ("The file has no audio track", "文件没有音轨");
     InvalidAudioDuration => ("Invalid audio duration", "音频时长无效");
     InvalidTrackParameters => ("Invalid audio track parameters", "音轨参数无效");
@@ -117,8 +112,6 @@ catalog! {
     StopBeforeRename => ("Stop playback before renaming", "请先停止播放再重命名");
     OutputsMuted => ("Microphone and speaker volumes are both 0. Playback was not started", "麦克风和扬声器音量均为 0，未开始播放");
     ImportThreadExited => ("The sound import thread exited unexpectedly", "音效导入线程意外退出");
-    DeleteThreadExited => ("The sound deletion thread exited unexpectedly", "音效删除线程意外退出");
-    PlaybackThreadExited => ("The playback thread exited unexpectedly", "播放线程意外退出");
     CloseDiscardChanges => ("Close and discard unsaved changes", "关闭，放弃未保存的修改");
     ClearHotkey => ("Clear hotkey", "清除快捷键");
     Hotkeys => ("Hotkeys", "快捷键");
@@ -222,7 +215,6 @@ catalog! {
     MicrophoneOutput => ("Microphone output", "麦克风输出");
     FollowSystemDefault => ("Follow system default", "跟随系统默认");
     OutputDeviceUnavailable => ("Selected device unavailable", "所选设备不可用");
-    ReadingOutputDevices => ("Reading audio devices…", "正在读取音频设备…");
     SoundboardMicrophonePluginRequired => ("Install or update the VoiceBox plugin for this microphone", "请为此麦克风安装或更新 VoiceBox 插件");
     SpeakerOutput => ("Speaker output", "扬声器输出");
     IncludeMicrophoneAudio => ("Keep microphone audio during playback", "音效播放时保持收音");
@@ -265,14 +257,11 @@ catalog! {
     StartupOff => ("Off", "关闭");
     StartupNotSynced => ("Startup setting not synchronized", "自启设置未同步");
     RetryStartup => ("Retry", "重试");
-    SyncStartup => ("Updating startup task…", "正在同步开机自启任务…");
     SyncStartupFailed => ("Failed to update the startup task", "同步开机自启任务失败");
     StartupVerificationFailed => ("The registered startup task did not pass verification", "开机自启任务注册后校验失败");
     StartupRedirectedPath => ("Startup does not support symbolic links or redirected paths. Move the application to a regular local folder", "开机自启不支持符号链接或重定向路径，请将应用移至普通本地文件夹");
     StartupRegistered => ("Startup enabled successfully! If you move or rename the application, restart it to restore startup.", "开机自启设置成功！若移动或重命名应用程序，需重新启动应用以恢复开机自启。");
     StartupReRegistered => ("Startup re-registered! If you move or rename the application, restart it to restore startup.", "开机自启已重新注册！若移动或重命名应用程序，需重新启动应用以恢复开机自启。");
-    SavingApoCfg => ("Saving settings…", "正在保存设置…");
-    RecorderExited => ("The recording tool exited unexpectedly. Please try again", "录音工具意外退出，请重试");
     InvalidSelection => ("Invalid selection range", "截取范围无效");
     InvalidRecordingFormat => ("Invalid recording format", "录音格式无效");
     InvalidRecordingName => ("The name must not be empty or contain control characters", "名称不能为空，也不能包含控制字符");

@@ -1,7 +1,7 @@
 //! Sound library operations and background playback coordination.
 
 mod decoder;
-pub mod export;
+mod export;
 mod import;
 pub mod library;
 mod playback;
@@ -11,153 +11,144 @@ pub mod rename;
 mod shuffle;
 pub mod sound;
 
-use std::{collections::HashSet, path::PathBuf, sync::mpsc};
+use std::{collections::HashSet, path::PathBuf};
 
-pub use crate::soundboard::player::PlaybackStatus;
+use anyhow::ensure;
+
+pub use crate::soundboard::{playback::Config as PlaybackConfig, player::PlaybackStatus};
 use crate::{
     hotkeys::Hotkey,
     i18n::{Details, Message, Text},
-    settings::Settings,
     soundboard::{
         import::{ImportedSounds, import_files},
         library::Library,
         player::Player,
-        sound::SoundId,
+        sound::{Sound, SoundId},
     },
+    task::Task,
 };
 
-struct RemovalJob {
-    ids: HashSet<SoundId>,
-    receiver: mpsc::Receiver<anyhow::Result<Library>>,
+/// What the view should show after background work progressed.
+pub enum Update {
+    /// A previous playback or library error no longer applies.
+    Cleared,
+    Error(Message),
+    /// Shown as a dialog with this title.
+    FileError(Text, Message),
+    Edited(anyhow::Result<()>),
+    Removed(HashSet<SoundId>),
 }
 
-#[derive(Default)]
+/// Library writers exclude each other, so they share one slot.
+enum LibraryTask {
+    Edit(Task<Library>),
+    Import(Task<ImportedSounds>),
+    Export(Task<()>),
+    Remove(HashSet<SoundId>, Task<Library>),
+}
+
 pub struct Soundboard {
     library: Library,
-    pub settings: Settings,
-    pub message: Message,
-    pub failed: bool,
-    pub file_error: Option<(Text, Message)>,
+    config: PlaybackConfig,
     player: Player,
-    import_job: Option<mpsc::Receiver<anyhow::Result<ImportedSounds>>>,
-    removal_job: Option<RemovalJob>,
-    removed_sounds: Option<HashSet<SoundId>>,
+    library_task: Option<LibraryTask>,
     shuffle: shuffle::Shuffle,
 }
 impl Soundboard {
-    pub fn new(mut settings: Settings, library: Library) -> Self {
-        settings.sanitize();
+    pub fn new(library: Library, config: PlaybackConfig) -> Self {
         Self {
-            settings,
             library,
-            ..Default::default()
+            config,
+            player: Player::default(),
+            library_task: None,
+            shuffle: shuffle::Shuffle::default(),
         }
     }
-    pub fn apply_settings(&mut self, settings: Settings) {
-        if settings.playback_microphone_output_device
-            != self.settings.playback_microphone_output_device
-            || settings.playback_speaker_output_device
-                != self.settings.playback_speaker_output_device
+    pub fn configure(&mut self, config: PlaybackConfig) {
+        if config.microphone_device != self.config.microphone_device
+            || config.speaker_device != self.config.speaker_device
         {
             self.stop();
         }
-        self.settings = settings;
-        self.update_playback_settings();
+        self.player.configure(config.clone());
+        self.config = config;
     }
-
     pub fn library(&self) -> &Library {
         &self.library
     }
     pub fn random_sound_index(&mut self, hotkey: Option<Hotkey>) -> Option<usize> {
         self.shuffle.choose(&self.library.sounds, hotkey)
     }
-    pub fn replace_library(&mut self, library: Library) {
-        self.library = library;
-        self.failed = false;
-        self.message.clear();
-    }
     pub fn busy(&self) -> bool {
-        self.playing() || self.importing() || self.deleting()
+        self.playing() || self.library_busy()
+    }
+    pub fn library_busy(&self) -> bool {
+        self.library_task.is_some()
     }
     pub fn playing(&self) -> bool {
         self.player.playing()
     }
     pub fn importing(&self) -> bool {
-        self.import_job.is_some()
+        matches!(self.library_task, Some(LibraryTask::Import(_)))
     }
-    pub fn deleting(&self) -> bool {
-        self.removal_job.is_some()
-    }
-    pub fn take_removed_sounds(&mut self) -> Option<HashSet<SoundId>> {
-        self.removed_sounds.take()
-    }
-    pub fn add_recording(&mut self, sound: sound::Sound) {
+    pub fn add_recording(&mut self, sound: Sound) {
         tracing::info!(sound_id = sound.id, "Recorded sound committed to library");
         self.library.sounds.push(sound);
-        self.failed = false;
-        self.message.clear();
+    }
+    /// Applies `edit` to a copy of the library and saves it in the background.
+    /// The caller ensures no library task is running.
+    pub fn edit(
+        &mut self,
+        edit: impl FnOnce(&mut Library) -> anyhow::Result<()> + Send + 'static,
+        wake: impl Fn() + Send + 'static,
+    ) {
+        let mut library = self.library.clone();
+        let task = Task::run("VoiceBoxLibrarySave", wake, move || {
+            edit(&mut library)?;
+            library.save()?;
+            Ok(library)
+        });
+        self.library_task = Some(LibraryTask::Edit(task));
     }
     pub fn import(
         &mut self,
         select_files: impl FnOnce() -> anyhow::Result<Vec<PathBuf>> + Send + 'static,
         wake: impl Fn() + Send + 'static,
     ) {
-        if self.importing() || self.deleting() {
+        if self.library_busy() {
             return;
         }
-        // Stop before opening the picker: importing disables playback controls.
-        // Also cancel any pending replacement so it cannot restart behind it.
+        // Importing disables playback controls; a queued replacement must not restart behind it.
         self.stop();
-        let (tx, rx) = mpsc::channel();
-        match std::thread::Builder::new()
-            .name("VoiceBoxSoundPicker".into())
-            .spawn(move || {
-                let _ = tx.send(select_files().and_then(import_files));
-                wake();
-            }) {
-            Ok(_) => self.import_job = Some(rx),
-            Err(e) => {
-                tracing::error!("Failed to spawn sound import: {e}");
-                self.file_error = Some((
-                    Text::SoundImportFailedTitle,
-                    Message::OpenPickerFailed {
-                        error: Details::new(e),
-                    },
-                ));
-            }
-        }
+        let task = Task::run("VoiceBoxSoundImport", wake, move || {
+            select_files().and_then(import_files)
+        });
+        self.library_task = Some(LibraryTask::Import(task));
     }
-    pub fn set_error(&mut self, message: Message) {
-        self.failed = true;
-        self.message = message;
-    }
-    fn finish_import(&mut self, mut imported: ImportedSounds) {
-        let previous_count = self.library.sounds.len();
-        self.library.sounds.append(&mut imported.sounds);
-        if !imported.errors.is_empty() {
-            tracing::warn!(
-                errors = ?imported.errors,
-                "Some sound files could not be imported"
-            );
-            self.file_error = Some((
-                Text::SoundImportFailedTitle,
-                Message::Many(imported.errors.clone()),
-            ));
-        } else {
-            self.failed = false;
-            self.message.clear();
+    pub fn export(
+        &mut self,
+        ids: &HashSet<SoundId>,
+        select_folder: impl FnOnce() -> anyhow::Result<Option<PathBuf>> + Send + 'static,
+        wake: impl Fn() + Send + 'static,
+    ) {
+        if self.library_busy() {
+            return;
         }
-        let added = self.library.sounds.len() - previous_count;
-        if added > 0 || !imported.errors.is_empty() {
-            tracing::info!(
-                added,
-                failed = imported.errors.len(),
-                "Sound import processed"
-            );
-        }
+        self.stop();
+        let sounds: Vec<_> = self
+            .library
+            .sounds
+            .iter()
+            .filter(|sound| ids.contains(&sound.id))
+            .cloned()
+            .collect();
+        let task = Task::run("VoiceBoxSoundExport", wake, move || {
+            select_folder()?.map_or(Ok(()), |folder| export::export_sounds(&sounds, &folder))
+        });
+        self.library_task = Some(LibraryTask::Export(task));
     }
     pub fn remove(&mut self, ids: &HashSet<SoundId>, wake: impl Fn() + Send + 'static) {
-        if ids.is_empty() || self.importing() || self.deleting() {
+        if ids.is_empty() || self.library_busy() {
             return;
         }
         let stopped_playback = if self.playback().sound_id.is_some_and(|id| ids.contains(&id)) {
@@ -167,165 +158,95 @@ impl Soundboard {
         };
         let reclaim_space = !self.playing();
         self.player.cancel_queued();
-        self.failed = false;
-        self.message.clear();
-        let ids = ids.clone();
         let selected = ids.clone();
         let mut library = self.library.clone();
-        let (sender, receiver) = mpsc::channel();
-        match std::thread::Builder::new()
-            .name("VoiceBoxSoundRemoval".into())
-            .spawn(move || {
-                let started = std::time::Instant::now();
-                tracing::info!(count = selected.len(), "Sound deletion started");
-                // Waiting for playback, cascading BLOB deletion, transaction
-                // commit and connection cleanup must all stay off the UI thread.
-                if let Some(thread) = stopped_playback {
-                    thread.wait();
-                }
-                let result = library.remove(&selected, reclaim_space).map(|()| library);
-                match &result {
-                    Ok(_) => tracing::info!(
-                        count = selected.len(),
-                        elapsed_ms = started.elapsed().as_millis(),
-                        "Sound deletion completed"
-                    ),
-                    Err(error) => tracing::error!(
-                        count = selected.len(),
-                        elapsed_ms = started.elapsed().as_millis(),
-                        "Sound deletion failed: {error:#}"
-                    ),
-                }
-                let _ = sender.send(result);
-                wake();
-            }) {
-            Ok(_) => self.removal_job = Some(RemovalJob { ids, receiver }),
-            Err(error) => self.set_error(Message::DeleteSoundFailed {
-                error: Details::new(error),
-            }),
-        }
+        let task = Task::run("VoiceBoxSoundRemoval", wake, move || {
+            // Waiting for playback, cascading BLOB deletion, transaction
+            // commit and connection cleanup must all stay off the UI thread.
+            if let Some(playback) = stopped_playback {
+                playback.wait();
+            }
+            library.remove(&selected, reclaim_space)?;
+            Ok(library)
+        });
+        self.library_task = Some(LibraryTask::Remove(ids.clone(), task));
     }
-    pub fn play(&mut self, index: usize, wake: impl Fn() + Send + 'static) {
-        if self.importing() || self.deleting() {
-            return;
-        }
+    pub fn play(&mut self, index: usize, wake: impl Fn() + Send + 'static) -> anyhow::Result<()> {
         let Some(sound) = self.library.sounds.get(index) else {
-            return;
+            return Ok(());
         };
-        if self.settings.playback_speaker_output_gain_percent.is_mute()
-            && self
-                .settings
-                .playback_microphone_output_gain_percent
-                .is_mute()
-        {
-            self.set_error(Text::OutputsMuted.into());
-            return;
+        if self.library_busy() {
+            return Ok(());
         }
+        ensure!(
+            !self.config.speaker_gain_percent.is_mute()
+                || !self.config.microphone_gain_percent.is_mute(),
+            Text::OutputsMuted
+        );
         self.shuffle.last = Some(sound.id);
-        self.failed = false;
-        self.message.clear();
-        if let Err(error) =
-            self.player
-                .play(sound.id, sound.duration_secs, self.playback_config(), wake)
-        {
-            self.set_error(Message::StartPlaybackFailed {
-                error: Details::new(error),
-            });
-        }
+        self.player
+            .play(sound.id, sound.duration_secs, self.config.clone(), wake);
+        Ok(())
     }
     pub fn stop(&mut self) {
         self.player.stop();
     }
-    pub fn update_playback_settings(&mut self) {
-        self.player.configure(self.playback_config());
-    }
     pub fn playback(&self) -> PlaybackStatus {
         self.player.status()
     }
-    pub fn active_sound(&self) -> Option<&sound::Sound> {
+    pub fn active_sound(&self) -> Option<&Sound> {
         let id = self.playback().sound_id?;
         self.library.sounds.iter().find(|sound| sound.id == id)
     }
-    fn playback_config(&self) -> playback::Config {
-        playback::Config {
-            microphone_device: self
-                .settings
-                .playback_microphone_output_device
-                .as_ref()
-                .map(|device| device.id.clone()),
-            speaker_device: self
-                .settings
-                .playback_speaker_output_device
-                .as_ref()
-                .map(|device| device.id.clone()),
-            microphone_gain_percent: self.settings.playback_microphone_output_gain_percent,
-            speaker_gain_percent: self.settings.playback_speaker_output_gain_percent,
-            hold_hotkey: self.settings.playback_auto_hold_hotkey,
-            repeat: self.settings.playback_repeat,
-        }
+    pub fn poll(&mut self, wake: impl Fn() + Send + 'static) -> Vec<Update> {
+        let mut updates = self.player.poll(wake);
+        updates.extend(self.poll_library());
+        updates
     }
-    pub fn poll(&mut self, wake: impl Fn() + Clone + Send + 'static) {
-        let removal = match self.removal_job.as_ref().map(|job| job.receiver.try_recv()) {
-            Some(Ok(result)) => Some(result),
-            Some(Err(mpsc::TryRecvError::Disconnected)) => {
-                Some(Err(anyhow::anyhow!(Text::DeleteThreadExited)))
-            }
-            _ => None,
-        };
-        if let Some(result) = removal {
-            let job = self
-                .removal_job
-                .take()
-                .expect("UNREACHABLE: a deletion result requires a pending deletion job");
-            match result {
-                Ok(library) => {
-                    self.library = library;
-                    self.removed_sounds = Some(job.ids);
-                    self.failed = false;
-                    self.message.clear();
-                }
-                Err(error) => self.set_error(Message::DeleteSoundFailed {
-                    error: Details::new(error),
-                }),
-            }
-        }
-        if let Some(import_job) = &self.import_job {
-            match import_job.try_recv() {
-                Ok(result) => {
-                    self.import_job = None;
-                    match result {
-                        Ok(imported) => self.finish_import(imported),
-                        Err(e) => {
-                            tracing::error!("Sound file selection or import failed: {e:#}");
-                            self.file_error = Some((
-                                Text::SoundImportFailedTitle,
-                                Message::ImportSoundsFailed {
-                                    error: Details::new(e),
-                                },
-                            ));
-                        }
+    fn poll_library(&mut self) -> Option<Update> {
+        let update = match self.library_task.as_mut()? {
+            LibraryTask::Edit(task) => Update::Edited(task.poll()?.map(|library| {
+                self.library = library;
+            })),
+            LibraryTask::Import(task) => match task.poll()? {
+                Ok(mut imported) => {
+                    tracing::info!(
+                        added = imported.sounds.len(),
+                        failed = imported.errors.len(),
+                        "Sound import processed"
+                    );
+                    self.library.sounds.append(&mut imported.sounds);
+                    if imported.errors.is_empty() {
+                        Update::Cleared
+                    } else {
+                        let errors = Message::Many(imported.errors);
+                        Update::FileError(Text::SoundImportFailedTitle, errors)
                     }
                 }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    tracing::error!("Sound import exited without a result");
-                    self.import_job = None;
-                    self.file_error = Some((
-                        Text::SoundImportFailedTitle,
-                        Text::ImportThreadExited.into(),
-                    ));
+                Err(error) => Update::FileError(
+                    Text::SoundImportFailedTitle,
+                    Message::ImportSoundsFailed {
+                        error: Details::new(error),
+                    },
+                ),
+            },
+            LibraryTask::Export(task) => match task.poll()? {
+                Ok(()) => Update::Cleared,
+                Err(error) => {
+                    Update::FileError(Text::SoundExportFailedTitle, Message::error(error))
                 }
-                Err(mpsc::TryRecvError::Empty) => {}
-            }
-        }
-        for update in self.player.poll(wake) {
-            match update {
-                player::Update::Started => self.message.clear(),
-                player::Update::Restarted => {
-                    self.failed = false;
-                    self.message.clear();
+            },
+            LibraryTask::Remove(ids, task) => match task.poll()? {
+                Ok(library) => {
+                    self.library = library;
+                    Update::Removed(std::mem::take(ids))
                 }
-                player::Update::Error(error) => self.set_error(error),
-            }
-        }
+                Err(error) => Update::Error(Message::DeleteSoundFailed {
+                    error: Details::new(error),
+                }),
+            },
+        };
+        self.library_task = None;
+        Some(update)
     }
 }

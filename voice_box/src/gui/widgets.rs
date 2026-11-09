@@ -1,4 +1,8 @@
-use crate::{hotkeys::Hotkey, i18n::Text, settings::BindingTarget};
+use crate::{
+    hotkeys::Hotkey,
+    i18n::{Message, Text},
+    settings::BindingTarget,
+};
 
 pub const ICON_BUTTON_SIZE: f32 = 30.0;
 
@@ -309,4 +313,28 @@ pub fn hotkey_editor(
         .inner
     })
     .inner
+}
+
+/// A modal with a scrollable, selectable message; returns true once dismissed.
+pub fn notice(ctx: &egui::Context, title: Text, message: &Message) -> bool {
+    let available = ctx.content_rect().size();
+    egui::Modal::new(egui::Id::unique(("notice", title)))
+        .frame(egui::Frame::popup(&ctx.style_of(ctx.theme())).inner_margin(16))
+        .show(ctx, |ui| {
+            ui.set_width((available.x - 64.0).clamp(180.0, 600.0));
+            ui.heading(egui::RichText::new(title.text()).size(24.0));
+            ui.separator();
+            ui.spacing_mut().scroll.floating = false;
+            egui::ScrollArea::vertical()
+                .max_height((available.y - 160.0).clamp(60.0, 400.0))
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.add(egui::Label::new(message.text()).wrap().selectable(true));
+                });
+            ui.separator();
+            if ui.button(Text::Close.text()).clicked() {
+                ui.close();
+            }
+        })
+        .should_close()
 }

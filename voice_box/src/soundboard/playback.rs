@@ -46,7 +46,6 @@ pub enum Event {
         elapsed_secs: f64,
     },
     OutputError(u64, Message),
-    Finished(anyhow::Result<()>),
 }
 
 pub struct PlaybackOutcome {

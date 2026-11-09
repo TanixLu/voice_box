@@ -9,6 +9,7 @@ use voice_box_shared::utils::{WriteMode, settings_path, write_file_with_parents}
 use crate::{
     hotkeys::Hotkey,
     i18n::{LanguagePreference, Message, Text, UserContext},
+    soundboard::PlaybackConfig,
     utils::GainPercent,
 };
 
@@ -83,6 +84,19 @@ impl Settings {
         .user_context(Text::SaveAppSettingsFailed)
     }
 
+    pub fn playback(&self) -> PlaybackConfig {
+        let device_id =
+            |device: &Option<OutputDevice>| device.as_ref().map(|device| device.id.clone());
+        PlaybackConfig {
+            microphone_device: device_id(&self.playback_microphone_output_device),
+            speaker_device: device_id(&self.playback_speaker_output_device),
+            microphone_gain_percent: self.playback_microphone_output_gain_percent,
+            speaker_gain_percent: self.playback_speaker_output_gain_percent,
+            hold_hotkey: self.playback_auto_hold_hotkey,
+            repeat: self.playback_repeat,
+        }
+    }
+
     /// Every bound global shortcut; `sound_hotkeys` is indexed like the sound list.
     pub fn shortcuts(
         &self,
@@ -122,7 +136,10 @@ impl Settings {
             .shortcuts(sound_hotkeys)
             .filter(|&(other_target, _)| other_target != target);
         if hold {
-            ensure!(!others.any(|(_, other)| same_base_key(other)), Text::HoldKeyConflict);
+            ensure!(
+                !others.any(|(_, other)| same_base_key(other)),
+                Text::HoldKeyConflict
+            );
         } else {
             // Sounds may share a shortcut; it then plays a random sound from the group.
             let is_sound = |target| matches!(target, BindingTarget::Sound(_));

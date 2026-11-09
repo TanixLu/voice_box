@@ -121,7 +121,6 @@ messages! {
     PlayingSound { name: String } => ("Playing · {name}", "播放中 · {name}");
     RenameSoundHint { name: String } => ("{name}\nDouble-click to rename", "{name}\n双击重命名");
     StopPlaybackHotkey { key: Hotkey } => ("Stop playback · {key}", "停止播放 · {key}");
-    CannotStartPreview { error: Details } => ("Cannot start preview: {error}", "无法开始试听操作：{error}");
     PreviewFailed { error: Details } => ("Preview failed: {error}", "试听失败：{error}");
     CannotStartOperation { error: Details } => ("Cannot start operation: {error}", "无法开始操作：{error}");
     OperationFailed { error: Details } => ("Operation failed: {error}", "操作失败：{error}");
@@ -129,9 +128,7 @@ messages! {
     OpenWindowFailed { error: Details } => ("Cannot open the VoiceBox window: {error}", "无法打开 VoiceBox 窗口：{error}");
     ShowOverlayFailed { error: Details } => ("Failed to show the playback overlay: {error}", "显示播放浮层失败：{error}");
     LoggingFailed { error: Details } => ("Failed to initialize VoiceBox logging: {error}", "初始化 VoiceBox 日志失败：{error}");
-    OpenPickerFailed { error: Details } => ("Failed to open the file picker: {error}", "打开文件选择器失败：{error}");
     DeleteSoundFailed { error: Details } => ("Failed to delete the sound: {error}", "删除音效失败：{error}");
-    StartPlaybackFailed { error: Details } => ("Cannot start playback: {error}", "无法开始播放：{error}");
     ImportSoundsFailed { error: Details } => ("Failed to import sounds: {error}", "导入音效失败：{error}");
     PlaybackFailed { error: Details } => ("Playback failed: {error}", "播放失败：{error}");
     EnableHotkeysFailed { error: Details } => ("Cannot enable global hotkeys: {error}", "无法启用全局快捷键：{error}");
