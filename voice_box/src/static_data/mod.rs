@@ -15,6 +15,24 @@ pub static ICON_PNG_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon
 
 pub static UNINSTALL_CLEANUP_SCRIPT: &str = include_str!("uninstall_cleanup.ps1");
 
+pub static LICENSES: &str = concat!(
+    "VoiceBox v",
+    env!("CARGO_PKG_VERSION"),
+    "\nCopyright (c) 2026 Tanix\n\n",
+    "Project source: https://github.com/TanixLu/voice_box\n\n",
+    "Original VoiceBox code is licensed under MIT OR Apache-2.0, at your option.\n",
+    "Third-party components and model weights retain their respective licenses.\n\n",
+    "===== VoiceBox: MIT License =====\n\n",
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../LICENSE-MIT")),
+    "\n===== VoiceBox: Apache License 2.0 =====\n\n",
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../LICENSE-APACHE")),
+    "\n===== Third-party licenses and notices =====\n\n",
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../THIRD_PARTY_LICENSES"
+    )),
+);
+
 static STARTUP_SCRIPT: &str = include_str!("startup.ps1");
 pub fn startup_script(
     startup_argument: &str,

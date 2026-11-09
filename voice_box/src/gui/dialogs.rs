@@ -1,27 +1,10 @@
 use crate::{
     gui::{Lifecycle, Startup, VoiceBoxApp, wake_ui, widgets::notice},
     i18n::Text,
+    static_data::LICENSES,
     task::Task,
     uninstall,
 };
-
-const LICENSES: &str = concat!(
-    "VoiceBox v",
-    env!("CARGO_PKG_VERSION"),
-    "\nCopyright (c) 2026 Tanix\n\n",
-    "Project source: https://github.com/TanixLu/voice_box\n\n",
-    "Original VoiceBox code is licensed under MIT OR Apache-2.0, at your option.\n",
-    "Third-party components and model weights retain their respective licenses.\n\n",
-    "===== VoiceBox: MIT License =====\n\n",
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../LICENSE-MIT")),
-    "\n===== VoiceBox: Apache License 2.0 =====\n\n",
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../LICENSE-APACHE")),
-    "\n===== Third-party licenses and notices =====\n\n",
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../THIRD_PARTY_LICENSES"
-    )),
-);
 
 impl VoiceBoxApp {
     pub fn notice_ui(&mut self, ctx: &egui::Context) {
