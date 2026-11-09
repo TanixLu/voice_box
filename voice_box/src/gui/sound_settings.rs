@@ -4,20 +4,23 @@ use crate::{
     devices::{Microphone, Speaker},
     gui::widgets::{ButtonIcon, hint, hotkey_editor, icon_button, trailing_button, warning},
     i18n::{Message, Text},
-    settings::{BindingTarget, OutputDevice, Settings},
+    soundboard::{
+        bindings::Target,
+        prefs::{OutputDevice, Prefs},
+    },
     utils::GainPercent,
 };
 
 #[derive(Default)]
 pub struct SoundSettings {
-    draft: Option<Settings>,
+    draft: Option<Prefs>,
     microphones: Vec<(OutputDevice, String)>,
     speakers: Vec<(OutputDevice, String)>,
 }
 
 pub struct Status<'a> {
     pub busy: bool,
-    pub capture_target: Option<BindingTarget>,
+    pub capture_target: Option<&'a Target>,
     pub capture_message: &'a Message,
     pub error: Option<&'a Message>,
 }
@@ -25,24 +28,24 @@ pub struct Status<'a> {
 pub enum Action {
     None,
     Closed,
-    Save(Settings),
-    Capture(BindingTarget),
+    Save(Prefs),
+    Capture(Target),
     ClearMessage,
 }
 
 impl SoundSettings {
-    pub fn open(&mut self, settings: &Settings) {
-        self.draft = Some(settings.clone());
+    pub fn open(&mut self, prefs: &Prefs) {
+        self.draft = Some(prefs.clone());
     }
     pub fn is_open(&self) -> bool {
         self.draft.is_some()
     }
-    pub fn draft_mut(&mut self) -> Option<&mut Settings> {
+    pub fn draft_mut(&mut self) -> Option<&mut Prefs> {
         self.draft.as_mut()
     }
 
-    fn is_dirty(&self, settings: &Settings) -> bool {
-        self.draft.as_ref().is_some_and(|draft| draft != settings)
+    fn is_dirty(&self, prefs: &Prefs) -> bool {
+        self.draft.as_ref().is_some_and(|draft| draft != prefs)
     }
     pub fn set_devices(&mut self, microphones: Vec<Microphone>, speakers: Vec<Speaker>) {
         self.microphones = microphones
@@ -76,16 +79,11 @@ impl SoundSettings {
             })
             .collect();
     }
-    pub fn ui(&mut self, ctx: &egui::Context, current: &Settings, status: Status<'_>) -> Action {
+    pub fn ui(&mut self, ctx: &egui::Context, current: &Prefs, status: Status<'_>) -> Action {
         if self.draft.is_none() {
             return Action::None;
         }
-        let defaults = Settings {
-            language_preference: current.language_preference,
-            theme_preference: current.theme_preference,
-            startup_enabled: current.startup_enabled,
-            ..Settings::default()
-        };
+        let defaults = Prefs::default();
         let available = ctx.content_rect().size();
         let capture_target = status.capture_target;
         let idle = !status.busy;
@@ -120,58 +118,52 @@ impl SoundSettings {
                         playback_volume(
                             ui,
                             Text::MicrophoneOutput.text(),
-                            &mut settings.playback_microphone_output_gain_percent,
+                            &mut settings.microphone_gain_percent,
                         );
                         output_device_picker(
                             ui,
                             "sound_microphone",
-                            &mut settings.playback_microphone_output_device,
+                            &mut settings.microphone_device,
                             &self.microphones,
                         );
                         ui.add_space(8.0);
                         playback_volume(
                             ui,
                             Text::SpeakerOutput.text(),
-                            &mut settings.playback_speaker_output_gain_percent,
+                            &mut settings.speaker_gain_percent,
                         );
                         output_device_picker(
                             ui,
                             "sound_speaker",
-                            &mut settings.playback_speaker_output_device,
+                            &mut settings.speaker_device,
                             &self.speakers,
                         );
                         ui.add_space(8.0);
-                        ui.checkbox(
-                            &mut settings.playback_show_overlay,
-                            Text::ShowOverlay.text(),
-                        );
-                        ui.checkbox(&mut settings.playback_repeat, Text::RepeatPlayback.text());
+                        ui.checkbox(&mut settings.show_overlay, Text::ShowOverlay.text());
+                        ui.checkbox(&mut settings.repeat, Text::RepeatPlayback.text());
                         if hotkey_editor(
                             ui,
                             Text::RandomHotkey.text(),
-                            &mut settings.playback_random_hotkey,
-                            BindingTarget::Random,
-                            capture_target,
+                            &mut settings.keys.random,
+                            capture_target == Some(&Target::Random),
                         ) {
-                            capture = Some(BindingTarget::Random);
+                            capture = Some(Target::Random);
                         }
                         if hotkey_editor(
                             ui,
                             Text::StopHotkey.text(),
-                            &mut settings.playback_stop_hotkey,
-                            BindingTarget::Stop,
-                            capture_target,
+                            &mut settings.keys.stop,
+                            capture_target == Some(&Target::Stop),
                         ) {
-                            capture = Some(BindingTarget::Stop);
+                            capture = Some(Target::Stop);
                         }
                         if hotkey_editor(
                             ui,
                             Text::HoldDuringPlayback.text(),
-                            &mut settings.playback_auto_hold_hotkey,
-                            BindingTarget::Hold,
-                            capture_target,
+                            &mut settings.keys.hold,
+                            capture_target == Some(&Target::Hold),
                         ) {
-                            capture = Some(BindingTarget::Hold);
+                            capture = Some(Target::Hold);
                         }
                         if !status.capture_message.is_empty() {
                             warning(ui, &status.capture_message.text());
@@ -213,12 +205,9 @@ impl SoundSettings {
         } else if save {
             let draft = self
                 .draft
-                .as_mut()
+                .clone()
                 .expect("UNREACHABLE: settings draft should exist while rendering the dialog");
-            draft.language_preference = current.language_preference;
-            draft.theme_preference = current.theme_preference;
-            draft.startup_enabled = current.startup_enabled;
-            Action::Save(draft.clone())
+            Action::Save(draft)
         } else if let Some(target) = capture {
             Action::Capture(target)
         } else if clear_message {

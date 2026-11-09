@@ -11,7 +11,7 @@ pub use crate::i18n::{
     message::{Details, Message, UserContext},
     text::Text,
 };
-use crate::utils::win_preferred_ui_languages;
+use crate::{model::Hotkey, utils::win_preferred_ui_languages};
 
 #[derive(Clone, Copy, TryFromPrimitive, IntoPrimitive, EnumIter)]
 #[repr(u8)]
@@ -65,4 +65,8 @@ impl LanguagePreference {
             Self::SimplifiedChinese => Language::SimplifiedChinese,
         }
     }
+}
+
+pub fn hotkey_label(key: Hotkey) -> String {
+    key.label_with(Text::InvalidKey.text())
 }

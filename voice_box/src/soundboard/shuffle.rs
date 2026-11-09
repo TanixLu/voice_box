@@ -3,10 +3,7 @@ use std::{
     hash::{BuildHasher, RandomState},
 };
 
-use crate::{
-    hotkeys::Hotkey,
-    soundboard::sound::{Sound, SoundId},
-};
+use crate::model::{Hotkey, Sound, SoundId};
 
 #[derive(Default)]
 pub struct Shuffle {

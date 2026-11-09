@@ -4,10 +4,8 @@ use anyhow::ensure;
 
 use crate::{
     i18n::{Language, Text, UserContext, current_language},
-    soundboard::{
-        library::Library,
-        sound::{SoundId, is_valid_name},
-    },
+    model::{SoundId, is_valid_name},
+    soundboard::library::Library,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -6,8 +6,7 @@ use crate::{
         widgets::{ButtonIcon, format_duration, hotkey_badge, icon_button, play_button},
     },
     i18n::{Message, Text},
-    settings::BindingTarget,
-    soundboard::sound::Sound,
+    model::Sound,
 };
 
 #[derive(Clone, Copy)]
@@ -72,7 +71,6 @@ pub fn show(ui: &mut egui::Ui, row: Row<'_>, edit: Option<&mut RenameEditor>) ->
     let can_reorder = row.can_reorder;
     let renaming = row.renaming;
     let active = row.status.active_sound == Some(sound.id);
-    let capture_target = row.status.capture_target;
     let mut response = Response::default();
     ui.push_id(sound.id, |ui| {
         ui.horizontal(|ui| {
@@ -155,7 +153,7 @@ pub fn show(ui: &mut egui::Ui, row: Row<'_>, edit: Option<&mut RenameEditor>) ->
                     hotkey_badge(ui, key, max_width);
                 } else if row.selected.is_none() {
                     let width = (ui.available_width() - 74.0).clamp(24.0, 132.0);
-                    let binding = capture_target == Some(BindingTarget::Sound(index));
+                    let binding = row.status.capture == Some(sound.id);
                     let label = if binding {
                         Text::PressKey.text()
                     } else {

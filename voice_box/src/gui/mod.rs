@@ -23,12 +23,8 @@ use windows::Win32::Foundation::HWND;
 
 use crate::{
     gui::{
-        hotkey_binding::{HotkeyManager, PlaybackAction},
-        microphone::MicrophonePanel,
-        soundboard_panel::SoundboardPanel,
-        style::apply_style,
-        voice::VoicePanel,
-        widgets::section,
+        microphone::MicrophonePanel, soundboard_panel::SoundboardPanel, style::apply_style,
+        voice::VoicePanel, widgets::section,
     },
     i18n::{self, Details, LanguagePreference, Message, Text, UserContext},
     settings::Settings,
@@ -139,13 +135,10 @@ struct VoiceBoxApp {
     microphones: MicrophonePanel,
     voice: VoicePanel,
     soundboard: SoundboardPanel,
-    hotkeys: HotkeyManager,
     start_in_tray: bool,
     tray: tray::Tray,
     show_licenses: bool,
     notice: Option<(Text, Message)>,
-    overlay: overlay::Overlay,
-    overlay_visible: bool,
 }
 
 impl VoiceBoxApp {
@@ -164,20 +157,17 @@ impl VoiceBoxApp {
         fonts::install(ctx);
         let mut app = Self {
             tab: Tab::Voice,
-            soundboard: SoundboardPanel::new(library, &settings),
+            soundboard: SoundboardPanel::new(ctx, library, &settings.soundboard),
             settings,
             settings_save: None,
             startup: Startup::Pending,
             lifecycle: Lifecycle::Running,
             microphones: MicrophonePanel::default(),
             voice: VoicePanel::new(apo_config),
-            hotkeys: HotkeyManager::new(ctx),
             start_in_tray,
             tray,
             show_licenses: false,
             notice: None,
-            overlay: overlay::Overlay::default(),
-            overlay_visible: false,
         };
         app.microphones.refresh(ctx);
         Ok(app)
@@ -222,7 +212,7 @@ impl VoiceBoxApp {
         let startup_changed = settings.startup_enabled != self.settings.startup_enabled;
         ctx.set_theme(settings.theme_preference);
         i18n::set_language(settings.language_preference.resolve());
-        self.soundboard.apply_settings(&settings);
+        self.soundboard.apply_prefs(&settings.soundboard);
         self.settings = settings;
         if startup_changed {
             let notice = self
@@ -376,7 +366,7 @@ impl VoiceBoxApp {
                     .add_enabled(
                         !self.interaction_blocked()
                             && !self.voice.previewing()
-                            && !self.soundboard.model().playing(),
+                            && !self.soundboard.playing(),
                         egui::Button::new(Text::FullUninstall.text()),
                     )
                     .clicked()
@@ -415,7 +405,7 @@ impl VoiceBoxApp {
                         egui::vec2(width, 0.0),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
-                            let soundboard_busy = self.soundboard.model().busy();
+                            let soundboard_busy = self.soundboard.active();
                             section(ui, |ui| {
                                 self.microphones
                                     .ui(ui, self.voice.previewing() || soundboard_busy);
@@ -436,22 +426,9 @@ impl VoiceBoxApp {
     }
 
     fn show(&mut self, ui: &mut egui::Ui) {
+        let soundboard_visible = self.tab == Tab::Soundboard;
         if !self.interaction_blocked() {
-            self.soundboard
-                .poll_capture(ui.ctx(), &self.settings, &mut self.hotkeys);
-            if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
-                self.soundboard.cancel_rename();
-            }
-            if self.tab != Tab::Soundboard
-                || ui.input(|input| {
-                    !input.focused
-                        || input.smooth_scroll_delta != egui::Vec2::ZERO
-                        || input.pointer.is_decidedly_dragging()
-                        || input.key_pressed(egui::Key::Escape)
-                })
-            {
-                self.soundboard.cancel_delete();
-            }
+            self.soundboard.prepare(ui.ctx(), soundboard_visible);
         }
         if matches!(self.lifecycle, Lifecycle::Uninstalling(_)) {
             egui::CentralPanel::default().show(ui, |ui| {
@@ -469,7 +446,7 @@ impl VoiceBoxApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(20))
             .show(ui, |ui| {
-                if self.interaction_blocked() || self.hotkeys.is_capturing() {
+                if self.interaction_blocked() || self.soundboard.capturing() {
                     ui.disable();
                 }
                 ui.horizontal(|ui| {
@@ -489,27 +466,25 @@ impl VoiceBoxApp {
                     Tab::Voice => self.voice_tab_ui(ui),
                     Tab::Soundboard => {
                         let busy = self.voice.previewing() || self.interaction_blocked();
-                        self.soundboard
-                            .ui(ui, &self.settings, busy, &mut self.hotkeys)
+                        self.soundboard.ui(ui, busy)
                     }
                 }
             });
 
         let ctx = ui.ctx();
         self.licenses_ui(ctx);
+        let blocked = self.interaction_blocked();
         let saving = self.settings_save.is_some();
-        if let Some(settings) =
-            self.soundboard
-                .settings_ui(ctx, &self.settings, saving, &mut self.hotkeys)
+        if let Some(prefs) = self
+            .soundboard
+            .windows(ctx, blocked, saving, soundboard_visible)
         {
+            let settings = Settings {
+                soundboard: prefs,
+                ..self.settings.clone()
+            };
             self.save_settings(ctx, settings);
         }
-        self.soundboard.recording_ui(ctx);
-        if !self.interaction_blocked() && !self.soundboard.recording_open() {
-            self.soundboard
-                .finish_rename(ctx, self.tab == Tab::Soundboard);
-        }
-        self.soundboard.file_error_ui(ctx);
         self.full_uninstall_ui(ctx);
         self.notice_ui(ctx);
     }
@@ -538,45 +513,12 @@ impl eframe::App for VoiceBoxApp {
         let exiting = matches!(self.lifecycle, Lifecycle::Exiting);
         close_to_tray(ctx, exiting, self.tray.available());
         self.tray.set_exit_enabled(!self.interaction_blocked());
-        let focused = ctx.input(|input| {
-            input.viewport().focused == Some(true) && input.viewport().minimized != Some(true)
-        });
-        if !focused {
-            self.hotkeys.cancel_capture();
-        }
         let shortcuts_enabled = !self.interaction_blocked()
             && !self.voice.previewing()
-            && !self.soundboard.notice_open()
-            && !self.soundboard.recording_open()
-            && !matches!(self.lifecycle, Lifecycle::ConfirmUninstall)
-            && !(focused && (self.soundboard.renaming() || ctx.text_edit_focused()));
-        let sounds = &self.soundboard.model().library().sounds;
-        let shortcuts = self
-            .settings
-            .shortcuts(sounds.iter().map(|sound| sound.hotkey));
-        for action in self.hotkeys.poll(shortcuts_enabled, shortcuts) {
-            match action {
-                PlaybackAction::Stop => self.soundboard.stop(),
-                PlaybackAction::Random(hotkey) => {
-                    self.soundboard
-                        .play_random_sound(ctx, hotkey, &mut self.hotkeys)
-                }
-            }
-        }
-        // Bootstrap the child while minimized; visible children keep UI passes running.
-        if self.settings.playback_show_overlay
-            && self.soundboard.model().playing()
-            && !self.overlay_visible
-            && ctx.input(|input| input.viewport().visible() == Some(false))
-        {
-            ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
-        }
+            && !matches!(self.lifecycle, Lifecycle::ConfirmUninstall);
+        self.soundboard.shortcuts(ctx, shortcuts_enabled);
         // Keep completions moving even when eframe skips painting a hidden window.
-        if self.interaction_blocked()
-            || self.voice.previewing()
-            || self.soundboard.model().busy()
-            || self.soundboard.recording_open()
-        {
+        if self.interaction_blocked() || self.voice.previewing() || self.soundboard.active() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }
@@ -585,29 +527,15 @@ impl eframe::App for VoiceBoxApp {
         self.show(ui);
         // Include operations started during this UI pass before the native menu can open.
         self.tray.set_exit_enabled(!self.interaction_blocked());
-        let enabled = self.settings.playback_show_overlay
-            && matches!(
-                self.lifecycle,
-                Lifecycle::Running | Lifecycle::ConfirmUninstall
-            );
-        let repeat = self.settings.playback_repeat;
-        let model = self.soundboard.model();
-        self.overlay_visible = match self.overlay.show(ui.ctx(), model, repeat, enabled) {
-            Ok(visible) => visible,
-            Err(error) => {
-                tracing::warn!("Failed to show playback overlay: {error:#}");
-                self.soundboard.set_error(Message::ShowOverlayFailed {
-                    error: Details::new(error),
-                });
-                false
-            }
-        };
+        let allowed = matches!(
+            self.lifecycle,
+            Lifecycle::Running | Lifecycle::ConfirmUninstall
+        );
+        self.soundboard.overlay_ui(ui.ctx(), allowed);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        // Unregister while the main window still exists.
-        self.hotkeys.shutdown();
-        self.soundboard.stop();
+        self.soundboard.shutdown();
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

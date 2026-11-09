@@ -4,10 +4,10 @@ use std::sync::mpsc;
 
 use crate::{
     i18n::{Details, Message},
+    model::SoundId,
     soundboard::{
         Update,
         playback::{self, Command, Config, Event},
-        sound::SoundId,
     },
     task::Task,
 };

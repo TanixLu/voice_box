@@ -14,7 +14,7 @@ use voice_box_shared::pcm_transport::{PCM_CHANNELS, PcmFrame};
 use crate::{
     audio::{capture::Recording, loopback, playback::playback},
     i18n::{Text, UserContext},
-    soundboard::sound::{Sound, is_valid_name},
+    model::{Sound, is_valid_name},
     task::Task,
 };
 

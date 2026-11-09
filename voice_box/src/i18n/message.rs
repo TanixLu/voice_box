@@ -1,8 +1,8 @@
 use std::{borrow::Cow, error::Error, fmt, sync::Arc};
 
 use crate::{
-    hotkeys::Hotkey,
     i18n::{Language, Text, current_language},
+    model::Hotkey,
 };
 
 #[derive(Clone, Debug)]
@@ -86,7 +86,7 @@ impl RenderArgument for Details {
 impl RenderArgument for Hotkey {
     type Output = String;
     fn render_argument(&self, language: Language) -> String {
-        self.label_in_language(language)
+        self.label_with(Text::InvalidKey.in_language(language))
     }
 }
 macro_rules! plain_argument {

@@ -6,9 +6,8 @@ use anyhow::ensure;
 
 use crate::{
     database,
-    hotkeys::Hotkey,
     i18n::{Text, UserContext},
-    soundboard::sound::{Sound, SoundId, is_valid_name},
+    model::{Hotkey, Sound, SoundId, is_valid_name},
 };
 
 #[derive(Clone, Default)]

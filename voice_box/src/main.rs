@@ -7,6 +7,7 @@ mod gui;
 mod hotkeys;
 mod i18n;
 mod logging;
+mod model;
 mod registry;
 mod settings;
 mod setup;

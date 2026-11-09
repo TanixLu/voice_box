@@ -2,10 +2,10 @@ use std::{collections::HashSet, ops::Range};
 
 use crate::{
     i18n::{Message, Text},
+    model::SoundId,
     soundboard::{
         library::Library,
         rename::{RenameLocation, RenamePlan, RenameRule},
-        sound::SoundId,
     },
 };
 

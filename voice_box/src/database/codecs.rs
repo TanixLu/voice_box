@@ -5,7 +5,7 @@ use rusqlite::{
     types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, Value, ValueRef},
 };
 
-use crate::hotkeys::Hotkey;
+use crate::model::Hotkey;
 
 impl FromSql for Hotkey {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {

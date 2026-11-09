@@ -6,7 +6,6 @@ use std::{
     sync::mpsc,
 };
 
-use serde::{Deserialize, Serialize};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, WPARAM},
     UI::{
@@ -16,160 +15,57 @@ use windows::Win32::{
     },
 };
 
-use crate::i18n::{Message, Text, UserContext, current_language};
+use crate::{
+    i18n::{Message, Text, UserContext},
+    model::{Hotkey, MODIFIERS, is_modifier, key_name},
+};
 
 const SIMULATED_INPUT_TAG: usize = 0x5642_4b59;
 
-/// Modifier flags in display and press order, with the key each one stands for.
-const MODIFIERS: [(HOT_KEY_MODIFIERS, VIRTUAL_KEY, &str); 4] = [
-    (MOD_CONTROL, VK_CONTROL, "Ctrl"),
-    (MOD_SHIFT, VK_SHIFT, "Shift"),
-    (MOD_ALT, VK_MENU, "Alt"),
-    (MOD_WIN, VK_LWIN, "Win"),
-];
-const ALL_MODIFIERS: u32 = MOD_CONTROL.0 | MOD_SHIFT.0 | MOD_ALT.0 | MOD_WIN.0;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize, Serialize)]
-pub struct Hotkey {
-    pub virtual_key_code: u16,
-    pub modifiers: u32,
-}
-
-impl Hotkey {
-    pub fn is_valid(self) -> bool {
-        self.is_valid_for_hold() && !is_modifier(self.virtual_key_code)
-    }
-    pub fn is_valid_for_hold(self) -> bool {
-        key_name(self.virtual_key_code).is_some() && self.modifiers & !ALL_MODIFIERS == 0
-    }
-    pub fn is_escape(self) -> bool {
-        self.virtual_key_code == VK_ESCAPE.0
-    }
-    pub fn label(self) -> String {
-        self.label_in_language(current_language())
-    }
-    pub fn label_in_language(self, language: crate::i18n::Language) -> String {
-        let key = key_name(self.virtual_key_code)
-            .unwrap_or_else(|| Text::InvalidKey.in_language(language).into());
-        self.modifier_keys()
-            .map(|(_, _, name)| name.to_owned())
-            .chain([key])
-            .collect::<Vec<_>>()
-            .join(" + ")
-    }
-    fn modifier_keys(self) -> impl Iterator<Item = (HOT_KEY_MODIFIERS, VIRTUAL_KEY, &'static str)> {
-        MODIFIERS
-            .into_iter()
-            .filter(move |(flag, ..)| self.modifiers & flag.0 != 0)
-    }
-    pub fn pressed() -> Option<Self> {
-        let modifiers = MODIFIERS
-            .into_iter()
-            .filter(|&(_, key, _)| is_key_down(key.0) || (key == VK_LWIN && is_key_down(VK_RWIN.0)))
-            .fold(0, |flags, (flag, ..)| flags | flag.0);
-        (8..=0xfe)
-            .find(|&key| !is_modifier(key) && key_name(key).is_some() && is_key_down(key))
-            .map(|virtual_key_code| Self {
-                virtual_key_code,
-                modifiers,
-            })
-    }
-    pub fn pressed_modifier() -> Option<Self> {
-        [
-            VK_LSHIFT,
-            VK_RSHIFT,
-            VK_LCONTROL,
-            VK_RCONTROL,
-            VK_LMENU,
-            VK_RMENU,
-            VK_LWIN,
-            VK_RWIN,
-        ]
+/// The non-modifier key currently held, with any held modifiers.
+pub fn pressed() -> Option<Hotkey> {
+    let modifiers = MODIFIERS
         .into_iter()
-        .find(|key| is_key_down(key.0))
-        .map(|key| Self {
-            virtual_key_code: key.0,
-            modifiers: 0,
+        .filter(|&(_, key, _)| is_key_down(key.0) || (key == VK_LWIN && is_key_down(VK_RWIN.0)))
+        .fold(0, |flags, (flag, ..)| flags | flag.0);
+    (8..=0xfe)
+        .find(|&key| !is_modifier(key) && key_name(key).is_some() && is_key_down(key))
+        .map(|virtual_key_code| Hotkey {
+            virtual_key_code,
+            modifiers,
         })
-    }
-    /// Registration id; virtual-key codes fit in the low byte.
-    fn id(self) -> i32 {
-        i32::from(self.virtual_key_code) | ((self.modifiers as i32) << 8)
-    }
-    fn from_id(id: i32) -> Self {
-        Self {
-            virtual_key_code: (id & 0xff) as u16,
-            modifiers: (id >> 8) as u32,
-        }
-    }
 }
 
-fn is_modifier(key: u16) -> bool {
-    matches!(
-        VIRTUAL_KEY(key),
-        VK_SHIFT
-            | VK_CONTROL
-            | VK_MENU
-            | VK_LWIN
-            | VK_RWIN
-            | VK_LSHIFT
-            | VK_RSHIFT
-            | VK_LCONTROL
-            | VK_RCONTROL
-            | VK_LMENU
-            | VK_RMENU
-    )
-}
-
-fn key_name(key: u16) -> Option<String> {
-    Some(match key {
-        0x30..=0x39 | 0x41..=0x5a => char::from_u32(u32::from(key))?.to_string(),
-        0x70..=0x87 => format!("F{}", key - 0x6f),
-        0x60..=0x69 => format!("Num {}", key - 0x60),
-        0x08 => "Backspace".into(),
-        0x09 => "Tab".into(),
-        0x0d => "Enter".into(),
-        0x1b => "Esc".into(),
-        0x20 => "Space".into(),
-        0x10 => "Shift".into(),
-        0x11 => "Ctrl".into(),
-        0x12 => "Alt".into(),
-        0x5b => "Left Win".into(),
-        0x5c => "Right Win".into(),
-        0xa0 => "Left Shift".into(),
-        0xa1 => "Right Shift".into(),
-        0xa2 => "Left Ctrl".into(),
-        0xa3 => "Right Ctrl".into(),
-        0xa4 => "Left Alt".into(),
-        0xa5 => "Right Alt".into(),
-        0x21 => "PageUp".into(),
-        0x22 => "PageDown".into(),
-        0x23 => "End".into(),
-        0x24 => "Home".into(),
-        0x25 => "Left".into(),
-        0x26 => "Up".into(),
-        0x27 => "Right".into(),
-        0x28 => "Down".into(),
-        0x2d => "Insert".into(),
-        0x2e => "Delete".into(),
-        0x6a => "Num *".into(),
-        0x6b => "Num +".into(),
-        0x6d => "Num -".into(),
-        0x6e => "Num .".into(),
-        0x6f => "Num /".into(),
-        0xba => ";".into(),
-        0xbb => "=".into(),
-        0xbc => ",".into(),
-        0xbd => "-".into(),
-        0xbe => ".".into(),
-        0xbf => "/".into(),
-        0xc0 => "`".into(),
-        0xdb => "[".into(),
-        0xdc => "\\".into(),
-        0xdd => "]".into(),
-        0xde => "'".into(),
-        _ => return None,
+/// A held modifier on its own, which only the hold key may use.
+pub fn pressed_modifier() -> Option<Hotkey> {
+    [
+        VK_LSHIFT,
+        VK_RSHIFT,
+        VK_LCONTROL,
+        VK_RCONTROL,
+        VK_LMENU,
+        VK_RMENU,
+        VK_LWIN,
+        VK_RWIN,
+    ]
+    .into_iter()
+    .find(|key| is_key_down(key.0))
+    .map(|key| Hotkey {
+        virtual_key_code: key.0,
+        modifiers: 0,
     })
+}
+
+/// Registration id; virtual-key codes fit in the low byte.
+fn registration_id(key: Hotkey) -> i32 {
+    i32::from(key.virtual_key_code) | ((key.modifiers as i32) << 8)
+}
+
+fn from_registration_id(id: i32) -> Hotkey {
+    Hotkey {
+        virtual_key_code: (id & 0xff) as u16,
+        modifiers: (id >> 8) as u32,
+    }
 }
 
 fn is_key_down(key: u16) -> bool {
@@ -186,7 +82,7 @@ impl Registration {
         unsafe {
             RegisterHotKey(
                 Some(window),
-                key.id(),
+                registration_id(key),
                 HOT_KEY_MODIFIERS(key.modifiers) | MOD_NOREPEAT,
                 u32::from(key.virtual_key_code),
             )
@@ -197,8 +93,10 @@ impl Registration {
 }
 impl Drop for Registration {
     fn drop(&mut self) {
-        if let Err(error) = unsafe { UnregisterHotKey(Some(self.window), self.key.id()) } {
-            tracing::warn!("Failed to unregister {}: {error}", self.key.label());
+        if let Err(error) =
+            unsafe { UnregisterHotKey(Some(self.window), registration_id(self.key)) }
+        {
+            tracing::warn!("Failed to unregister {}: {error}", self.key.label_with("?"));
         }
     }
 }
@@ -280,7 +178,7 @@ unsafe extern "system" fn window_proc(
     if message == WM_HOTKEY {
         // The boxed data stays alive until `Hotkeys` removes this subclass.
         let subclass = unsafe { &*(data as *const Subclass) };
-        let _ = subclass.pressed.send(Hotkey::from_id(wparam.0 as i32));
+        let _ = subclass.pressed.send(from_registration_id(wparam.0 as i32));
         (subclass.wake)();
         return LRESULT(0);
     }

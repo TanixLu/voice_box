@@ -8,7 +8,8 @@ use std::{
 use crate::{
     database::audio::AudioSource,
     i18n::{Message, Text, UserContext},
-    soundboard::{decoder::open_format, sound::Sound},
+    model::Sound,
+    soundboard::decoder::open_format,
 };
 
 const MAX_FILENAME_ATTEMPTS: usize = 10_000;

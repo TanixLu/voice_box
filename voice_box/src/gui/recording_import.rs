@@ -2,10 +2,8 @@ use crate::{
     audio::loopback::MAX_RECORD_SECONDS,
     gui::widgets::{ButtonIcon, hint, icon_button, warning},
     i18n::{Details, Message, Text},
-    soundboard::{
-        recording::{Activity, Edge, Recorder, Selection},
-        sound::{Sound, is_valid_name},
-    },
+    model::{Sound, is_valid_name},
+    soundboard::recording::{Activity, Edge, Recorder, Selection},
 };
 
 #[derive(Default)]

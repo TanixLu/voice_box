@@ -6,14 +6,14 @@ use std::collections::HashSet;
 
 use crate::{
     i18n::{Message, Text},
-    settings::BindingTarget,
-    soundboard::sound::{Sound, SoundId},
+    model::{Sound, SoundId},
 };
 
 #[derive(Clone, Copy)]
 pub struct Status {
     pub active_sound: Option<SoundId>,
-    pub capture_target: Option<BindingTarget>,
+    /// The single sound whose key is being captured.
+    pub capture: Option<SoundId>,
     pub batch_capturing: bool,
 }
 
@@ -21,7 +21,7 @@ pub enum Action {
     Play(usize),
     Stop,
     Remove(SoundId),
-    Capture(BindingTarget),
+    Capture(SoundId),
     ClearHotkey(usize),
     Move { from: usize, to: usize },
 }
@@ -39,7 +39,7 @@ struct RowActions {
     stop: bool,
     remove: Option<usize>,
     delete_clicked: bool,
-    capture: Option<BindingTarget>,
+    capture: Option<SoundId>,
     rename: Option<(usize, String)>,
     clear_hotkey: Option<usize>,
     rename_visible: bool,
@@ -377,7 +377,7 @@ impl SoundList {
                                 }
                                 row::Action::ClearHotkey => result.clear_hotkey = Some(index),
                                 row::Action::Capture => {
-                                    result.capture = Some(BindingTarget::Sound(index));
+                                    result.capture = Some(sound.id);
                                 }
                                 row::Action::Rename => {
                                     result.rename = Some((index, sound.name.clone()));

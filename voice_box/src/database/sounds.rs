@@ -9,9 +9,8 @@ use rusqlite::{
 };
 
 use crate::{
-    hotkeys::Hotkey,
     i18n::Text,
-    soundboard::sound::{Sound, SoundId, is_valid_name},
+    model::{Hotkey, Sound, SoundId, is_valid_name},
 };
 
 use super::audio::AudioWriter;

@@ -1,29 +1,31 @@
 //! Sound library operations and background playback coordination.
 
+pub mod bindings;
 mod decoder;
 mod export;
 mod import;
 pub mod library;
 mod playback;
 mod player;
+pub mod prefs;
 pub mod recording;
 pub mod rename;
 mod shuffle;
-pub mod sound;
 
 use std::{collections::HashSet, path::PathBuf};
 
 use anyhow::ensure;
 
-pub use crate::soundboard::{playback::Config as PlaybackConfig, player::PlaybackStatus};
+pub use crate::soundboard::player::PlaybackStatus;
 use crate::{
-    hotkeys::Hotkey,
     i18n::{Details, Message, Text},
+    model::{Hotkey, Sound, SoundId},
     soundboard::{
         import::{ImportedSounds, import_files},
         library::Library,
+        playback::Config,
         player::Player,
-        sound::{Sound, SoundId},
+        prefs::Prefs,
     },
     task::Task,
 };
@@ -49,22 +51,23 @@ enum LibraryTask {
 
 pub struct Soundboard {
     library: Library,
-    config: PlaybackConfig,
+    config: Config,
     player: Player,
     library_task: Option<LibraryTask>,
     shuffle: shuffle::Shuffle,
 }
 impl Soundboard {
-    pub fn new(library: Library, config: PlaybackConfig) -> Self {
+    pub fn new(library: Library, prefs: &Prefs) -> Self {
         Self {
             library,
-            config,
+            config: prefs.playback(),
             player: Player::default(),
             library_task: None,
             shuffle: shuffle::Shuffle::default(),
         }
     }
-    pub fn configure(&mut self, config: PlaybackConfig) {
+    pub fn configure(&mut self, prefs: &Prefs) {
+        let config = prefs.playback();
         if config.microphone_device != self.config.microphone_device
             || config.speaker_device != self.config.speaker_device
         {

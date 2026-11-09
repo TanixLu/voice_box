@@ -30,7 +30,7 @@ impl VoiceBoxApp {
                     .add_enabled(
                         !self.interaction_blocked()
                             && !self.voice.previewing()
-                            && !self.soundboard.model().playing(),
+                            && !self.soundboard.playing(),
                         egui::Button::new(Text::Uninstall.text()),
                     )
                     .clicked()

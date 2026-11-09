@@ -1,7 +1,6 @@
 use crate::{
-    hotkeys::Hotkey,
     i18n::{Message, Text},
-    settings::BindingTarget,
+    model::Hotkey,
 };
 
 pub const ICON_BUTTON_SIZE: f32 = 30.0;
@@ -199,7 +198,7 @@ fn hotkey_badge_size(ui: &egui::Ui, key: Hotkey, max_width: f32) -> egui::Vec2 {
     let text_size = ui
         .painter()
         .layout_no_wrap(
-            key.label(),
+            crate::i18n::hotkey_label(key),
             egui::TextStyle::Body.resolve(ui.style()),
             ui.visuals().text_color(),
         )
@@ -211,7 +210,7 @@ fn hotkey_badge_size(ui: &egui::Ui, key: Hotkey, max_width: f32) -> egui::Vec2 {
 }
 
 pub fn hotkey_badge(ui: &mut egui::Ui, key: Hotkey, max_width: f32) {
-    let text = key.label();
+    let text = crate::i18n::hotkey_label(key);
     let font = egui::TextStyle::Body.resolve(ui.style());
     let size = hotkey_badge_size(ui, key, max_width);
     // Allocate and paint only the text's measured width. A Frame inherits the
@@ -237,10 +236,8 @@ pub fn hotkey_editor(
     ui: &mut egui::Ui,
     label: &str,
     key: &mut Option<Hotkey>,
-    target: BindingTarget,
-    capture_target: Option<BindingTarget>,
+    binding: bool,
 ) -> bool {
-    let binding = capture_target == Some(target);
     ui.push_id(label, |ui| {
         ui.horizontal(|ui| {
             ui.label(label);

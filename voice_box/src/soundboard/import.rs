@@ -16,10 +16,8 @@ use voice_box_shared::pcm_transport::PCM_SAMPLE_RATE;
 use crate::{
     database,
     i18n::{Details, Message, Text, UserContext},
-    soundboard::{
-        decoder::SoundDecoder,
-        sound::{Sound, is_valid_name},
-    },
+    model::{Sound, is_valid_name},
+    soundboard::decoder::SoundDecoder,
 };
 
 pub struct ImportedSounds {

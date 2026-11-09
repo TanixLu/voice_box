@@ -14,9 +14,10 @@ use voice_box_shared::pcm_transport::{
 use crate::{
     audio::monitor::Monitor,
     devices,
-    hotkeys::{HeldKeys, Hotkey},
+    hotkeys::HeldKeys,
     i18n::{Details, Message, Text, UserContext},
-    soundboard::{decoder::SoundDecoder, sound::SoundId},
+    model::{Hotkey, SoundId},
+    soundboard::decoder::SoundDecoder,
     utils::GainPercent,
 };
 
