@@ -27,13 +27,25 @@ pub enum Action {
     Random(Option<Hotkey>),
 }
 
+/// Saved keys that are no longer valid load as unbound.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Keys {
     /// Held down by the soundboard while a sound plays.
+    #[serde(deserialize_with = "hold_key")]
     pub hold: Option<Hotkey>,
+    #[serde(deserialize_with = "shortcut_key")]
     pub stop: Option<Hotkey>,
+    #[serde(deserialize_with = "shortcut_key")]
     pub random: Option<Hotkey>,
+}
+
+fn hold_key<'de, D: serde::Deserializer<'de>>(keys: D) -> Result<Option<Hotkey>, D::Error> {
+    Ok(Option::<Hotkey>::deserialize(keys)?.filter(|key| key.is_valid_for_hold()))
+}
+
+fn shortcut_key<'de, D: serde::Deserializer<'de>>(keys: D) -> Result<Option<Hotkey>, D::Error> {
+    Ok(Option::<Hotkey>::deserialize(keys)?.filter(|key| key.is_valid()))
 }
 
 impl Keys {
@@ -108,11 +120,5 @@ impl Keys {
         .into_iter()
         .filter_map(|(target, key)| Some((target, key?)))
         .try_for_each(|(target, key)| self.validate(sounds, &target, key))
-    }
-
-    pub fn sanitize(&mut self) {
-        let _ = self.hold.take_if(|key| !key.is_valid_for_hold());
-        let _ = self.stop.take_if(|key| !key.is_valid());
-        let _ = self.random.take_if(|key| !key.is_valid());
     }
 }

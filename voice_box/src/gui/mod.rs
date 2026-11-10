@@ -319,14 +319,14 @@ impl VoiceBoxApp {
         self.soundboard.poll(ctx);
     }
 
-    fn startup_ui(&mut self, ui: &mut egui::Ui) {
+    fn startup_ui(&mut self, ui: &mut egui::Ui, blocked: bool) {
         let previous = self.settings.startup_enabled;
         let mut enabled = previous;
         ui.label(Text::StartupLabel.text());
         let pending = matches!(self.startup, Startup::Pending);
         let synced = matches!(self.startup, Startup::Synced);
         let retry = ui
-            .add_enabled_ui(!pending && !self.interaction_blocked(), |ui| {
+            .add_enabled_ui(!pending && !blocked, |ui| {
                 ui.selectable_value(&mut enabled, true, Text::StartupOn.text());
                 ui.selectable_value(&mut enabled, false, Text::StartupOff.text());
                 if !synced {
@@ -384,7 +384,7 @@ impl VoiceBoxApp {
         }
     }
 
-    fn more_menu_ui(&mut self, ui: &mut egui::Ui) {
+    fn more_menu_ui(&mut self, ui: &mut egui::Ui, busy: Busy) {
         let more = ui.button(Text::More.text());
         egui::Popup::menu(&more)
             .align(egui::RectAlign::BOTTOM)
@@ -392,20 +392,17 @@ impl VoiceBoxApp {
                 ui.set_min_width(100.0);
                 ui.spacing_mut().button_padding.x = 25.0;
 
-                ui.add_enabled_ui(!self.interaction_blocked(), |ui| self.language_ui(ui));
+                ui.add_enabled_ui(!busy.working, |ui| self.language_ui(ui));
                 ui.separator();
 
-                ui.add_enabled_ui(!self.interaction_blocked(), |ui| self.theme_ui(ui));
+                ui.add_enabled_ui(!busy.working, |ui| self.theme_ui(ui));
                 ui.separator();
 
-                self.startup_ui(ui);
+                self.startup_ui(ui, busy.working);
                 ui.separator();
 
                 if ui
-                    .add_enabled(
-                        !self.busy(None).any(),
-                        egui::Button::new(Text::FullUninstall.text()),
-                    )
+                    .add_enabled(!busy.any(), egui::Button::new(Text::FullUninstall.text()))
                     .clicked()
                 {
                     self.microphones.cancel_uninstall();
@@ -419,10 +416,7 @@ impl VoiceBoxApp {
                 ui.separator();
 
                 if ui
-                    .add_enabled(
-                        !self.interaction_blocked(),
-                        egui::Button::new(Text::Exit.text()),
-                    )
+                    .add_enabled(!busy.working, egui::Button::new(Text::Exit.text()))
                     .clicked()
                 {
                     self.request_exit(ui.ctx());
@@ -431,7 +425,13 @@ impl VoiceBoxApp {
             });
     }
 
-    fn voice_tab_ui(&mut self, ui: &mut egui::Ui) {
+    fn voice_tab_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        microphone_others: Busy,
+        voice_others: Busy,
+    ) -> (Option<microphone::Command>, Option<voice::Command>) {
+        let mut commands = (None, None);
         egui::ScrollArea::vertical()
             .id_salt("voice_tab_scroll")
             .auto_shrink([false, false])
@@ -442,21 +442,21 @@ impl VoiceBoxApp {
                         egui::vec2(width, 0.0),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
-                            let microphone_others = self.busy(Some(Part::Microphones));
-                            let voice_others = self.busy(Some(Part::Voice));
                             section(ui, |ui| {
-                                self.microphones.ui(ui, microphone_others);
+                                commands.0 = self.microphones.ui(ui, microphone_others);
                             });
-                            section(ui, |ui| self.voice.config_ui(ui));
+                            section(ui, |ui| commands.1 = self.voice.config_ui(ui));
                             section(ui, |ui| {
                                 let microphone = self.microphones.selected();
-                                self.voice.recording_ui(ui, voice_others, microphone)
+                                let command = self.voice.recording_ui(ui, voice_others, microphone);
+                                commands.1 = commands.1.take().or(command);
                             });
                             self.microphones.status_ui(ui);
                         },
                     );
                 });
             });
+        commands
     }
 
     fn show(&mut self, ui: &mut egui::Ui) {
@@ -477,46 +477,57 @@ impl VoiceBoxApp {
             });
             return;
         }
+        // Panels queue the operations clicked while drawing and start them afterwards,
+        // so this state holds for the whole frame.
+        let busy = self.busy(None);
+        let [microphone_others, voice_others, soundboard_others] =
+            [Part::Microphones, Part::Voice, Part::Soundboard].map(|part| self.busy(Some(part)));
+        let mut commands = (None, None);
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(20))
             .show(ui, |ui| {
-                if self.interaction_blocked() || self.soundboard.capturing() {
+                if busy.working || self.soundboard.capturing() {
                     ui.disable();
                 }
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.tab, Tab::Voice, Text::Voice.text());
                     ui.selectable_value(&mut self.tab, Tab::Soundboard, Text::Soundboard.text());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        self.more_menu_ui(ui);
+                        self.more_menu_ui(ui, busy);
                     });
                 });
 
                 ui.add_space(12.0);
 
-                if self.interaction_blocked() && ui.is_enabled() {
-                    ui.disable();
-                }
                 match self.tab {
-                    Tab::Voice => self.voice_tab_ui(ui),
-                    Tab::Soundboard => {
-                        let others = self.busy(Some(Part::Soundboard));
-                        self.soundboard.ui(ui, others)
-                    }
+                    Tab::Voice => commands = self.voice_tab_ui(ui, microphone_others, voice_others),
+                    Tab::Soundboard => self.soundboard.ui(ui, soundboard_others),
                 }
             });
 
         let ctx = ui.ctx();
         self.licenses_ui(ctx);
-        let blocked = self.interaction_blocked();
-        if let Some(prefs) = self.soundboard.windows(ctx, blocked, soundboard_visible) {
+        if let Some(prefs) = self
+            .soundboard
+            .windows(ctx, busy.working, soundboard_visible)
+        {
             let settings = Settings {
                 soundboard: prefs,
                 ..self.settings.clone()
             };
             self.save_settings(settings);
         }
-        self.full_uninstall_ui(ctx);
+        self.full_uninstall_ui(ctx, busy);
         self.notice_ui(ctx);
+        // App-level work started from a menu or dialog this frame takes precedence.
+        let allowed = !self.interaction_blocked();
+        if allowed && let Some(command) = commands.0 {
+            self.microphones.apply(command);
+        }
+        if allowed && let Some(command) = commands.1 {
+            self.voice.apply(command);
+        }
+        self.soundboard.apply(ctx, allowed);
     }
 }
 

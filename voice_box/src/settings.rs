@@ -36,10 +36,7 @@ impl Settings {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(error) => return Err(error).user_context(Text::LoadAppSettingsFailed),
         };
-        let mut settings: Self =
-            serde_json::from_slice(&bytes).user_context(Text::LoadAppSettingsFailed)?;
-        settings.soundboard.keys.sanitize();
-        Ok(settings)
+        serde_json::from_slice(&bytes).user_context(Text::LoadAppSettingsFailed)
     }
 
     pub fn save(&self) -> anyhow::Result<()> {

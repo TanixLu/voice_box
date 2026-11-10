@@ -87,18 +87,15 @@ impl Clip {
 pub enum Activity {
     Recording,
     Preview,
-    Saving,
 }
 enum Outcome {
     Recorded(Clip),
     Previewed,
-    Saved(Sound),
 }
 /// The next job; it starts once the running one has released its device.
 enum Pending {
     Record,
     Preview(Range<usize>, Instant),
-    Save(Selection, String),
 }
 
 pub struct Recorder {
@@ -119,7 +116,6 @@ impl Recorder {
     pub fn activity(&self) -> Option<Activity> {
         match self.pending {
             Some(Pending::Record) => Some(Activity::Recording),
-            Some(Pending::Save(..)) => Some(Activity::Saving),
             _ => self.task.as_ref().map(|(activity, ..)| *activity),
         }
     }
@@ -154,10 +150,7 @@ impl Recorder {
         }
     }
     fn locked(&self) -> bool {
-        matches!(
-            self.activity(),
-            Some(Activity::Recording | Activity::Saving)
-        )
+        self.activity() == Some(Activity::Recording)
     }
     pub fn record(&mut self) {
         if self.locked() {
@@ -188,15 +181,7 @@ impl Recorder {
         let delay = Duration::from_millis(if immediate { 0 } else { 150 });
         self.pending = Some(Pending::Preview(range, Instant::now() + delay));
     }
-    pub fn save(&mut self, selection: Selection, name: String) {
-        if self.clip.is_none() || self.locked() {
-            return;
-        }
-        self.stop();
-        self.pending = Some(Pending::Save(selection, name));
-    }
-    /// A saved clip is returned as an entry already committed to the database.
-    pub fn poll(&mut self) -> anyhow::Result<Option<Sound>> {
+    pub fn poll(&mut self) -> anyhow::Result<()> {
         if let Some((.., task)) = &mut self.task
             && let Some(result) = task.poll()
         {
@@ -212,7 +197,6 @@ impl Recorder {
                     self.clip = Some(clip);
                 }
                 Ok(Outcome::Previewed) => {}
-                Ok(Outcome::Saved(sound)) => return Ok(Some(sound)),
                 Err(error) => {
                     if matches!(self.pending, Some(Pending::Preview(..))) {
                         self.pending = None;
@@ -222,17 +206,11 @@ impl Recorder {
             }
         }
         if self.task.is_some() {
-            return Ok(None);
+            return Ok(());
         }
         let audio = self.clip.as_ref().map(|clip| clip.audio.clone());
         match (self.pending.take(), audio) {
             (Some(Pending::Record), _) => self.begin_recording(),
-            (Some(Pending::Save(selection, name)), Some(audio)) => {
-                let task = Task::run("VoiceBoxSaveRecording", &self.wake, move || {
-                    save_clip(&audio, selection, &name).map(Outcome::Saved)
-                });
-                self.task = Some((Activity::Saving, selection.range(), task));
-            }
             (Some(Pending::Preview(range, when)), Some(audio)) if Instant::now() >= when => {
                 let channels = audio.channels as usize;
                 let samples = range.start * channels..range.end * channels;
@@ -252,7 +230,7 @@ impl Recorder {
             (pending @ Some(Pending::Preview(..)), Some(_)) => self.pending = pending,
             _ => {}
         }
-        Ok(None)
+        Ok(())
     }
 }
 
@@ -287,7 +265,8 @@ fn write_wave(
     Ok(())
 }
 
-fn save_clip(audio: &Recording, selection: Selection, name: &str) -> anyhow::Result<Sound> {
+/// Writes the selected frames to the database as a new sound.
+pub fn save_clip(audio: &Recording, selection: Selection, name: &str) -> anyhow::Result<Sound> {
     let name = name.trim();
     ensure!(is_valid_name(name), Text::InvalidRecordingName);
     ensure!(

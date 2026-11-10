@@ -8,17 +8,19 @@ use anyhow::ensure;
 
 use voice_box_shared::pcm_transport::{
     PCM_DECODE_AHEAD_FRAMES, PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame, PcmWriter,
-    pcm_frame, pcm_transport_name,
+    pcm_frame,
 };
 
 use crate::{
     audio::monitor::Monitor,
     database::audio::AudioSource,
-    devices,
     hotkeys::HeldKeys,
     i18n::{Details, Message, Text, UserContext},
     model::{Hotkey, SoundId},
-    soundboard::decoder::SoundDecoder,
+    soundboard::{
+        decoder::SoundDecoder,
+        prefs::{OutputDevice, Prefs},
+    },
     utils::GainPercent,
 };
 
@@ -31,6 +33,20 @@ pub struct Config {
     pub speaker_gain_percent: GainPercent,
     pub hold_hotkey: Option<Hotkey>,
     pub repeat: bool,
+}
+
+impl Config {
+    pub fn new(prefs: &Prefs) -> Self {
+        let id = |device: &Option<OutputDevice>| device.as_ref().map(|device| device.id.clone());
+        Self {
+            microphone_device: id(&prefs.microphone_device),
+            speaker_device: id(&prefs.speaker_device),
+            microphone_gain_percent: prefs.microphone_gain_percent,
+            speaker_gain_percent: prefs.speaker_gain_percent,
+            hold_hotkey: prefs.keys.hold,
+            repeat: prefs.repeat,
+        }
+    }
 }
 
 pub enum Command {
@@ -181,17 +197,15 @@ impl MicrophoneRoute {
     /// Starts a generation that re-exports the buffered audio, even when decoding has reached EOF.
     fn start(
         &mut self,
-        device: Option<&str>,
+        transport: &Result<String, Details>,
         buffer: &PlaybackBuffer,
         now: u64,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), Details> {
         let writer = match self.writer.take() {
             Some(writer) => writer,
-            None => {
-                let guid = devices::soundboard_microphone_guid(device)?;
-                PcmWriter::open(&pcm_transport_name(&guid)?)
-                    .user_context(Text::CreatePlaybackBuffer)?
-            }
+            None => PcmWriter::open(transport.as_ref().map_err(Clone::clone)?)
+                .user_context(Text::CreatePlaybackBuffer)
+                .map_err(Details::new)?,
         };
         self.generation = self.writer.insert(writer).next_generation();
         self.cursor = buffer.base.max(now.saturating_sub(480));
@@ -249,10 +263,12 @@ impl SpeakerRoute {
     }
 }
 
+/// `transport` names the shared memory of the configured soundboard microphone.
 pub fn run(
     id: SoundId,
     mut settings: Config,
     mut revision: u64,
+    transport: Result<String, Details>,
     commands: &mpsc::Receiver<Command>,
     events: &mpsc::Sender<Event>,
 ) -> anyhow::Result<PlaybackOutcome> {
@@ -325,12 +341,9 @@ pub fn run(
             }
             if !next.microphone_gain_percent.is_mute()
                 && microphone.generation == 0
-                && let Err(error) =
-                    microphone.start(next.microphone_device.as_deref(), &pending, now)
+                && let Err(error) = microphone.start(&transport, &pending, now)
             {
-                let error = Message::MicrophoneOutputFailed {
-                    error: Details::new(error),
-                };
+                let error = Message::MicrophoneOutputFailed { error };
                 if next.speaker_gain_percent.is_mute() {
                     return Err(anyhow::anyhow!(error));
                 }

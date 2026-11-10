@@ -1,11 +1,18 @@
+use std::sync::Arc;
+
 use crate::{
-    audio::loopback::MAX_RECORD_SECONDS,
+    audio::{capture::Recording, loopback::MAX_RECORD_SECONDS},
     gui::widgets::{ButtonIcon, hint, icon_button, warning},
     i18n::{Details, Message, Text},
-    model::{Sound, is_valid_name},
+    model::is_valid_name,
     soundboard::recording::{Activity, Edge, Recorder, Selection},
     task::Wake,
 };
+
+pub enum Action {
+    Close,
+    Save(Arc<Recording>, Selection, String),
+}
 
 pub struct RecordingImport {
     recorder: Recorder,
@@ -13,6 +20,8 @@ pub struct RecordingImport {
     name: String,
     dragging: Option<Edge>,
     error: Message,
+    /// The soundboard is saving the clip, as of this frame.
+    saving: bool,
 }
 impl RecordingImport {
     pub fn new(wake: Wake) -> Self {
@@ -22,23 +31,20 @@ impl RecordingImport {
             name: String::new(),
             dragging: None,
             error: Message::default(),
+            saving: false,
         }
     }
-    pub fn saving(&self) -> bool {
-        self.recorder.activity() == Some(Activity::Saving)
+    pub fn fail(&mut self, error: anyhow::Error) {
+        self.error = Message::OperationFailed {
+            error: Details::new(error),
+        };
     }
 
     // Called in app logic, including when the main viewport is hidden.
-    pub fn poll(&mut self, ctx: &egui::Context) -> Option<Sound> {
+    pub fn poll(&mut self, ctx: &egui::Context) {
         let had_clip = self.recorder.clip.is_some();
-        match self.recorder.poll() {
-            Ok(Some(sound)) => return Some(sound),
-            Ok(None) => {}
-            Err(error) => {
-                self.error = Message::OperationFailed {
-                    error: Details::new(error),
-                }
-            }
+        if let Err(error) = self.recorder.poll() {
+            self.fail(error);
         }
         if !had_clip && let Some(clip) = &self.recorder.clip {
             self.selection = Some(Selection::full(&clip.audio));
@@ -49,13 +55,13 @@ impl RecordingImport {
         if self.recorder.busy() {
             ctx.request_repaint_after(std::time::Duration::from_millis(30));
         }
-        None
     }
 
     // Ignore backdrop clicks so switching applications does not discard a clip.
-    pub fn ui(&mut self, ctx: &egui::Context) -> bool {
+    pub fn ui(&mut self, ctx: &egui::Context, saving: bool) -> Option<Action> {
+        self.saving = saving;
         let mut close = false;
-        let saving = self.saving();
+        let mut save = None;
         let available = ctx.content_rect().size();
         // Leave room for the preview button to wrap below the time controls.
         let content_height = (available.y - 110.0).clamp(100.0, 380.0);
@@ -84,7 +90,7 @@ impl RecordingImport {
                     .show(ui, |ui| {
                         self.record_ui(ui);
                         ui.add_space(8.0);
-                        self.editor_ui(ui);
+                        save = self.editor_ui(ui);
                         if !self.error.is_empty() {
                             ui.add_space(8.0);
                             warning(ui, &self.error.text());
@@ -92,12 +98,19 @@ impl RecordingImport {
                     });
                 ui.add_space(12.0);
             });
-        !self.saving() && close
+        if let Some(selection) = save
+            && let Some(audio) = self.recorder.clip.as_ref().map(|clip| clip.audio.clone())
+        {
+            self.error.clear();
+            self.recorder.stop();
+            return Some(Action::Save(audio, selection, self.name.clone()));
+        }
+        (!saving && close).then_some(Action::Close)
     }
 
     fn record_ui(&mut self, ui: &mut egui::Ui) {
         let recording = self.recorder.activity() == Some(Activity::Recording);
-        let saving = self.saving();
+        let saving = self.saving;
         ui.horizontal_wrapped(|ui| {
             let label = if recording {
                 Text::StopCapture.text()
@@ -147,8 +160,9 @@ impl RecordingImport {
         });
     }
 
-    fn editor_ui(&mut self, ui: &mut egui::Ui) {
-        let saving = self.saving();
+    /// Returns the selection to save.
+    fn editor_ui(&mut self, ui: &mut egui::Ui) -> Option<Selection> {
+        let saving = self.saving;
         let recording = self.recorder.activity() == Some(Activity::Recording);
         let clip = self.recorder.clip.as_ref();
         let total = clip.map_or(0, |clip| {
@@ -245,26 +259,26 @@ impl RecordingImport {
                 .hint_text(Text::EnterName.text()),
         );
         ui.add_space(12.0);
-        ui.horizontal_wrapped(|ui| {
-            let valid_name = is_valid_name(self.name.trim());
-            if ui
-                .add_enabled(
-                    editable && selection.start < selection.end && valid_name,
-                    egui::Button::new(Text::ImportIntoLibrary.text()),
-                )
-                .clicked()
-            {
-                self.error.clear();
-                self.recorder.save(selection, self.name.clone());
-            }
-            if saving {
-                ui.spinner();
-                ui.label(Text::Saving.text());
-            }
-        });
+        let save = ui
+            .horizontal_wrapped(|ui| {
+                let valid_name = is_valid_name(self.name.trim());
+                let save = ui
+                    .add_enabled(
+                        editable && selection.start < selection.end && valid_name,
+                        egui::Button::new(Text::ImportIntoLibrary.text()),
+                    )
+                    .clicked();
+                if saving {
+                    ui.spinner();
+                    ui.label(Text::Saving.text());
+                }
+                save
+            })
+            .inner;
         if !self.name.trim().is_empty() && !is_valid_name(self.name.trim()) {
             warning(ui, Text::InvalidSoundNameHint.text());
         }
+        save.then_some(selection)
     }
 }
 

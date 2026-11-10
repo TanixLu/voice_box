@@ -1,14 +1,20 @@
 use crate::{
-    devices::{self, Microphone, PluginAction, PluginOperationResult},
+    devices::{self, Microphone},
     gui::Busy,
     i18n::{Details, Message, Text},
-    setup::PluginStatus,
+    setup::{self, PluginAction, PluginOperationResult, PluginStatus},
     task::{Task, Wake},
 };
 
 enum Outcome {
     Devices(Vec<Microphone>, usize),
     Plugin(PluginOperationResult),
+}
+
+/// An operation clicked while drawing; the app applies it once the frame is drawn.
+pub enum Command {
+    Refresh,
+    Plugin(Text, PluginAction),
 }
 
 pub struct MicrophonePanel {
@@ -125,14 +131,22 @@ impl MicrophonePanel {
         let guid = self.devices[self.selected].guid.clone();
         let guids = self.devices.iter().map(|mic| mic.guid.clone()).collect();
         self.start(status, move || {
-            Ok(Outcome::Plugin(devices::execute_plugin_action(
+            Ok(Outcome::Plugin(setup::execute_plugin_action(
                 guid, guids, action,
             )))
         });
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, others: Busy) -> egui::Response {
+    pub fn apply(&mut self, command: Command) {
+        match command {
+            Command::Refresh => self.refresh(),
+            Command::Plugin(status, action) => self.run_plugin_action(status, action),
+        }
+    }
+
+    pub fn ui(&mut self, ui: &mut egui::Ui, others: Busy) -> Option<Command> {
         let idle = self.job.is_none() && !others.any();
+        let mut command = None;
         ui.horizontal(|ui| {
             ui.strong(Text::Microphone.text());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -140,7 +154,7 @@ impl MicrophonePanel {
                     .add_enabled(idle, egui::Button::new(Text::Refresh.text()))
                     .clicked()
                 {
-                    self.refresh();
+                    command = Some(Command::Refresh);
                 }
             });
         });
@@ -149,40 +163,37 @@ impl MicrophonePanel {
             .devices
             .get(self.selected)
             .map_or_else(|| Text::NoMicrophones.text().to_owned(), display_name);
-        let response = ui
-            .add_enabled_ui(idle && !self.devices.is_empty(), |ui| {
-                egui::ComboBox::from_id_salt("microphone")
-                    .width(ui.available_width())
-                    .height(240.0)
-                    .wrap()
-                    .selected_text(&name)
-                    .show_ui(ui, |ui| {
-                        // ComboBox popups default to extending their text. Explicitly
-                        // constrain every row, including names with no word breaks.
-                        ui.set_width(ui.available_width());
-                        for (index, microphone) in self.devices.iter().enumerate() {
-                            let row = egui::Button::selectable(
-                                self.selected == index,
-                                display_name(microphone),
-                            )
-                            .wrap()
-                            .min_size(egui::vec2(ui.available_width(), 30.0));
-                            if ui.add(row).clicked() {
-                                self.selected = index;
-                                self.preferred_guid = Some(microphone.guid.clone());
-                            }
+        ui.add_enabled_ui(idle && !self.devices.is_empty(), |ui| {
+            egui::ComboBox::from_id_salt("microphone")
+                .width(ui.available_width())
+                .height(240.0)
+                .wrap()
+                .selected_text(&name)
+                .show_ui(ui, |ui| {
+                    // ComboBox popups default to extending their text. Explicitly
+                    // constrain every row, including names with no word breaks.
+                    ui.set_width(ui.available_width());
+                    for (index, microphone) in self.devices.iter().enumerate() {
+                        let row = egui::Button::selectable(
+                            self.selected == index,
+                            display_name(microphone),
+                        )
+                        .wrap()
+                        .min_size(egui::vec2(ui.available_width(), 30.0));
+                        if ui.add(row).clicked() {
+                            self.selected = index;
+                            self.preferred_guid = Some(microphone.guid.clone());
                         }
-                    })
-                    .response
-                    .on_hover_text(name)
-            })
-            .inner;
+                    }
+                })
+                .response
+                .on_hover_text(name)
+        });
         if self.selected != previous {
             self.confirm_uninstall = false;
             self.preferred_guid = self.devices.get(self.selected).map(|mic| mic.guid.clone());
         }
-        self.plugin_ui(ui, idle);
-        response
+        self.plugin_ui(ui, idle).or(command)
     }
 
     pub fn status_ui(&self, ui: &mut egui::Ui) {
@@ -209,7 +220,8 @@ impl MicrophonePanel {
         }
     }
 
-    fn plugin_ui(&mut self, ui: &mut egui::Ui, idle: bool) {
+    fn plugin_ui(&mut self, ui: &mut egui::Ui, idle: bool) -> Option<Command> {
+        let mut command = None;
         let status = self
             .devices
             .get(self.selected)
@@ -234,7 +246,7 @@ impl MicrophonePanel {
                     } else {
                         Text::InstallingPlugin
                     };
-                    self.run_plugin_action(status, PluginAction::Install);
+                    command = Some(Command::Plugin(status, PluginAction::Install));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
@@ -250,7 +262,7 @@ impl MicrophonePanel {
             });
         });
         if !self.confirm_uninstall {
-            return;
+            return command;
         }
         ui.add_enabled_ui(idle, |ui| {
             ui.separator();
@@ -265,12 +277,16 @@ impl MicrophonePanel {
             );
             ui.horizontal_wrapped(|ui| {
                 if ui.button(Text::ConfirmUninstall.text()).clicked() {
-                    self.run_plugin_action(Text::UninstallingPlugin, PluginAction::Uninstall);
+                    command = Some(Command::Plugin(
+                        Text::UninstallingPlugin,
+                        PluginAction::Uninstall,
+                    ));
                 }
                 if ui.button(Text::Cancel.text()).clicked() {
                     self.confirm_uninstall = false;
                 }
             });
         });
+        command
     }
 }

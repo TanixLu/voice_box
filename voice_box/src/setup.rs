@@ -115,6 +115,39 @@ pub enum PluginStatus {
     Installed,
 }
 
+#[derive(Debug)]
+pub enum PluginAction {
+    Install,
+    Uninstall,
+}
+
+pub struct PluginOperationResult {
+    pub result: anyhow::Result<()>,
+    pub statuses: Vec<(String, PluginStatus)>,
+}
+
+/// Runs `action` on `guid`, then rereads the status of every device in `guids`.
+pub fn execute_plugin_action(
+    guid: String,
+    guids: Vec<String>,
+    action: PluginAction,
+) -> PluginOperationResult {
+    tracing::info!(?action, %guid, "Starting microphone plugin operation");
+    let result = match action {
+        PluginAction::Install => ensure_device_plugin_installed(&guid),
+        PluginAction::Uninstall => uninstall_device_plugin(&guid),
+    };
+    // Recheck even after failure: the operation can have partially succeeded.
+    let statuses = guids
+        .into_iter()
+        .map(|guid| {
+            let status = device_plugin_status(&guid);
+            (guid, status)
+        })
+        .collect();
+    PluginOperationResult { result, statuses }
+}
+
 // An endpoint association alone does not mean the bundled DLL and registration
 // are current.
 pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
@@ -429,7 +462,7 @@ fn delete_tree_transacted(
     root.delete_subkey_transacted_with_flags(path, transaction, KEY_WOW64_64KEY)
 }
 
-pub fn ensure_device_plugin_installed(device_guid: &str) -> anyhow::Result<()> {
+fn ensure_device_plugin_installed(device_guid: &str) -> anyhow::Result<()> {
     if device_plugin_status(device_guid) != PluginStatus::Installed {
         run_device_plugin_operation(device_guid, false)?;
         anyhow::ensure!(
@@ -440,7 +473,7 @@ pub fn ensure_device_plugin_installed(device_guid: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn uninstall_device_plugin(device_guid: &str) -> anyhow::Result<()> {
+fn uninstall_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     run_device_plugin_operation(device_guid, true)
 }
 

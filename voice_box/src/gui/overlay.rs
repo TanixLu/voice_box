@@ -8,10 +8,9 @@ use windows::{
             Shell::{DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass},
             WindowsAndMessaging::{
                 FindWindowW, GW_HWNDPREV, GetWindow, GetWindowThreadProcessId, HWND_TOPMOST,
-                SPI_GETWORKAREA, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-                SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowPos, SystemParametersInfoW,
-                WM_NCCALCSIZE, WM_NCDESTROY,
+                SPI_GETWORKAREA, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER,
+                SWP_NOSIZE, SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowPos,
+                SystemParametersInfoW, WM_NCCALCSIZE, WM_NCDESTROY,
             },
         },
     },
@@ -21,7 +20,7 @@ use windows::{
 use crate::{
     gui::widgets::format_duration,
     i18n::{Text, UserContext},
-    soundboard::Soundboard,
+    soundboard::NowPlaying,
 };
 
 const SIZE: Vec2 = vec2(360.0, 72.0);
@@ -34,25 +33,17 @@ pub struct Overlay {
 }
 
 impl Overlay {
+    /// Shows `playing`, or hides the overlay when it is `None`.
     pub fn show(
         &mut self,
         ctx: &egui::Context,
-        model: &Soundboard,
-        enabled: bool,
+        playing: Option<NowPlaying>,
     ) -> anyhow::Result<bool> {
-        let sound = model
-            .active_sound()
-            .filter(|_| enabled && !model.importing());
         let mut layout_result = Ok(());
-        let playback = sound.and_then(|sound| match viewport_builder(ctx) {
+        let playback = playing.and_then(|playing| match viewport_builder(ctx) {
             Ok(builder) => {
                 self.builder = Some(builder);
-                Some((
-                    sound.name.clone(),
-                    model.playback().elapsed_secs,
-                    model.playback().duration_secs.or(Some(sound.duration_secs)),
-                    model.prefs().repeat,
-                ))
+                Some(playing)
             }
             Err(error) => {
                 layout_result = Err(error);
@@ -65,8 +56,8 @@ impl Overlay {
             // Keep declaring the viewport after first use, even when hidden or layout fails.
             // Omitting it would destroy the native window and its GL surface.
             ctx.show_viewport_deferred(id, builder.clone().with_visible(visible), move |ui, _| {
-                if let Some((name, elapsed_secs, duration_secs, repeat)) = &playback {
-                    draw(ui, name, *elapsed_secs, *duration_secs, *repeat);
+                if let Some(playing) = &playback {
+                    draw(ui, playing);
                 }
             });
             if visible {
@@ -116,20 +107,15 @@ fn viewport_builder(ctx: &egui::Context) -> anyhow::Result<egui::ViewportBuilder
         .with_always_on_top())
 }
 
-fn draw(
-    ui: &mut egui::Ui,
-    name: &str,
-    elapsed_secs: f64,
-    duration_secs: Option<f64>,
-    repeat: bool,
-) {
+fn draw(ui: &mut egui::Ui, playing: &NowPlaying) {
+    let (name, duration_secs, repeat) = (&playing.name, playing.duration_secs, playing.repeat);
     if let Err(error) = configure_native_window() {
         tracing::warn!("Failed to configure overlay window: {error:#}");
     }
     let rect = ui.max_rect();
     let painter = ui.painter();
     painter.rect_filled(rect, 12, Color32::from_rgba_unmultiplied(24, 26, 32, 230));
-    let duration_secs = duration_secs.filter(|d| d.is_finite() && *d > 0.0);
+    let elapsed_secs = playing.elapsed_secs;
     let elapsed_secs = match duration_secs {
         Some(duration_secs) if repeat => elapsed_secs.max(0.0) % duration_secs,
         Some(duration_secs) => elapsed_secs.max(0.0).min(duration_secs),

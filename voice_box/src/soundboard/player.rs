@@ -2,12 +2,16 @@
 
 use std::sync::mpsc;
 
+use voice_box_shared::pcm_transport::pcm_transport_name;
+
 use crate::{
+    devices,
     i18n::{Details, Message},
     model::SoundId,
     soundboard::{
         Update,
         playback::{self, Command, Config, Event},
+        prefs::Prefs,
     },
     task::{Task, Wake},
 };
@@ -67,7 +71,11 @@ impl Player {
         self.job.is_some()
     }
 
-    pub fn play(&mut self, id: SoundId, duration_secs: f64, config: Config) {
+    pub fn play(&mut self, id: SoundId, duration_secs: f64, prefs: &Prefs) {
+        self.start(id, duration_secs, Config::new(prefs));
+    }
+
+    fn start(&mut self, id: SoundId, duration_secs: f64, config: Config) {
         (self.wake)();
         self.revision = self.revision.wrapping_add(1);
         self.status = PlaybackStatus {
@@ -106,7 +114,8 @@ impl Player {
         self.queued = None;
     }
 
-    pub fn configure(&mut self, config: Config) {
+    pub fn configure(&mut self, prefs: &Prefs) {
+        let config = Config::new(prefs);
         if let Some(request) = &mut self.queued {
             request.config = config.clone();
         }
@@ -153,7 +162,7 @@ impl Player {
             && let Some(request) = self.queued.take()
         {
             updates.push(Update::Cleared);
-            self.play(request.id, request.duration_secs, request.config);
+            self.start(request.id, request.duration_secs, request.config);
         }
         updates
     }
@@ -177,7 +186,11 @@ fn start_worker(id: SoundId, revision: u64, config: Config, wake: &Wake) -> Job 
     let (sender, commands) = mpsc::channel();
     let (events, receiver) = mpsc::channel();
     let task = Task::run("VoiceBoxSoundboard", wake, move || {
-        let outcome = playback::run(id, config, revision, &commands, &events)?;
+        // A device stays fixed for a worker, so discovery and plugin checks happen once, here.
+        let transport = devices::soundboard_microphone_guid(config.microphone_device.as_deref())
+            .and_then(|guid| pcm_transport_name(&guid))
+            .map_err(Details::new);
+        let outcome = playback::run(id, config, revision, transport, &commands, &events)?;
         tracing::info!(
             sound_id = outcome.sound_id,
             reason = outcome.reason,

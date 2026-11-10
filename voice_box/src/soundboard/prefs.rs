@@ -1,11 +1,8 @@
-//! Persisted soundboard preferences and the runtime playback config derived from them.
+//! Persisted soundboard preferences.
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    soundboard::{bindings::Keys, playback::Config},
-    utils::GainPercent,
-};
+use crate::{soundboard::bindings::Keys, utils::GainPercent};
 
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct OutputDevice {
@@ -35,21 +32,6 @@ impl Default for Prefs {
             show_overlay: true,
             repeat: false,
             keys: Keys::default(),
-        }
-    }
-}
-
-impl Prefs {
-    pub fn playback(&self) -> Config {
-        let device_id =
-            |device: &Option<OutputDevice>| device.as_ref().map(|device| device.id.clone());
-        Config {
-            microphone_device: device_id(&self.microphone_device),
-            speaker_device: device_id(&self.speaker_device),
-            microphone_gain_percent: self.microphone_gain_percent,
-            speaker_gain_percent: self.speaker_gain_percent,
-            hold_hotkey: self.keys.hold,
-            repeat: self.repeat,
         }
     }
 }

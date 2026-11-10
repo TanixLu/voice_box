@@ -11,6 +11,15 @@ use crate::{
     task::{self, Task, Wake},
 };
 
+/// An operation clicked while drawing; the app applies it once the frame is drawn.
+pub enum Command {
+    Save,
+    Record(String),
+    /// Plays the recording, processed with this configuration when present.
+    Play(Option<ApoCfg>),
+    Stop,
+}
+
 pub struct VoicePanel {
     wake: Wake,
     config: ApoCfg,
@@ -55,7 +64,30 @@ impl VoicePanel {
             };
         }
     }
-    pub fn config_ui(&mut self, ui: &mut egui::Ui) {
+    pub fn apply(&mut self, command: Command) {
+        match command {
+            Command::Save => {
+                let config = self.config.clone();
+                self.save_error.clear();
+                self.save = Some(Task::run("VoiceBoxApoCfgSave", &self.wake, move || {
+                    config.save()?;
+                    Ok(config)
+                }));
+            }
+            Command::Record(device_id) => {
+                self.preview_error.clear();
+                self.session.record(device_id);
+            }
+            Command::Play(config) => {
+                self.preview_error.clear();
+                self.session.play(config);
+            }
+            Command::Stop => self.session.stop(),
+        }
+    }
+
+    pub fn config_ui(&mut self, ui: &mut egui::Ui) -> Option<Command> {
+        let mut command = None;
         let defaults = ApoCfg::default();
         let busy = self.save.is_some();
         ui.strong(Text::VoiceConfig.text());
@@ -133,12 +165,7 @@ impl VoicePanel {
                 .add_enabled(!busy && dirty, egui::Button::new(Text::SaveChanges.text()))
                 .clicked()
             {
-                let config = self.config.clone();
-                self.save_error.clear();
-                self.save = Some(Task::run("VoiceBoxApoCfgSave", &self.wake, move || {
-                    config.save()?;
-                    Ok(config)
-                }));
+                command = Some(Command::Save);
             }
             if ui
                 .add_enabled(!busy && dirty, egui::Button::new(Text::UndoChanges.text()))
@@ -163,6 +190,7 @@ impl VoicePanel {
         } else {
             hint(ui, Text::VoiceConfigApplied.text());
         }
+        command
     }
 
     pub fn recording_ui(
@@ -170,7 +198,8 @@ impl VoicePanel {
         ui: &mut egui::Ui,
         others: Busy,
         microphone: Option<&Microphone>,
-    ) {
+    ) -> Option<Command> {
+        let mut command = None;
         ui.strong(Text::RecordingPreview.text());
         let activity = self.session.activity();
         let idle = !others.any() && !self.session.busy();
@@ -189,12 +218,11 @@ impl VoicePanel {
                 )
                 .clicked()
             {
-                if activity == Some(Activity::Recording) {
-                    self.session.stop();
-                } else if let Some(mic) = microphone {
-                    self.preview_error.clear();
-                    self.session.record(mic.device_id.clone());
-                }
+                command = if activity == Some(Activity::Recording) {
+                    Some(Command::Stop)
+                } else {
+                    microphone.map(|mic| Command::Record(mic.device_id.clone()))
+                };
             }
             if ui
                 .add_enabled(
@@ -209,12 +237,11 @@ impl VoicePanel {
                 )
                 .clicked()
             {
-                if activity == Some(Activity::PlayingOriginal) {
-                    self.session.stop();
+                command = Some(if activity == Some(Activity::PlayingOriginal) {
+                    Command::Stop
                 } else {
-                    self.preview_error.clear();
-                    self.session.play(None);
-                }
+                    Command::Play(None)
+                });
             }
             // Place processed playback at the right on normal window sizes;
             // wrapped layout keeps every button reachable in a narrow window.
@@ -232,12 +259,11 @@ impl VoicePanel {
             )
             .clicked()
             {
-                if activity == Some(Activity::PlayingProcessed) {
-                    self.session.stop();
+                command = Some(if activity == Some(Activity::PlayingProcessed) {
+                    Command::Stop
                 } else {
-                    self.preview_error.clear();
-                    self.session.play(Some(self.config.clone()));
-                }
+                    Command::Play(Some(self.config.clone()))
+                });
             }
         });
         if stopping {
@@ -266,5 +292,6 @@ impl VoicePanel {
         } else if let Some(duration_secs) = self.session.recording_duration_secs() {
             ui.label(Message::Recorded { duration_secs }.text());
         }
+        command
     }
 }

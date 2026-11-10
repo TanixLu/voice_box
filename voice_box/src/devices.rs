@@ -1,4 +1,4 @@
-//! Microphone discovery and plugin operations, independent of the GUI.
+//! Audio endpoint discovery, independent of the GUI.
 
 use wasapi::{DeviceEnumerator, DeviceState, Direction};
 
@@ -72,17 +72,6 @@ pub struct Microphone {
     pub plugin_status: PluginStatus,
 }
 
-#[derive(Debug)]
-pub enum PluginAction {
-    Install,
-    Uninstall,
-}
-
-pub struct PluginOperationResult {
-    pub result: anyhow::Result<()>,
-    pub statuses: Vec<(String, PluginStatus)>,
-}
-
 pub fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
     let _com_guard = ComGuard::mta()?;
     let enumerator = DeviceEnumerator::new()?;
@@ -119,28 +108,4 @@ pub fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
         "Microphone discovery completed"
     );
     Ok((microphones, selected))
-}
-
-pub fn execute_plugin_action(
-    guid: String,
-    guids: Vec<String>,
-    action: PluginAction,
-) -> PluginOperationResult {
-    tracing::info!(?action, %guid, "Starting microphone plugin operation");
-    let result = if matches!(action, PluginAction::Uninstall) {
-        setup::uninstall_device_plugin(&guid)
-    } else {
-        setup::ensure_device_plugin_installed(&guid)
-    };
-    // Recheck even after failure: the operation can have partially succeeded. All
-    // DLL and registry reads stay in the background worker.
-    let statuses = guids
-        .into_iter()
-        .map(|guid| {
-            let status = setup::device_plugin_status(&guid);
-            (guid, status)
-        })
-        .collect();
-
-    PluginOperationResult { result, statuses }
 }

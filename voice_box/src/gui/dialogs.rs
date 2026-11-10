@@ -1,5 +1,5 @@
 use crate::{
-    gui::{Lifecycle, Startup, VoiceBoxApp, widgets::notice},
+    gui::{Busy, Lifecycle, Startup, VoiceBoxApp, widgets::notice},
     i18n::Text,
     static_data::LICENSES,
     task::Task,
@@ -15,7 +15,7 @@ impl VoiceBoxApp {
         }
     }
 
-    pub fn full_uninstall_ui(&mut self, ctx: &egui::Context) {
+    pub fn full_uninstall_ui(&mut self, ctx: &egui::Context, busy: Busy) {
         if !matches!(self.lifecycle, Lifecycle::ConfirmUninstall) {
             return;
         }
@@ -27,10 +27,7 @@ impl VoiceBoxApp {
             ui.add_space(12.0);
             ui.horizontal_wrapped(|ui| {
                 if ui
-                    .add_enabled(
-                        !self.busy(None).any(),
-                        egui::Button::new(Text::Uninstall.text()),
-                    )
+                    .add_enabled(!busy.any(), egui::Button::new(Text::Uninstall.text()))
                     .clicked()
                 {
                     self.startup = Startup::Unsynced;
