@@ -105,7 +105,6 @@ catalog! {
     LoadAppSettingsFailed => ("Failed to load application settings", "加载应用设置失败");
     SaveAppSettingsFailed => ("Failed to save application settings", "保存应用设置失败");
     SaveSoundLibrary => ("Failed to save sound library metadata", "保存音效库元数据失败");
-    OpenSoundSettingsFirst => ("Open sound settings first", "请先打开音效设置");
     StopBeforeRename => ("Stop playback before renaming", "请先停止播放再重命名");
     OutputsMuted => ("Microphone and speaker volumes are both 0. Playback was not started", "麦克风和扬声器音量均为 0，未开始播放");
     ImportThreadExited => ("The sound import thread exited unexpectedly", "音效导入线程意外退出");

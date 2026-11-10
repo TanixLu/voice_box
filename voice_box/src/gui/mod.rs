@@ -32,7 +32,9 @@ use crate::{
     task::{self, Task, Wake},
 };
 
-/// What a part of the app is doing that the other parts must wait for.
+/// What a part of the app is doing that the other parts must wait for. Each part runs
+/// its own tasks and reports this; the app folds the reports instead of routing work
+/// through a central job queue.
 #[derive(Clone, Copy, Default)]
 pub struct Busy {
     /// Background work that must finish before other edits, exit or uninstall.
@@ -199,7 +201,8 @@ impl VoiceBoxApp {
         Ok(app)
     }
 
-    /// What the app and every panel except `except` are doing.
+    /// What the app and every panel except `except` are doing. A panel is given the
+    /// others' state so that its own activity never disables its own stop controls.
     fn busy(&self, except: Option<Part>) -> Busy {
         let own = Busy {
             working: self.settings_save.is_some()
@@ -247,6 +250,7 @@ impl VoiceBoxApp {
         }
     }
 
+    /// Runs only after a successful save, so the running app never differs from disk.
     fn apply_settings(&mut self, ctx: &egui::Context, settings: Settings) {
         let startup_changed = settings.startup_enabled != self.settings.startup_enabled;
         ctx.set_theme(settings.theme_preference);
@@ -554,6 +558,7 @@ impl eframe::App for VoiceBoxApp {
         let exiting = matches!(self.lifecycle, Lifecycle::Exiting);
         close_to_tray(ctx, exiting, self.tray.available());
         self.tray.set_exit_enabled(!self.interaction_blocked());
+        // Only cross-panel conditions; the soundboard panel adds its own.
         let shortcuts_enabled = !self.busy(Some(Part::Soundboard)).any()
             && !matches!(self.lifecycle, Lifecycle::ConfirmUninstall);
         self.soundboard.shortcuts(ctx, shortcuts_enabled);

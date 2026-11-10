@@ -186,7 +186,8 @@ fn start_worker(id: SoundId, revision: u64, config: Config, wake: &Wake) -> Job 
     let (sender, commands) = mpsc::channel();
     let (events, receiver) = mpsc::channel();
     let task = Task::run("VoiceBoxSoundboard", wake, move || {
-        // A device stays fixed for a worker, so discovery and plugin checks happen once, here.
+        // A device stays fixed for a worker, so discovery and plugin checks happen once,
+        // here: they use COM and the registry, which must stay off the UI thread.
         let transport = devices::soundboard_microphone_guid(config.microphone_device.as_deref())
             .and_then(|guid| pcm_transport_name(&guid))
             .map_err(Details::new);

@@ -25,7 +25,10 @@ use crate::{
 };
 
 /// An operation clicked while drawing; `apply` starts it once the frame is drawn.
-enum Intent {
+/// Unlike the voice and microphone panels, this panel queues its own commands because
+/// they come from both the tab (`ui`) and its dialogs (`windows`), drawn at different
+/// points in the frame.
+enum Command {
     List(sound_list::Action),
     Batch(sound_list::BatchAction),
     Capture(Target),
@@ -54,7 +57,7 @@ pub struct SoundboardPanel {
     file_error: Option<(Text, Message)>,
     overlay: Overlay,
     overlay_visible: bool,
-    intents: Vec<Intent>,
+    commands: Vec<Command>,
 }
 
 impl SoundboardPanel {
@@ -74,7 +77,7 @@ impl SoundboardPanel {
             file_error: None,
             overlay: Overlay::default(),
             overlay_visible: false,
-            intents: Vec::new(),
+            commands: Vec::new(),
         }
     }
     pub fn apply_prefs(&mut self, prefs: Prefs) {
@@ -143,7 +146,8 @@ impl SoundboardPanel {
     }
 
     /// Registers and dispatches global shortcuts; `enabled` is false while the rest
-    /// of the app cannot accept playback.
+    /// of the app cannot accept playback. The app decides from cross-panel state and
+    /// this panel adds its own (capture, renaming, dialogs), so neither needs the other's.
     pub fn shortcuts(&mut self, ctx: &egui::Context, enabled: bool) {
         let focused = ctx.input(|input| {
             input.viewport().focused == Some(true) && input.viewport().minimized != Some(true)
@@ -197,8 +201,8 @@ impl SoundboardPanel {
             match tool.ui(ctx, self.model.saving_recording()) {
                 Some(recording_import::Action::Close) => self.recording_import = None,
                 Some(recording_import::Action::Save(audio, selection, name)) => {
-                    self.intents
-                        .push(Intent::SaveRecording(audio, selection, name));
+                    self.commands
+                        .push(Command::SaveRecording(audio, selection, name));
                 }
                 None => {}
             }
@@ -209,7 +213,7 @@ impl SoundboardPanel {
             && let Some((index, name)) =
                 self.list.rename_request(keep_editing, self.model.playing())
         {
-            self.intents.push(Intent::Rename(index, name));
+            self.commands.push(Command::Rename(index, name));
         }
         if let Some((title, error)) = &self.file_error
             && notice(ctx, *title, error)
@@ -260,7 +264,14 @@ impl SoundboardPanel {
         let Some((target, key)) = self.capture.poll(ctx) else {
             return;
         };
-        let result = self.model.bind(&target, key, self.settings.draft_mut());
+        // Closing the dialog cancels its captures, so without a draft only sound keys,
+        // which `saved` merely checks against, can arrive here.
+        let mut saved = self.model.prefs().keys;
+        let keys = self
+            .settings
+            .draft_mut()
+            .map_or(&mut saved, |draft| &mut draft.keys);
+        let result = self.model.bind(&target, key, keys);
         let message = self.message_for(&target);
         match result {
             Ok(()) => message.clear(),
@@ -280,40 +291,41 @@ impl SoundboardPanel {
             let actions = self
                 .list
                 .ui(ui, &self.model.library().sounds, self.list_status());
-            self.intents.extend(actions.into_iter().map(Intent::List));
+            self.commands.extend(actions.into_iter().map(Command::List));
             let actions = self
                 .list
                 .batch_ui(ui, &self.model.library().sounds, self.list_status());
-            self.intents.extend(actions.into_iter().map(Intent::Batch));
+            self.commands
+                .extend(actions.into_iter().map(Command::Batch));
             self.playback_ui(ui);
         });
         if let Some(ids) = self
             .list
             .delete_ui(ui.ctx(), &self.model.library().sounds, available)
         {
-            self.intents.push(Intent::Remove(ids));
+            self.commands.push(Command::Remove(ids));
         }
         self.batch_rename_ui(ui.ctx(), available);
     }
 
     /// Starts the operations queued this frame; they are dropped when not `allowed`.
     pub fn apply(&mut self, ctx: &egui::Context, allowed: bool) {
-        for intent in std::mem::take(&mut self.intents) {
+        for command in std::mem::take(&mut self.commands) {
             if !allowed || self.working() {
                 break;
             }
-            match intent {
-                Intent::List(action) => self.list_action(action),
-                Intent::Batch(action) => self.batch_action(ctx, action),
-                Intent::Capture(target) => {
+            match command {
+                Command::List(action) => self.list_action(action),
+                Command::Batch(action) => self.batch_action(ctx, action),
+                Command::Capture(target) => {
                     self.begin_capture(target);
                     ctx.request_repaint();
                 }
-                Intent::Remove(ids) => {
+                Command::Remove(ids) => {
                     self.model.remove(&ids);
                     self.error.clear();
                 }
-                Intent::Rename(index, name) => {
+                Command::Rename(index, name) => {
                     let result = self
                         .model
                         .edit(Edit::Rename, move |library| library.rename(index, &name));
@@ -322,7 +334,7 @@ impl SoundboardPanel {
                         self.error = Message::error(error);
                     }
                 }
-                Intent::BatchRename(plan) => {
+                Command::BatchRename(plan) => {
                     let result = self
                         .model
                         .edit(Edit::BatchRename, move |library| library.rename_batch(plan));
@@ -330,10 +342,10 @@ impl SoundboardPanel {
                         tool.apply_result(result);
                     }
                 }
-                Intent::SaveRecording(audio, selection, name) => {
+                Command::SaveRecording(audio, selection, name) => {
                     self.model.save_recording(audio, selection, name)
                 }
-                Intent::OpenSettings => {
+                Command::OpenSettings => {
                     self.settings.open(self.model.prefs());
                     self.settings_error.clear();
                     self.devices = Some(Task::run(
@@ -342,14 +354,14 @@ impl SoundboardPanel {
                         devices::enumerate_soundboard_devices,
                     ));
                 }
-                Intent::RecordImport => {
+                Command::RecordImport => {
                     self.model.stop();
                     self.list.cancel_rename();
                     self.list.cancel_delete();
                     self.capture.cancel();
                     self.recording_import = Some(RecordingImport::new(self.wake.clone()));
                 }
-                Intent::Import => self.model.import(super::picker::choose_files),
+                Command::Import => self.model.import(super::picker::choose_files),
             }
         }
     }
@@ -384,8 +396,8 @@ impl SoundboardPanel {
                 self.list.clear_anchor();
                 self.batch_rename = None;
             }
-            Action::StopPlayback => self.intents.push(Intent::List(sound_list::Action::Stop)),
-            Action::Apply(plan) => self.intents.push(Intent::BatchRename(plan)),
+            Action::StopPlayback => self.commands.push(Command::List(sound_list::Action::Stop)),
+            Action::Apply(plan) => self.commands.push(Command::BatchRename(plan)),
         }
     }
 
@@ -417,14 +429,14 @@ impl SoundboardPanel {
                 |ui| {
                     if !self.list.batch_mode() {
                         if ui.button(Text::Settings.text()).clicked() {
-                            self.intents.push(Intent::OpenSettings);
+                            self.commands.push(Command::OpenSettings);
                         }
                         // This row is laid out right-to-left: recording sits to the right of import.
                         if ui.button(Text::RecordImport.text()).clicked() {
-                            self.intents.push(Intent::RecordImport);
+                            self.commands.push(Command::RecordImport);
                         }
                         if ui.button(Text::Import.text()).clicked() {
-                            self.intents.push(Intent::Import);
+                            self.commands.push(Command::Import);
                         }
                     }
                     if self.working() {
@@ -473,7 +485,7 @@ impl SoundboardPanel {
                 .add_enabled(self.model.playing(), egui::Button::new(key))
                 .clicked()
             {
-                self.intents.push(Intent::List(sound_list::Action::Stop));
+                self.commands.push(Command::List(sound_list::Action::Stop));
             }
             let error = [&self.error, self.model.shortcut_error()]
                 .into_iter()
@@ -572,7 +584,7 @@ impl SoundboardPanel {
                     };
                 }
             },
-            Action::Capture(target) => self.intents.push(Intent::Capture(target)),
+            Action::Capture(target) => self.commands.push(Command::Capture(target)),
         }
         None
     }

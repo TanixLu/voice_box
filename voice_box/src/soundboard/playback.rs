@@ -361,6 +361,8 @@ pub fn run(
         if settings.microphone_gain_percent.is_mute() && settings.speaker_gain_percent.is_mute() {
             break "outputs_muted";
         }
+        // The hold key belongs to `Config`, so it is pressed on this thread in step with
+        // the audio and follows live reconfiguration like every other output choice.
         if settings.hold_hotkey != held_binding {
             drop(held);
             held = match settings.hold_hotkey {

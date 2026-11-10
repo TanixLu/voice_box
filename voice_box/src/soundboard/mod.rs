@@ -1,4 +1,9 @@
 //! Sound library operations and background playback coordination.
+//!
+//! `Soundboard` is the presentation model beneath the soundboard panel: it owns the
+//! soundboard's rules (bindings, shortcuts, which operations exclude each other) and
+//! reports results shaped for the view (`Update`, `NowPlaying`), so the panel holds
+//! only widget state and the app shell knows nothing about sounds or keys.
 
 pub mod bindings;
 mod decoder;
@@ -25,10 +30,10 @@ use windows::Win32::Foundation::HWND;
 pub use crate::soundboard::player::PlaybackStatus;
 use crate::{
     audio::capture::Recording,
-    i18n::{Details, Message, Text, UserContext},
+    i18n::{Details, Message, Text},
     model::{Hotkey, Sound, SoundId},
     soundboard::{
-        bindings::{Action, Target},
+        bindings::{Action, Keys, Target},
         import::{ImportedSounds, import_files},
         library::Library,
         player::Player,
@@ -71,7 +76,9 @@ pub enum Update {
     Recorded(anyhow::Result<()>),
 }
 
-/// Library writers exclude each other, so they share one slot.
+/// Library writers exclude each other, so they share one slot. `Library` saves edits
+/// to existing sounds; imports and recordings insert their rows on the worker, which
+/// has no `Library`, and are appended to the live one when the task finishes.
 enum LibraryTask {
     Edit(Edit, Task<Library>),
     Import(Task<ImportedSounds>),
@@ -84,6 +91,8 @@ pub struct Soundboard {
     library: Library,
     prefs: Prefs,
     player: Player,
+    /// Owned here, not by the app shell, because the bindings and their validation
+    /// come from the library and preferences this type already owns.
     shortcuts: Shortcuts,
     library_task: Option<LibraryTask>,
     shuffle: shuffle::Shuffle,
@@ -91,6 +100,7 @@ pub struct Soundboard {
 }
 impl Soundboard {
     /// Global shortcuts are delivered to `window`, which must belong to the calling thread.
+    /// Registering on the main window avoids a dedicated message-loop thread.
     pub fn new(library: Library, prefs: Prefs, wake: Wake, window: HWND) -> Self {
         Self {
             library,
@@ -143,25 +153,17 @@ impl Soundboard {
         }
         played
     }
-    /// Binds `key` to `target`. Playback keys are stored in `draft`, the open settings
-    /// dialog; sound keys are validated against it when open and saved to the library.
-    pub fn bind(
-        &mut self,
-        target: &Target,
-        key: Hotkey,
-        draft: Option<&mut Prefs>,
-    ) -> anyhow::Result<()> {
+    /// Binds `key` to `target`, checked against `keys`: the open settings draft, or the
+    /// saved keys. Playback keys are stored in `keys`; sound keys are saved to the library.
+    pub fn bind(&mut self, target: &Target, key: Hotkey, keys: &mut Keys) -> anyhow::Result<()> {
         // The hold key is simulated rather than registered.
         if *target != Target::Hold {
             self.shortcuts.validate(key)?;
         }
-        let sounds = &self.library.sounds;
+        keys.bind(&self.library.sounds, target, key)?;
         let Target::Sounds(ids) = target else {
-            let draft = draft.user_context(Text::OpenSoundSettingsFirst)?;
-            return draft.keys.bind(sounds, target, key);
+            return Ok(());
         };
-        let keys = draft.map_or(self.prefs.keys, |draft| draft.keys);
-        keys.validate(sounds, target, key)?;
         let ids = ids.clone();
         self.edit(Edit::Hotkeys, move |library| {
             library.set_hotkeys(&ids, Some(key))
