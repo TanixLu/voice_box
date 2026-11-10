@@ -30,7 +30,7 @@ impl KeyCapture {
     pub fn poll(&mut self, ctx: &egui::Context) -> Option<(Target, Hotkey)> {
         let capture = self.0.as_mut()?;
         ctx.request_repaint_after(std::time::Duration::from_millis(20));
-        if !ctx.input(|input| input.focused)
+        if ctx.input(|input| !input.focused || input.pointer.any_pressed())
             || ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.cancel();

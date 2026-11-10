@@ -84,7 +84,7 @@ catalog! {
     HotkeyServiceUnavailable => ("The global hotkey service is unavailable", "全局快捷键服务不可用");
     PressKey => ("Press a key…", "请按键…");
     BindHotkey => ("Bind hotkey", "绑定快捷键");
-    CaptureHotkeyHint => ("Press a shortcut. Press Esc to cancel", "请按下快捷键，按 Esc 取消");
+    CaptureHotkeyHint => ("Press a shortcut. Press Esc or click to cancel", "请按下快捷键，按 Esc 或点击鼠标取消");
     SoundNotFound => ("The sound does not exist", "音效不存在");
     InvalidSoundName => ("The name must not be empty or contain control characters", "音效名称不能为空，也不能包含控制字符");
     ReadSourceAudioPathFailed => ("Failed to read the original audio path", "读取原音频路径失败");
