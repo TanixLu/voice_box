@@ -101,7 +101,7 @@ impl SoundboardSettingsDialog {
         let mut save = false;
         let mut close = false;
         let mut clear_message = false;
-        let response = egui::Modal::new(egui::Id::unique("soundboard_settings"))
+        egui::Modal::new(egui::Id::unique("soundboard_settings"))
             .frame(egui::Frame::popup(&ctx.style_of(ctx.theme())).inner_margin(16))
             .show(ctx, |ui| {
                 if !idle {
@@ -208,8 +208,8 @@ impl SoundboardSettingsDialog {
                     warning(ui, &error.text());
                 }
             });
-        // Ignore backdrop clicks so they do not discard unsaved settings.
-        if idle && (close || (!response.backdrop_response.clicked() && response.should_close())) {
+        // Only the close button closes, so neither Escape nor a backdrop click discards unsaved settings.
+        if idle && close {
             self.draft = None;
             Some(Action::Close)
         } else if save {
@@ -269,7 +269,7 @@ fn device_picker(
         });
 }
 
-fn playback_volume(ui: &mut egui::Ui, label: &str, gain_percent: &mut GainPercent) -> bool {
+fn playback_volume(ui: &mut egui::Ui, label: &str, gain_percent: &mut GainPercent) {
     let mut value = gain_percent.as_u16();
     let changed = ui
         .horizontal_wrapped(|ui| {
@@ -303,5 +303,4 @@ fn playback_volume(ui: &mut egui::Ui, label: &str, gain_percent: &mut GainPercen
     if changed {
         *gain_percent = GainPercent::new(value);
     }
-    changed
 }

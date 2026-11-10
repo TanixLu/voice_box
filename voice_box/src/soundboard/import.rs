@@ -132,7 +132,6 @@ fn validate_file(source: &Path) -> anyhow::Result<ValidatedFile> {
     }
     ensure!(frames > 0, Text::NoPlayableAudio);
     file.rewind()?;
-    ensure!(metadata.len() > 0, Text::NoPlayableAudio);
     Ok(ValidatedFile {
         file,
         source: source.to_owned(),

@@ -71,7 +71,7 @@ catalog! {
     InvalidTrackParameters => ("Invalid audio track parameters", "音轨参数无效");
     MissingSampleRate => ("The audio track has no sample rate", "音轨缺少采样率");
     MissingChannels => ("The audio track has no channel information", "音轨缺少声道信息");
-    SupportedAudioRange => ("Audio must be mono or stereo at 8–192 kHz", "首版支持 8–192 kHz 单声道或立体声音频");
+    SupportedAudioRange => ("Audio must be mono or stereo at 8–192 kHz", "仅支持 8–192 kHz 单声道或立体声音频");
     CreateAudioDecoderFailed => ("Cannot create the audio decoder", "无法创建音频解码器");
     ReadAudioDataFailed => ("Failed to read audio data", "读取音频数据失败");
     DecodeAudioFailed => ("Failed to decode audio", "解码音频失败");
@@ -209,7 +209,7 @@ catalog! {
     MicrophoneOutput => ("Microphone output", "麦克风输出");
     FollowSystemDefault => ("Follow system default", "跟随系统默认");
     DeviceUnavailable => ("Selected device unavailable", "所选设备不可用");
-    SoundboardMicrophonePluginRequired => ("Install or update the VoiceBox plugin for this microphone", "请为此麦克风安装或更新 VoiceBox 插件");
+    SoundboardMicrophonePluginRequired => ("Install or update the VoiceBox plugin for this microphone on the Voice tab", "请在「语音」页为此麦克风安装或更新 VoiceBox 插件");
     SpeakerOutput => ("Speaker output", "扬声器输出");
     IncludeMicrophoneAudio => ("Keep microphone audio during playback", "音效播放时保持收音");
     ShowOverlay => ("Show playback overlay", "显示播放浮层");

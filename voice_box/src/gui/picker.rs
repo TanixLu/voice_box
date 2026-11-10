@@ -1,19 +1,27 @@
 use std::path::PathBuf;
 
+use windows::Win32::Foundation::HWND;
+
 use crate::{
     i18n::{Text, current_language},
     win::ComGuard,
 };
 
-pub fn choose_files() -> anyhow::Result<Vec<PathBuf>> {
-    choose_paths(false)
+// A window handle is not `Send`; each picker carries it as an integer to its own thread.
+
+/// Returns a picker to run off the UI thread, modal to `owner`.
+pub fn choose_files(owner: HWND) -> impl FnOnce() -> anyhow::Result<Vec<PathBuf>> + Send {
+    let owner = owner.0 as isize;
+    move || choose_paths(HWND(owner as _), false)
 }
 
-pub fn choose_folder() -> anyhow::Result<Option<PathBuf>> {
-    Ok(choose_paths(true)?.into_iter().next())
+/// Returns a picker to run off the UI thread, modal to `owner`.
+pub fn choose_folder(owner: HWND) -> impl FnOnce() -> anyhow::Result<Option<PathBuf>> + Send {
+    let owner = owner.0 as isize;
+    move || Ok(choose_paths(HWND(owner as _), true)?.into_iter().next())
 }
 
-fn choose_paths(folder: bool) -> anyhow::Result<Vec<PathBuf>> {
+fn choose_paths(owner: HWND, folder: bool) -> anyhow::Result<Vec<PathBuf>> {
     use windows::{
         Win32::{
             System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree},
@@ -69,7 +77,7 @@ fn choose_paths(folder: bool) -> anyhow::Result<Vec<PathBuf>> {
                 },
             ])?;
         }
-        if let Err(error) = dialog.Show(None) {
+        if let Err(error) = dialog.Show(Some(owner)) {
             if error.code().0 as u32 == 0x800704c7 {
                 return Ok(Vec::new());
             }

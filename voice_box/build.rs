@@ -44,11 +44,18 @@ fn generate_icons(out: &Path) {
         "1 ICON \"icon.ico\"\n1 24 \"voice_box.manifest\"\n",
     )
     .expect("Failed to write resource script");
-    fs::copy(
-        "../assets/voice_box.manifest",
-        out.join("voice_box.manifest"),
-    )
-    .expect("Failed to copy application manifest");
+    // Windows requires four version parts; Cargo's three get a zero revision.
+    let version = format!(
+        "{}.{}.{}.0",
+        env!("CARGO_PKG_VERSION_MAJOR"),
+        env!("CARGO_PKG_VERSION_MINOR"),
+        env!("CARGO_PKG_VERSION_PATCH"),
+    );
+    let manifest = fs::read_to_string("../assets/voice_box.manifest")
+        .expect("Failed to read application manifest")
+        .replace("__VOICEBOX_VERSION__", &version);
+    fs::write(out.join("voice_box.manifest"), manifest)
+        .expect("Failed to write application manifest");
 }
 
 fn compress_apo_dll(out: &Path) {

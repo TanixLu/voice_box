@@ -43,6 +43,8 @@ enum Command {
 
 pub struct SoundboardPanel {
     wake: Wake,
+    /// The main window, which owns the file pickers.
+    window: HWND,
     soundboard: Soundboard,
     capture: KeyCapture,
     settings_dialog: SoundboardSettingsDialog,
@@ -66,6 +68,7 @@ impl SoundboardPanel {
             soundboard: Soundboard::new(library, settings, wake.clone(), window),
             capture: KeyCapture::default(),
             wake,
+            window,
             settings_dialog: SoundboardSettingsDialog::default(),
             settings_error: Message::default(),
             capture_message: Message::default(),
@@ -372,7 +375,9 @@ impl SoundboardPanel {
                     self.capture.cancel();
                     self.recording_import = Some(RecordingImportDialog::new(self.wake.clone()));
                 }
-                Command::Import => self.soundboard.import(super::picker::choose_files),
+                Command::Import => self
+                    .soundboard
+                    .import(super::picker::choose_files(self.window)),
             }
         }
     }
@@ -540,7 +545,8 @@ impl SoundboardPanel {
         };
         let result = match action {
             BatchAction::Export => {
-                self.soundboard.export(&ids, super::picker::choose_folder);
+                self.soundboard
+                    .export(&ids, super::picker::choose_folder(self.window));
                 Ok(())
             }
             BatchAction::Move(to_top) => self

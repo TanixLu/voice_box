@@ -34,7 +34,7 @@ pub fn enumerate_microphones() -> anyhow::Result<Vec<Microphone>> {
     for device in &enumerator.get_device_collection(&Direction::Capture)? {
         let device = device?;
         let id = device.get_id()?;
-        let guid = endpoint_guid(&id)?.to_owned();
+        let guid = endpoint_guid(&id).to_owned();
         microphones.push(Microphone {
             name: device.get_friendlyname()?,
             is_default: default_id.as_deref() == Some(&id),
@@ -93,12 +93,10 @@ pub fn microphone_guid(device_id: Option<&str>) -> anyhow::Result<String> {
         device.get_state()? == DeviceState::Active,
         Text::DeviceUnavailable
     );
-    Ok(endpoint_guid(&device.get_id()?)?.to_owned())
+    Ok(endpoint_guid(&device.get_id()?).to_owned())
 }
 
 /// An endpoint ID ends with the GUID that keys the endpoint's registry entries.
-fn endpoint_guid(id: &str) -> anyhow::Result<&str> {
-    id.rsplit('.')
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("Invalid microphone ID"))
+fn endpoint_guid(id: &str) -> &str {
+    id.rsplit_once('.').map_or(id, |(_, guid)| guid)
 }

@@ -73,7 +73,7 @@ impl BatchRenameDialog {
                 messages.push(message);
             }
         }
-        messages.join("；")
+        messages.join("; ")
     }
 
     pub fn selected(&self) -> &HashSet<SoundId> {
