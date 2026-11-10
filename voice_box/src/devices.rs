@@ -91,7 +91,7 @@ pub fn microphone_guid(device_id: Option<&str>) -> anyhow::Result<String> {
     );
     anyhow::ensure!(
         device.get_state()? == DeviceState::Active,
-        Text::OutputDeviceUnavailable
+        Text::DeviceUnavailable
     );
     Ok(endpoint_guid(&device.get_id()?)?.to_owned())
 }

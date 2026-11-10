@@ -113,6 +113,16 @@ impl RenamePlan {
                 end = range.end;
             }
             name.push_str(&stem[end..]);
+            // Trim like a single rename, keeping the marks on the same text.
+            let start = name.len() - name.trim_start().len();
+            let end = name.trim_end().len().max(start);
+            let new_marks = new_marks
+                .into_iter()
+                .map(|mark| {
+                    mark.start.clamp(start, end) - start..mark.end.clamp(start, end) - start
+                })
+                .collect();
+            let name = name[start..end].to_owned();
             let error = (!is_valid_sound_name(&name)).then_some(Text::InvalidSoundName);
             entries.push(RenameEntry {
                 index,

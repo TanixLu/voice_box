@@ -297,14 +297,16 @@ pub fn microphone_label(microphone: &Microphone) -> String {
         PluginStatus::NotInstalled => Text::PluginNotInstalled.text(),
         PluginStatus::NeedsUpdate => Text::PluginNeedsUpdate.text(),
     };
-    let name = if microphone.is_default {
-        Message::DefaultDevice {
-            name: microphone.name.clone(),
-        }
-        .text()
-        .into_owned()
-    } else {
-        microphone.name.clone()
-    };
+    let name = device_label(&microphone.name, microphone.is_default);
     format!("{name} ({status})")
+}
+
+/// A device name with the default marker when it is the system default.
+pub fn device_label(name: &str, is_default: bool) -> String {
+    if is_default {
+        let name = name.to_owned();
+        Message::DefaultDevice { name }.text().into_owned()
+    } else {
+        name.to_owned()
+    }
 }

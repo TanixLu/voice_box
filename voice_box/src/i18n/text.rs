@@ -208,7 +208,7 @@ catalog! {
     SoundboardSettings => ("Sound settings", "音效设置");
     MicrophoneOutput => ("Microphone output", "麦克风输出");
     FollowSystemDefault => ("Follow system default", "跟随系统默认");
-    OutputDeviceUnavailable => ("Selected device unavailable", "所选设备不可用");
+    DeviceUnavailable => ("Selected device unavailable", "所选设备不可用");
     SoundboardMicrophonePluginRequired => ("Install or update the VoiceBox plugin for this microphone", "请为此麦克风安装或更新 VoiceBox 插件");
     SpeakerOutput => ("Speaker output", "扬声器输出");
     IncludeMicrophoneAudio => ("Keep microphone audio during playback", "音效播放时保持收音");

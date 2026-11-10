@@ -116,7 +116,7 @@ messages! {
     CaptureProgress { time: String } => ("Recording · {time}", "正在录制 · {time}");
     RecordingLimit { minutes: u32 } => ("Default speaker · Up to {minutes} min", "默认扬声器 · 最长 {minutes} 分钟");
     DefaultDevice { name: String } => ("{name} (default)", "{name}（默认）");
-    UnavailableOutputDevice { name: String } => ("{name} (device unavailable)", "{name}（设备不可用）");
+    UnavailableDevice { name: String } => ("{name} (device unavailable)", "{name}（设备不可用）");
     ConfirmPluginUninstall { name: String } => ("Uninstall the VoiceBox plugin for this microphone?\n{name}", "确认卸载此麦克风的VoiceBox插件？\n{name}");
     PlayingSound { name: String } => ("Playing · {name}", "播放中 · {name}");
     RenameSoundHint { name: String } => ("{name}\nDouble-click to rename", "{name}\n双击重命名");

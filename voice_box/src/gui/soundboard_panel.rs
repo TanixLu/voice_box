@@ -360,7 +360,7 @@ impl SoundboardPanel {
                     self.settings_dialog.open(self.soundboard.settings());
                     self.settings_error.clear();
                     self.devices = Some(Task::spawn(
-                        "VoiceBoxOutputDevices",
+                        "VoiceBoxDevices",
                         &self.wake,
                         devices::enumerate_all,
                     ));

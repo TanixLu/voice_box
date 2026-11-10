@@ -13,8 +13,45 @@ use crate::{
 #[derive(Default)]
 pub struct SoundboardSettingsDialog {
     draft: Option<SoundboardSettings>,
-    microphones: Vec<(Endpoint, String)>,
-    speakers: Vec<(Endpoint, String)>,
+    microphones: Vec<Microphone>,
+    speakers: Vec<Speaker>,
+}
+
+/// A listed device, labeled in the current language whenever it is drawn.
+trait PickerDevice {
+    fn id(&self) -> &str;
+    fn endpoint(&self) -> Endpoint;
+    fn label(&self) -> String;
+}
+
+impl PickerDevice for Microphone {
+    fn id(&self) -> &str {
+        &self.device_id
+    }
+    fn endpoint(&self) -> Endpoint {
+        Endpoint {
+            id: self.device_id.clone(),
+            name: self.name.clone(),
+        }
+    }
+    fn label(&self) -> String {
+        super::widgets::microphone_label(self)
+    }
+}
+
+impl PickerDevice for Speaker {
+    fn id(&self) -> &str {
+        &self.device_id
+    }
+    fn endpoint(&self) -> Endpoint {
+        Endpoint {
+            id: self.device_id.clone(),
+            name: self.name.clone(),
+        }
+    }
+    fn label(&self) -> String {
+        super::widgets::device_label(&self.name, self.is_default)
+    }
 }
 
 pub struct Status<'a> {
@@ -46,36 +83,8 @@ impl SoundboardSettingsDialog {
         self.draft.as_ref().is_some_and(|draft| draft != settings)
     }
     pub fn set_devices(&mut self, microphones: Vec<Microphone>, speakers: Vec<Speaker>) {
-        self.microphones = microphones
-            .into_iter()
-            .map(|mic| {
-                let name = super::widgets::microphone_label(&mic);
-                (
-                    Endpoint {
-                        id: mic.device_id,
-                        name: mic.name,
-                    },
-                    name,
-                )
-            })
-            .collect();
-        self.speakers = speakers
-            .into_iter()
-            .map(|speaker| {
-                let device = Endpoint {
-                    id: speaker.device_id,
-                    name: speaker.name.clone(),
-                };
-                let name = if speaker.is_default {
-                    Message::DefaultDevice { name: speaker.name }
-                        .text()
-                        .into_owned()
-                } else {
-                    speaker.name
-                };
-                (device, name)
-            })
-            .collect();
+        self.microphones = microphones;
+        self.speakers = speakers;
     }
     pub fn ui(
         &mut self,
@@ -121,7 +130,7 @@ impl SoundboardSettingsDialog {
                             Text::MicrophoneOutput.text(),
                             &mut settings.microphone_gain_percent,
                         );
-                        output_device_picker(
+                        device_picker(
                             ui,
                             "sound_microphone",
                             &mut settings.microphone_device,
@@ -133,7 +142,7 @@ impl SoundboardSettingsDialog {
                             Text::SpeakerOutput.text(),
                             &mut settings.speaker_gain_percent,
                         );
-                        output_device_picker(
+                        device_picker(
                             ui,
                             "sound_speaker",
                             &mut settings.speaker_device,
@@ -219,20 +228,20 @@ impl SoundboardSettingsDialog {
     }
 }
 
-fn output_device_picker(
+fn device_picker(
     ui: &mut egui::Ui,
     id: &str,
     selected: &mut Option<Endpoint>,
-    devices: &[(Endpoint, String)],
+    devices: &[impl PickerDevice],
 ) {
     let name = match selected {
         None => Text::FollowSystemDefault.text().to_owned(),
         Some(device) => devices
             .iter()
-            .find(|(available, _)| available.id == device.id)
-            .map(|(_, label)| label.clone())
+            .find(|available| available.id() == device.id)
+            .map(PickerDevice::label)
             .unwrap_or_else(|| {
-                Message::UnavailableOutputDevice {
+                Message::UnavailableDevice {
                     name: device.name.clone(),
                 }
                 .text()
@@ -246,15 +255,15 @@ fn output_device_picker(
         .show_ui(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.selectable_value(selected, None, Text::FollowSystemDefault.text());
-            for (device, name) in devices {
+            for device in devices {
                 let is_selected = selected
                     .as_ref()
-                    .is_some_and(|selected| selected.id == device.id);
+                    .is_some_and(|selected| selected.id == device.id());
                 if ui
-                    .add(egui::Button::selectable(is_selected, name).wrap())
+                    .add(egui::Button::selectable(is_selected, device.label()).wrap())
                     .clicked()
                 {
-                    *selected = Some(device.clone());
+                    *selected = Some(device.endpoint());
                 }
             }
         });
