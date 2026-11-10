@@ -10,7 +10,7 @@ use rusqlite::{
 
 use crate::{
     i18n::Text,
-    model::{Hotkey, Sound, SoundId, is_valid_name},
+    model::{Hotkey, Sound, SoundId, is_valid_sound_name},
 };
 
 use super::blob::AudioWriter;
@@ -22,7 +22,7 @@ pub fn save(sounds: &[Sound]) -> anyhow::Result<()> {
         let mut update = transaction
             .prepare("UPDATE sounds SET name = ?1, position = ?2, hotkey = ?3 WHERE id = ?4")?;
         for (position, sound) in sounds.iter().enumerate() {
-            ensure!(is_valid_name(&sound.name), Text::InvalidSoundName);
+            ensure!(is_valid_sound_name(&sound.name), Text::InvalidSoundName);
             ensure!(
                 update.execute(params![sound.name, position as i64, sound.hotkey, sound.id,])? == 1,
                 Text::SoundNotFound
@@ -33,13 +33,13 @@ pub fn save(sounds: &[Sound]) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn remove(ids: &HashSet<SoundId>, reclaim_space: bool) -> anyhow::Result<()> {
+pub fn delete(ids: &HashSet<SoundId>, reclaim_space: bool) -> anyhow::Result<()> {
     let mut connection = super::open()?;
     let transaction = connection.transaction()?;
     {
-        let mut delete = transaction.prepare("DELETE FROM sounds WHERE id = ?1")?;
+        let mut statement = transaction.prepare("DELETE FROM sounds WHERE id = ?1")?;
         for id in ids {
-            delete.execute([id])?;
+            statement.execute([id])?;
         }
     }
     transaction.commit()?;
@@ -69,7 +69,7 @@ pub fn load() -> anyhow::Result<Vec<Sound>> {
     let mut sounds = Vec::new();
     for row in rows {
         let (id, name, duration_secs, hotkey) = row?;
-        ensure!(is_valid_name(&name), Text::InvalidSoundName);
+        ensure!(is_valid_sound_name(&name), Text::InvalidSoundName);
         ensure!(
             duration_secs.is_finite() && duration_secs > 0.0,
             Text::InvalidAudioDuration
@@ -151,7 +151,7 @@ fn write_sound(
     write: impl FnOnce(&mut dyn Write) -> anyhow::Result<()>,
 ) -> anyhow::Result<Sound> {
     let name = name.trim();
-    ensure!(is_valid_name(name), Text::InvalidSoundName);
+    ensure!(is_valid_sound_name(name), Text::InvalidSoundName);
     ensure!(length > 0, Text::NoPlayableAudio);
     ensure!(
         duration_secs.is_finite() && duration_secs > 0.0,

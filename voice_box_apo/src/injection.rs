@@ -57,7 +57,7 @@ impl Injection {
         let background = Arc::clone(&state);
         let stop = Arc::new(AtomicBool::new(false));
         let background_stop = Arc::clone(&stop);
-        worker::spawn("VoiceBoxSoundboard", move || {
+        worker::spawn("VoiceBoxInjection", move || {
             receive(name, &background, &background_stop)
         })?;
         Ok(Self {

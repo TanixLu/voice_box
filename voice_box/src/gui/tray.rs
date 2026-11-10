@@ -1,3 +1,5 @@
+//! The notification-area icon and its menu. It also keeps a silent start's window hidden.
+
 use std::{cell::Cell, sync::mpsc};
 
 use windows::{
@@ -47,13 +49,15 @@ struct Data {
     taskbar_created: u32,
     exit_enabled: Cell<bool>,
     available: Cell<bool>,
-    startup_hidden: Cell<bool>,
+    /// Set by a silent start until its first Show; until then the window proc keeps
+    /// eframe from showing the window.
+    first_show_pending: Cell<bool>,
     ctx: egui::Context,
     sender: mpsc::Sender<Event>,
 }
 
 impl Tray {
-    pub fn new(ctx: &egui::Context, window: HWND, start_in_tray: bool) -> anyhow::Result<Self> {
+    pub fn new(ctx: &egui::Context, window: HWND, silent_start: bool) -> anyhow::Result<Self> {
         let (sender, receiver) = mpsc::channel();
         unsafe {
             // LR_SHARED leaves the embedded icon owned by the executable module.
@@ -78,7 +82,7 @@ impl Tray {
                 taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),
                 exit_enabled: Cell::new(false),
                 available: Cell::new(false),
-                startup_hidden: Cell::new(start_in_tray),
+                first_show_pending: Cell::new(silent_start),
                 ctx: ctx.clone(),
                 sender,
             });
@@ -106,6 +110,15 @@ impl Tray {
     pub fn available(&self) -> bool {
         self.data.available.get()
     }
+
+    pub fn first_show_pending(&self) -> bool {
+        self.data.first_show_pending.get()
+    }
+
+    /// Lets the window be shown; returns whether this is the first show after a silent start.
+    pub fn take_first_show(&self) -> bool {
+        self.data.first_show_pending.replace(false)
+    }
 }
 
 impl Data {
@@ -124,9 +137,6 @@ impl Data {
     }
 
     fn send(&self, event: Event) {
-        if matches!(event, Event::Show) {
-            self.startup_hidden.set(false);
-        }
         let _ = self.sender.send(event);
         self.ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
@@ -196,13 +206,13 @@ unsafe extern "system" fn window_proc(
 ) -> LRESULT {
     // The boxed data stays alive until the subclass is removed on this UI thread.
     let data = unsafe { &*(data as *const Data) };
-    if message == WM_WINDOWPOSCHANGING && data.startup_hidden.get() {
+    if message == WM_WINDOWPOSCHANGING && data.first_show_pending.get() {
         // eframe 0.37 unconditionally shows the root window after its first paint.
         let position = unsafe { &mut *(lparam.0 as *mut WINDOWPOS) };
         position.flags &= !SWP_SHOWWINDOW;
     } else if message == WM_STYLECHANGING
         && wparam.0 as i32 == GWL_STYLE.0
-        && data.startup_hidden.get()
+        && data.first_show_pending.get()
     {
         let style = unsafe { &mut *(lparam.0 as *mut STYLESTRUCT) };
         style.styleNew &= !WS_VISIBLE.0;

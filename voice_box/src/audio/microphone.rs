@@ -74,7 +74,7 @@ pub fn capture(
         frame_bytes == format.get_blockalign() as usize,
         Text::InvalidMicrophoneFrame
     );
-    let stream = Stream::new(client, &format, false).user_context(Text::OpenRawCapture)?;
+    let stream = Stream::new(client, &format, false).user_context(Text::OpenRawCaptureFailed)?;
     let capture: IAudioCaptureClient = unsafe { stream.client.GetService()? };
     let max_frames = (rate * MICROPHONE_MAX_SECONDS) as usize;
     let max_samples = (max_frames * channels as usize)

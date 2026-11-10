@@ -1,4 +1,4 @@
-//! Recording/import tool jobs; preview ranges always refer to complete frames.
+//! The recording dialog's capture and preview jobs; preview ranges always refer to complete frames.
 
 use std::{
     io::Write,
@@ -9,12 +9,12 @@ use std::{
 
 use anyhow::ensure;
 
-use voice_box_shared::pcm_transport::{PCM_CHANNELS, PcmFrame};
+use voice_box_shared::pcm_transport::{PCM_CHANNELS, PCM_SAMPLE_RATE, PcmFrame};
 
 use crate::{
     audio::{Recording, loopback, playback},
     i18n::{Text, UserContext},
-    model::{Sound, is_valid_name},
+    model::{Sound, is_valid_sound_name},
     task::{Task, Wake},
 };
 
@@ -166,11 +166,12 @@ impl Recorder {
         }
     }
     fn begin_recording(&mut self) {
-        let task = Task::spawn("VoiceBoxSpeakerRecording", &self.wake, |stop, started| {
-            loopback::capture(stop, started)
-                .map(Clip::new)
-                .map(Outcome::Recorded)
-        });
+        let task =
+            Task::spawn_cancellable("VoiceBoxSpeakerRecording", &self.wake, |stop, started| {
+                loopback::capture(stop, started)
+                    .map(Clip::new)
+                    .map(Outcome::Recorded)
+            });
         self.task = Some((Activity::Recording, 0..0, task));
     }
     pub fn queue_preview(&mut self, range: Range<usize>, immediate: bool) {
@@ -214,7 +215,7 @@ impl Recorder {
             (Some(Pending::Preview(range, when)), Some(audio)) if Instant::now() >= when => {
                 let channels = audio.channels as usize;
                 let samples = range.start * channels..range.end * channels;
-                let task = Task::spawn(
+                let task = Task::spawn_cancellable(
                     "VoiceBoxRecordingPreview",
                     &self.wake,
                     move |stop, started| {
@@ -265,12 +266,12 @@ fn write_wave(
     Ok(())
 }
 
-/// Writes the selected frames to the database as a new sound.
-pub fn save_clip(audio: &Recording, selection: Selection, name: &str) -> anyhow::Result<Sound> {
+/// Saves a recording: writes the selected frames to the database as a new sound.
+pub fn save(audio: &Recording, selection: Selection, name: &str) -> anyhow::Result<Sound> {
     let name = name.trim();
-    ensure!(is_valid_name(name), Text::InvalidRecordingName);
+    ensure!(is_valid_sound_name(name), Text::InvalidRecordingName);
     ensure!(
-        audio.channels as usize == PCM_CHANNELS && audio.sample_rate == 48_000,
+        audio.channels as usize == PCM_CHANNELS && audio.sample_rate == PCM_SAMPLE_RATE,
         Text::InvalidRecordingFormat
     );
     ensure!(
@@ -283,5 +284,5 @@ pub fn save_clip(audio: &Recording, selection: Selection, name: &str) -> anyhow:
     crate::database::sounds::insert(name, duration_secs, length, |output| {
         write_wave(output, audio, selection)
     })
-    .user_context(Text::SaveRecording)
+    .user_context(Text::SaveRecordingFailed)
 }

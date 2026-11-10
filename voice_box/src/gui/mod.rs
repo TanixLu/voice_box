@@ -1,9 +1,11 @@
 //! The egui shell. Rendering never mutates feature state directly; it returns intents.
 //!
-//! File and type naming:
+//! Naming:
 //! - `*_panel.rs` holds a `*Panel`: a tab section that lives as long as the app.
 //! - `*_dialog.rs` holds a `*Dialog`: a modal opened on demand by its parent.
 //! - `app_dialogs.rs` holds the shell's own modals; `widgets.rs` holds stateless helpers.
+//! - Methods that draw are `ui` or `*_ui`; widget functions are named for what they draw
+//!   (`hint`, `notice`).
 //!
 //! Intents, by who receives them:
 //! - `Command`: from a panel to whoever applies it after the frame is drawn, so state
@@ -12,6 +14,9 @@
 //! - `Action`: from a dialog or widget to its parent panel, returned as `Option<Action>`
 //!   (`Vec<Action>` when one frame can produce several). A dialog always closes with `Action::Close`.
 //! - `Event`: from outside egui, such as the tray icon.
+//!
+//! These three words name GUI intents only; message types elsewhere carry their domain
+//! (`PlaybackCommand`, `ShortcutAction`).
 
 mod app_dialogs;
 mod batch_rename_dialog;
@@ -38,7 +43,7 @@ use crate::{
     embedded::ICON_PNG,
     gui::{
         microphone_panel::MicrophonePanel, soundboard_panel::SoundboardPanel,
-        voice_panel::VoicePanel, widgets::section,
+        voice_panel::VoicePanel,
     },
     i18n::{self, Details, LanguagePreference, Message, Text, UserContext},
     paths::ui_state_path,
@@ -96,16 +101,27 @@ fn close_to_tray(ctx: &egui::Context, exiting: bool, tray_available: bool) {
     }
 }
 
-pub fn run(settings: Settings, start_in_tray: bool) -> anyhow::Result<()> {
+/// One framed group of the voice tab.
+fn section(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::group(ui.style())
+        .inner_margin(12)
+        .corner_radius(8)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            contents(ui);
+        });
+}
+
+pub fn run(settings: Settings, silent_start: bool) -> anyhow::Result<()> {
     let apo_config = ApoConfig::load().unwrap_or_else(|error| {
         tracing::warn!("Failed to load the APO configuration; using defaults: {error:#}");
         ApoConfig::default()
     });
-    let library = Library::try_load()?;
+    let library = Library::load()?;
     let icon = eframe::icon_data::from_png_bytes(ICON_PNG)?;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_visible(!start_in_tray)
+            .with_visible(!silent_start)
             .with_icon(icon)
             .with_inner_size([560.0, 760.0])
             .with_min_inner_size([380.0, 340.0]),
@@ -122,7 +138,7 @@ pub fn run(settings: Settings, start_in_tray: bool) -> anyhow::Result<()> {
                 apo_config,
                 settings,
                 library,
-                start_in_tray,
+                silent_start,
             )?))
         }),
     )
@@ -167,8 +183,6 @@ struct VoiceBoxApp {
     microphones: MicrophonePanel,
     voice: VoicePanel,
     soundboard: SoundboardPanel,
-    /// Launched hidden and not yet shown; cleared on the first tray "Show".
-    first_show_pending: bool,
     tray: tray::Tray,
     show_licenses: bool,
     notice: Option<(Text, Message)>,
@@ -180,11 +194,12 @@ impl VoiceBoxApp {
         apo_config: ApoConfig,
         settings: Settings,
         library: Library,
-        start_in_tray: bool,
+        silent_start: bool,
     ) -> anyhow::Result<Self> {
         let ctx = &cc.egui_ctx;
         let window = main_window(cc).user_context(Text::MainWindowUnavailable)?;
-        let tray = tray::Tray::new(ctx, window, start_in_tray).user_context(Text::CreateTray)?;
+        let tray =
+            tray::Tray::new(ctx, window, silent_start).user_context(Text::CreateTrayFailed)?;
         ctx.set_theme(settings.theme_preference);
         style::apply(ctx);
         fonts::install(ctx);
@@ -207,7 +222,6 @@ impl VoiceBoxApp {
             microphones: MicrophonePanel::new(wake.clone()),
             voice: VoicePanel::new(apo_config, wake.clone()),
             wake,
-            first_show_pending: start_in_tray,
             tray,
             show_licenses: false,
             notice: None,
@@ -257,7 +271,7 @@ impl VoiceBoxApp {
 
     fn save_settings(&mut self, settings: Settings) {
         if self.settings_save.is_none() {
-            let task = Task::run("VoiceBoxSettingsSave", &self.wake, move || {
+            let task = Task::spawn("VoiceBoxSettingsSave", &self.wake, move || {
                 settings.save()?;
                 Ok(settings)
             });
@@ -283,14 +297,14 @@ impl VoiceBoxApp {
 
     fn synchronize_startup(&mut self, notice: Option<Text>) {
         let enabled = self.settings.startup_enabled;
-        let task = Task::run("VoiceBoxStartupSync", &self.wake, move || {
+        let task = Task::spawn("VoiceBoxStartupSync", &self.wake, move || {
             crate::startup::synchronize(enabled)
         });
         self.startup = Startup::Syncing(task, notice);
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
-        match task::finished(&mut self.settings_save) {
+        match task::take_finished(&mut self.settings_save) {
             Some(Ok(settings)) => self.apply_settings(ctx, settings),
             Some(Err(error)) => self.notice = Some((Text::Settings, Message::error(error))),
             None => {}
@@ -313,7 +327,7 @@ impl VoiceBoxApp {
             };
             if let Some(message) = message {
                 self.notice = Some((Text::Startup, message));
-                if !self.first_show_pending {
+                if !self.tray.first_show_pending() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                 }
@@ -531,7 +545,7 @@ impl VoiceBoxApp {
         self.licenses_ui(ctx);
         if let Some(soundboard) = self
             .soundboard
-            .windows(ctx, busy.working, soundboard_visible)
+            .dialogs_ui(ctx, busy.working, soundboard_visible)
         {
             let settings = Settings {
                 soundboard,
@@ -559,11 +573,11 @@ impl eframe::App for VoiceBoxApp {
         if matches!(self.startup, Startup::Pending) && !self.interaction_blocked() {
             self.synchronize_startup(None);
         }
-        while let Ok(action) = self.tray.receiver.try_recv() {
-            match action {
+        while let Ok(event) = self.tray.receiver.try_recv() {
+            match event {
                 tray::Event::Show => {
                     // eframe may already consider its suppressed first show visible.
-                    if std::mem::take(&mut self.first_show_pending) {
+                    if self.tray.take_first_show() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                     }
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -579,7 +593,7 @@ impl eframe::App for VoiceBoxApp {
         // Only cross-panel conditions; the soundboard panel adds its own.
         let shortcuts_enabled = !self.busy(Some(Part::Soundboard)).any()
             && !matches!(self.lifecycle, Lifecycle::ConfirmUninstall);
-        self.soundboard.shortcuts(ctx, shortcuts_enabled);
+        self.soundboard.poll_shortcuts(ctx, shortcuts_enabled);
         // Keep completions moving even when eframe skips painting a hidden window.
         if self.busy(None).any() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));

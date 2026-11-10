@@ -17,7 +17,7 @@ use winreg::{
 
 use voice_box_shared::{
     apo_config::APO_CONFIG_KEY,
-    apo_identity::{self, APO_CLSID, APO_NAME, COPYRIGHT},
+    apo_identity::{self, APO_CLSID, APO_COPYRIGHT, APO_NAME},
 };
 
 use crate::{
@@ -30,15 +30,16 @@ use crate::{
 const DISABLE_PROTECTED_AUDIO_DG_REG_PATH: &str =
     r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio\DisableProtectedAudioDG";
 
-fn plugin_guid() -> String {
+/// The APO's CLSID in registry form; every other GUID in this module names a microphone.
+fn clsid() -> String {
     format!("{{{:?}}}", APO_CLSID)
 }
 
 fn string_registration_values(apo_dll: &Path) -> anyhow::Result<[(String, String); 6]> {
     let apo_dll = apo_dll.to_str().user_context(Text::InvalidApoPath)?;
-    let guid = plugin_guid();
-    let com = format!(r"HKLM\SOFTWARE\Classes\CLSID\{guid}\");
-    let apo = format!(r"HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}\");
+    let clsid = clsid();
+    let com = format!(r"HKLM\SOFTWARE\Classes\CLSID\{clsid}\");
+    let apo = format!(r"HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{clsid}\");
     let properties = apo_identity::registration_properties();
     Ok([
         (com.clone(), APO_NAME.into()),
@@ -48,7 +49,7 @@ fn string_registration_values(apo_dll: &Path) -> anyhow::Result<[(String, String
             "Both".into(),
         ),
         (format!("{apo}FriendlyName"), APO_NAME.into()),
-        (format!("{apo}Copyright"), COPYRIGHT.into()),
+        (format!("{apo}Copyright"), APO_COPYRIGHT.into()),
         (
             format!("{apo}APOInterface0"),
             format!("{{{:?}}}", properties.iidAPOInterfaceList[0]),
@@ -57,8 +58,8 @@ fn string_registration_values(apo_dll: &Path) -> anyhow::Result<[(String, String
 }
 
 fn dword_registration_values() -> [(String, u32); 10] {
-    let guid = plugin_guid();
-    let apo = format!(r"HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}\");
+    let clsid = clsid();
+    let apo = format!(r"HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{clsid}\");
     let properties = apo_identity::registration_properties();
     [
         (DISABLE_PROTECTED_AUDIO_DG_REG_PATH.into(), 1),
@@ -123,17 +124,17 @@ pub enum PluginAction {
     Uninstall,
 }
 
-pub struct PluginOperationResult {
+pub struct PluginOutcome {
     pub result: anyhow::Result<()>,
     pub statuses: Vec<(String, PluginStatus)>,
 }
 
 /// Runs `action` on `guid`, then rereads the status of every device in `guids`.
-pub fn execute(guid: String, guids: Vec<String>, action: PluginAction) -> PluginOperationResult {
+pub fn execute(guid: String, guids: Vec<String>, action: PluginAction) -> PluginOutcome {
     tracing::info!(?action, %guid, "Starting microphone plugin operation");
     let result = match action {
-        PluginAction::Install => install_device_plugin(&guid),
-        PluginAction::Uninstall => uninstall_device_plugin(&guid),
+        PluginAction::Install => install(&guid),
+        PluginAction::Uninstall => uninstall(&guid),
     };
     // Recheck even after failure: the operation can have partially succeeded.
     let statuses = guids
@@ -143,13 +144,13 @@ pub fn execute(guid: String, guids: Vec<String>, action: PluginAction) -> Plugin
             (guid, status)
         })
         .collect();
-    PluginOperationResult { result, statuses }
+    PluginOutcome { result, statuses }
 }
 
 // An endpoint association alone does not mean the bundled DLL and registration
 // are current.
 pub fn device_status(device_guid: &str) -> PluginStatus {
-    let plugin_guid = plugin_guid();
+    let clsid = clsid();
     let root = RegKey::predef(HKEY_LOCAL_MACHINE);
     let fx_path = format!(
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{device_guid}\FxProperties"
@@ -162,7 +163,7 @@ pub fn device_status(device_guid: &str) -> PluginStatus {
         .unwrap_or_default();
     if !effects
         .iter()
-        .any(|effect| effect.eq_ignore_ascii_case(&plugin_guid))
+        .any(|effect| effect.eq_ignore_ascii_case(&clsid))
     {
         return PluginStatus::NotInstalled;
     }
@@ -189,11 +190,11 @@ pub fn device_status(device_guid: &str) -> PluginStatus {
     // Check whether the device's FxProperties need to be updated.
     if !(effects
         .first()
-        .is_some_and(|effect| effect.eq_ignore_ascii_case(&plugin_guid))
+        .is_some_and(|effect| effect.eq_ignore_ascii_case(&clsid))
         && !effects
             .iter()
             .skip(1)
-            .any(|effect| effect.eq_ignore_ascii_case(&plugin_guid)))
+            .any(|effect| effect.eq_ignore_ascii_case(&clsid)))
     {
         return PluginStatus::NeedsUpdate;
     }
@@ -266,7 +267,7 @@ pub fn with_audio_service_stopped(
 }
 
 /// Writes the DLL, registration and device effects; the audio service must be stopped.
-fn write_device_plugin(device_guid: &str) -> anyhow::Result<()> {
+fn write_installation(device_guid: &str) -> anyhow::Result<()> {
     let apo_dll_path = apo_dll_path();
     let string_values = string_registration_values(apo_dll_path)?;
     // Update the DLL.
@@ -310,7 +311,7 @@ fn delete_value_if_present(key: &RegKey, name: &str) -> std::io::Result<()> {
 }
 
 fn update_device_effects(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
-    let transaction = Transaction::new().user_context(Text::CreateRegistrationTransaction)?;
+    let transaction = Transaction::new().user_context(Text::CreateRegistrationTransactionFailed)?;
     let root = RegKey::predef(HKEY_LOCAL_MACHINE);
     // MMDevices permits setting values but can deny creating subkeys, even to
     // administrators. KEY_WRITE includes KEY_CREATE_SUB_KEY, which we do not need.
@@ -318,24 +319,24 @@ fn update_device_effects(device_guid: &str, uninstall: bool) -> anyhow::Result<(
     let fx = root.open_subkey_transacted_with_flags(
         format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{device_guid}\FxProperties"),
         &transaction, flags,
-    ).with_user_context(|| Message::OpenFxProperties { device: device_guid.to_owned() })?;
+    ).with_user_context(|| Message::OpenFxPropertiesFailed { device: device_guid.to_owned() })?;
     update_fx_properties(&fx, uninstall)?;
     if !uninstall {
         let properties = root.open_subkey_transacted_with_flags(
             format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{device_guid}\Properties"),
             &transaction, flags,
-        ).with_user_context(|| Message::OpenEndpointProperties { device: device_guid.to_owned() })?;
+        ).with_user_context(|| Message::OpenEndpointPropertiesFailed { device: device_guid.to_owned() })?;
         properties
             .set_value(
                 SELECTED_EFFECT_PACK_PROPERTY_KEY,
                 &DEVICE_DEFAULT_EFFECT_PACK,
             )
-            .user_context(Text::SelectDeviceDefaultEffects)?;
+            .user_context(Text::SelectDeviceDefaultEffectsFailed)?;
     }
     // All endpoint changes commit together; failures leave them untouched.
     transaction
         .commit()
-        .user_context(Text::CommitRegistrationTransaction)?;
+        .user_context(Text::CommitRegistrationTransactionFailed)?;
     info!(
         "{} VoiceBox device effects for {device_guid}",
         if uninstall {
@@ -348,15 +349,15 @@ fn update_device_effects(device_guid: &str, uninstall: bool) -> anyhow::Result<(
 }
 
 fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
-    let plugin_guid = plugin_guid();
+    let clsid = clsid();
     // Only an absent value means an empty list. Refuse to overwrite invalid types
     // or unreadable values, since they may contain another APO's settings.
     let mut effects: Vec<String> = read_optional_value(fx, COMPOSITE_MFX_PROPERTY_KEY)
-        .user_context(Text::ReadCompositeEffects)?
+        .user_context(Text::ReadCompositeEffectsFailed)?
         .unwrap_or_default();
     if uninstall {
         let count = effects.len();
-        effects.retain(|effect| !effect.eq_ignore_ascii_case(&plugin_guid));
+        effects.retain(|effect| !effect.eq_ignore_ascii_case(&clsid));
         if effects.len() != count {
             if effects.is_empty() {
                 delete_value_if_present(fx, COMPOSITE_MFX_PROPERTY_KEY)?;
@@ -365,11 +366,11 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
             }
         }
     } else {
-        effects.retain(|effect| !effect.eq_ignore_ascii_case(&plugin_guid));
-        effects.insert(0, plugin_guid);
+        effects.retain(|effect| !effect.eq_ignore_ascii_case(&clsid));
+        effects.insert(0, clsid);
         fx.set_value(COMPOSITE_MFX_PROPERTY_KEY, &effects)?;
         let modes: Vec<String> = read_optional_value(fx, MFX_PROCESSING_MODES_PROPERTY_KEY)
-            .user_context(Text::ReadProcessingModes)?
+            .user_context(Text::ReadProcessingModesFailed)?
             .unwrap_or_default();
         if modes.iter().all(String::is_empty) {
             fx.set_value(
@@ -383,7 +384,7 @@ fn update_fx_properties(fx: &RegKey, uninstall: bool) -> anyhow::Result<()> {
 }
 
 pub fn unregister_all() -> anyhow::Result<()> {
-    let transaction = Transaction::new().user_context(Text::CreateUninstallTransaction)?;
+    let transaction = Transaction::new().user_context(Text::CreateUninstallTransactionFailed)?;
     let root = RegKey::predef(HKEY_LOCAL_MACHINE);
     let capture = match root.open_subkey_transacted_with_flags(
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture",
@@ -392,13 +393,13 @@ pub fn unregister_all() -> anyhow::Result<()> {
     ) {
         Ok(capture) => Some(capture),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error).user_context(Text::EnumerateMicrophoneRegistry),
+        Err(error) => return Err(error).user_context(Text::EnumerateMicrophoneRegistryFailed),
     };
     if let Some(capture) = capture {
         // Enumerate the registry rather than active WASAPI devices: disabled and
         // disconnected microphones must lose their VoiceBox association too.
         for device in capture.enum_keys() {
-            let device = device.user_context(Text::ReadMicrophoneRegistry)?;
+            let device = device.user_context(Text::ReadMicrophoneRegistryFailed)?;
             let fx = match capture.open_subkey_transacted_with_flags(
                 format!(r"{device}\FxProperties"),
                 &transaction,
@@ -407,34 +408,36 @@ pub fn unregister_all() -> anyhow::Result<()> {
                 Ok(fx) => fx,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => {
-                    return Err(error).with_user_context(|| Message::OpenFxProperties {
+                    return Err(error).with_user_context(|| Message::OpenFxPropertiesFailed {
                         device: device.to_owned(),
                     });
                 }
             };
-            update_fx_properties(&fx, true).with_user_context(|| Message::UninstallMicrophone {
-                device: device.to_owned(),
+            update_fx_properties(&fx, true).with_user_context(|| {
+                Message::UninstallMicrophoneFailed {
+                    device: device.to_owned(),
+                }
             })?;
         }
     }
 
-    // Match the machine-wide 64-bit COM and APO registrations made by setup.
+    // Match the machine-wide 64-bit COM and APO registrations made on install.
     // Do not reset shared Windows audio settings or other APOs' properties.
-    let guid = plugin_guid();
+    let clsid = clsid();
     for path in [
-        format!(r"SOFTWARE\Classes\CLSID\{guid}"),
-        format!(r"SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}"),
+        format!(r"SOFTWARE\Classes\CLSID\{clsid}"),
+        format!(r"SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{clsid}"),
         APO_CONFIG_KEY.to_owned(),
     ] {
         delete_tree_transacted(&root, &path, &transaction).with_user_context(|| {
-            Message::DeleteApoRegistration {
+            Message::DeleteApoRegistrationFailed {
                 path: path.to_owned(),
             }
         })?;
     }
     transaction
         .commit()
-        .user_context(Text::CommitUninstallTransaction)?;
+        .user_context(Text::CommitUninstallTransactionFailed)?;
     info!("Removed VoiceBox from all capture devices and unregistered the APO");
     Ok(())
 }
@@ -459,9 +462,9 @@ fn delete_tree_transacted(
     root.delete_subkey_transacted_with_flags(path, transaction, KEY_WOW64_64KEY)
 }
 
-fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
+fn install(device_guid: &str) -> anyhow::Result<()> {
     if device_status(device_guid) != PluginStatus::Installed {
-        run_device_plugin_operation(device_guid, false)?;
+        modify_device(device_guid, false)?;
         anyhow::ensure!(
             device_status(device_guid) == PluginStatus::Installed,
             Text::PluginVerificationFailed
@@ -470,11 +473,12 @@ fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn uninstall_device_plugin(device_guid: &str) -> anyhow::Result<()> {
-    run_device_plugin_operation(device_guid, true)
+fn uninstall(device_guid: &str) -> anyhow::Result<()> {
+    modify_device(device_guid, true)
 }
 
-fn run_device_plugin_operation(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
+/// Installs on or uninstalls from a validated device, with the audio service stopped.
+fn modify_device(device_guid: &str, uninstall: bool) -> anyhow::Result<()> {
     anyhow::ensure!(
         device_guid.len() == 38
             && device_guid.starts_with('{')
@@ -486,7 +490,7 @@ fn run_device_plugin_operation(device_guid: &str, uninstall: bool) -> anyhow::Re
         if uninstall {
             update_device_effects(device_guid, true)
         } else {
-            write_device_plugin(device_guid)
+            write_installation(device_guid)
         }
     })
 }

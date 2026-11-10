@@ -4,7 +4,7 @@ use std::{collections::HashSet, ops::Range};
 
 use crate::{
     i18n::{Language, Text, current_language},
-    model::{SoundId, is_valid_name},
+    model::{SoundId, is_valid_sound_name},
     soundboard::library::Library,
 };
 
@@ -113,7 +113,7 @@ impl RenamePlan {
                 end = range.end;
             }
             name.push_str(&stem[end..]);
-            let error = (!is_valid_name(&name)).then_some(Text::InvalidSoundName);
+            let error = (!is_valid_sound_name(&name)).then_some(Text::InvalidSoundName);
             entries.push(RenameEntry {
                 index,
                 id: sound.id,
@@ -135,7 +135,7 @@ impl RenamePlan {
                 .is_none_or(|sound| sound.id != entry.id || sound.name != entry.original)
             {
                 entry.error = Some(Text::SoundNotFound);
-            } else if !is_valid_name(&entry.name) {
+            } else if !is_valid_sound_name(&entry.name) {
                 entry.error = Some(Text::InvalidSoundName);
             }
         }

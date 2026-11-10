@@ -13,7 +13,7 @@ pub struct Sound {
     pub duration_secs: f64,
 }
 
-pub fn is_valid_name(name: &str) -> bool {
+pub fn is_valid_sound_name(name: &str) -> bool {
     !name.trim().is_empty() && !name.chars().any(char::is_control)
 }
 
@@ -26,6 +26,7 @@ pub const MODIFIERS: [(HOT_KEY_MODIFIERS, VIRTUAL_KEY, &str); 4] = [
 ];
 const ALL_MODIFIERS: u32 = MOD_CONTROL.0 | MOD_SHIFT.0 | MOD_ALT.0 | MOD_WIN.0;
 
+/// A key combination; bound to a soundboard action it is a shortcut.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct Hotkey {
     pub virtual_key_code: u16,

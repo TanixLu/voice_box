@@ -78,7 +78,7 @@ fn viewport_builder(ctx: &egui::Context) -> anyhow::Result<egui::ViewportBuilder
             Some((&mut work as *mut RECT).cast()),
             SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
         )
-        .user_context(Text::ReadWorkArea)?;
+        .user_context(Text::ReadWorkAreaFailed)?;
     }
     let scale = unsafe { GetDpiForSystem() } as f32 / 96.0 * ctx.zoom_factor();
     ensure!(
@@ -185,7 +185,7 @@ fn configure_native_window() -> anyhow::Result<()> {
         if !GetWindowSubclass(window, Some(overlay_window_proc), 0, Some(&mut data)).as_bool() {
             SetWindowSubclass(window, Some(overlay_window_proc), 0, 0)
                 .ok()
-                .user_context(Text::InstallOverlayCallback)?;
+                .user_context(Text::InstallOverlayCallbackFailed)?;
             SetWindowPos(
                 window,
                 None,

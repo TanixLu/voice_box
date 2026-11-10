@@ -1,3 +1,5 @@
+//! DLL exports and the class factory: `DllGetClassObject`, `DllCanUnloadNow` and `IClassFactory`.
+
 use core::{ffi::c_void, ptr};
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -25,7 +27,7 @@ struct ClassFactory {
 }
 unsafe impl Sync for ClassFactory {}
 
-unsafe extern "system" fn factory_query_interface(
+unsafe extern "system" fn query_interface(
     this: *mut c_void,
     iid: *const GUID,
     output: *mut *mut c_void,
@@ -39,19 +41,19 @@ unsafe extern "system" fn factory_query_interface(
         return E_NOINTERFACE;
     }
     unsafe { *output = this };
-    unsafe { factory_add_ref(this) };
+    unsafe { add_ref(this) };
     S_OK
 }
 
-unsafe extern "system" fn factory_add_ref(_: *mut c_void) -> u32 {
+unsafe extern "system" fn add_ref(_: *mut c_void) -> u32 {
     FACTORY_REFS.fetch_add(1, Ordering::Relaxed) + 1
 }
 
-unsafe extern "system" fn factory_release(_: *mut c_void) -> u32 {
+unsafe extern "system" fn release(_: *mut c_void) -> u32 {
     FACTORY_REFS.fetch_sub(1, Ordering::Release) - 1
 }
 
-unsafe extern "system" fn factory_create_instance(
+unsafe extern "system" fn create_instance(
     _: *mut c_void,
     outer: *mut c_void,
     iid: *const GUID,
@@ -86,7 +88,7 @@ unsafe extern "system" fn factory_create_instance(
     result
 }
 
-unsafe extern "system" fn factory_lock_server(_: *mut c_void, lock: BOOL) -> HRESULT {
+unsafe extern "system" fn lock_server(_: *mut c_void, lock: BOOL) -> HRESULT {
     if lock.as_bool() {
         SERVER_LOCKS.fetch_add(1, Ordering::Relaxed);
     } else {
@@ -99,12 +101,12 @@ unsafe extern "system" fn factory_lock_server(_: *mut c_void, lock: BOOL) -> HRE
 
 static FACTORY_VTABLE: IClassFactory_Vtbl = IClassFactory_Vtbl {
     base__: IUnknown_Vtbl {
-        QueryInterface: factory_query_interface,
-        AddRef: factory_add_ref,
-        Release: factory_release,
+        QueryInterface: query_interface,
+        AddRef: add_ref,
+        Release: release,
     },
-    CreateInstance: factory_create_instance,
-    LockServer: factory_lock_server,
+    CreateInstance: create_instance,
+    LockServer: lock_server,
 };
 
 static CLASS_FACTORY: ClassFactory = ClassFactory {
@@ -129,8 +131,7 @@ pub unsafe extern "system" fn DllGetClassObject(
     if unsafe { *clsid } != APO_CLSID {
         return CLASS_E_CLASSNOTAVAILABLE;
     }
-    let result =
-        unsafe { factory_query_interface(&CLASS_FACTORY as *const _ as *mut c_void, iid, output) };
+    let result = unsafe { query_interface(&CLASS_FACTORY as *const _ as *mut c_void, iid, output) };
     apo_log!(
         if result == S_OK {
             etw::level::VERBOSE

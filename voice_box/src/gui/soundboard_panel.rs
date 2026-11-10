@@ -26,13 +26,13 @@ use crate::{
 
 /// An operation clicked while drawing; `apply` starts it once the frame is drawn.
 /// Unlike the voice and microphone panels, this panel queues its own commands because
-/// they come from both the tab (`ui`) and its dialogs (`windows`), drawn at different
+/// they come from both the tab (`ui`) and its dialogs (`dialogs_ui`), drawn at different
 /// points in the frame.
 enum Command {
     List(sound_list::Action),
     Batch(sound_list::BatchAction),
     Capture(Target),
-    Remove(HashSet<SoundId>),
+    Delete(HashSet<SoundId>),
     Rename(usize, String),
     BatchRename(RenamePlan),
     SaveRecording(Arc<Recording>, Selection, String),
@@ -43,7 +43,7 @@ enum Command {
 
 pub struct SoundboardPanel {
     wake: Wake,
-    model: Soundboard,
+    soundboard: Soundboard,
     capture: KeyCapture,
     settings_dialog: SoundboardSettingsDialog,
     settings_error: Message,
@@ -63,7 +63,7 @@ pub struct SoundboardPanel {
 impl SoundboardPanel {
     pub fn new(wake: Wake, window: HWND, library: Library, settings: SoundboardSettings) -> Self {
         Self {
-            model: Soundboard::new(library, settings, wake.clone(), window),
+            soundboard: Soundboard::new(library, settings, wake.clone(), window),
             capture: KeyCapture::default(),
             wake,
             settings_dialog: SoundboardSettingsDialog::default(),
@@ -81,23 +81,23 @@ impl SoundboardPanel {
         }
     }
     pub fn apply_settings(&mut self, settings: SoundboardSettings) {
-        self.model.configure(settings);
+        self.soundboard.configure(settings);
     }
     pub fn capturing(&self) -> bool {
         self.capture.target().is_some()
     }
     /// Background work that must finish before other edits, exit or uninstall.
     fn working(&self) -> bool {
-        self.model.library_busy() || self.devices.is_some()
+        self.soundboard.library_busy() || self.devices.is_some()
     }
     pub fn busy(&self) -> Busy {
         Busy {
             working: self.working(),
-            audio: self.model.playing() || self.recording_open(),
+            audio: self.soundboard.playing() || self.recording_open(),
         }
     }
     pub fn shutdown(&mut self) {
-        self.model.shutdown();
+        self.soundboard.shutdown();
     }
     fn renaming(&self) -> bool {
         self.list.renaming() || self.batch_rename.is_some()
@@ -106,7 +106,7 @@ impl SoundboardPanel {
         self.recording_import.is_some()
     }
     fn cancel_batch(&mut self) {
-        if !self.model.library_busy() {
+        if !self.soundboard.library_busy() {
             self.list.cancel_batch();
             self.batch_rename = None;
         }
@@ -114,43 +114,43 @@ impl SoundboardPanel {
 
     /// Called in app logic, including when the main viewport is hidden.
     pub fn poll(&mut self, ctx: &egui::Context) {
-        for update in self.model.poll() {
+        for update in self.soundboard.poll() {
             match update {
                 Update::Cleared => self.error.clear(),
                 Update::Error(error) => self.error = error,
                 Update::FileError(title, error) => self.file_error = Some((title, error)),
                 Update::Edited(kind, result) => self.finish_edit(kind, result),
-                Update::Removed(ids) => {
-                    self.list.remove_ids(&ids);
+                Update::Deleted(ids) => {
+                    self.list.forget_deleted(&ids);
                     self.error.clear();
                 }
-                Update::Recorded(Ok(())) => {
+                Update::RecordingSaved(Ok(())) => {
                     self.recording_import = None;
                     self.error.clear();
                 }
-                Update::Recorded(Err(error)) => {
-                    if let Some(tool) = &mut self.recording_import {
-                        tool.fail(error);
+                Update::RecordingSaved(Err(error)) => {
+                    if let Some(dialog) = &mut self.recording_import {
+                        dialog.fail(error);
                     }
                 }
             }
         }
-        match task::finished(&mut self.devices) {
+        match task::take_finished(&mut self.devices) {
             Some(Ok((microphones, speakers))) => {
                 self.settings_dialog.set_devices(microphones, speakers)
             }
             Some(Err(error)) => self.settings_error = Message::error(error),
             None => {}
         }
-        if let Some(tool) = &mut self.recording_import {
-            tool.poll(ctx);
+        if let Some(dialog) = &mut self.recording_import {
+            dialog.poll(ctx);
         }
     }
 
     /// Registers and dispatches global shortcuts; `enabled` is false while the rest
     /// of the app cannot accept playback. The app decides from cross-panel state and
     /// this panel adds its own (capture, renaming, dialogs), so neither needs the other's.
-    pub fn shortcuts(&mut self, ctx: &egui::Context, enabled: bool) {
+    pub fn poll_shortcuts(&mut self, ctx: &egui::Context, enabled: bool) {
         let focused = ctx.input(|input| {
             input.viewport().focused == Some(true) && input.viewport().minimized != Some(true)
         });
@@ -163,14 +163,14 @@ impl SoundboardPanel {
             && self.file_error.is_none()
             && !self.recording_open()
             && !(focused && (self.renaming() || ctx.text_edit_focused()));
-        match self.model.shortcuts(enabled) {
+        match self.soundboard.poll_shortcuts(enabled) {
             Some(Ok(())) => self.error.clear(),
             Some(Err(error)) => self.error = Message::error(error),
             None => {}
         }
         // Bootstrap the overlay while minimized; visible children keep UI passes running.
-        if self.model.settings().show_overlay
-            && self.model.playing()
+        if self.soundboard.settings().show_overlay
+            && self.soundboard.playing()
             && !self.overlay_visible
             && ctx.input(|input| input.viewport().visible() == Some(false))
         {
@@ -197,15 +197,15 @@ impl SoundboardPanel {
     }
 
     /// Dialogs; returns validated settings for the caller to save.
-    pub fn windows(
+    pub fn dialogs_ui(
         &mut self,
         ctx: &egui::Context,
         blocked: bool,
         visible: bool,
     ) -> Option<SoundboardSettings> {
         let settings = self.settings_ui(ctx, blocked);
-        if let Some(tool) = &mut self.recording_import {
-            match tool.ui(ctx, self.model.saving_recording()) {
+        if let Some(dialog) = &mut self.recording_import {
+            match dialog.ui(ctx, self.soundboard.saving_recording()) {
                 Some(recording_import_dialog::Action::Close) => self.recording_import = None,
                 Some(recording_import_dialog::Action::Save(audio, selection, name)) => {
                     self.commands
@@ -217,8 +217,9 @@ impl SoundboardPanel {
         let keep_editing = visible && !self.settings_dialog.is_open();
         if !blocked
             && !self.recording_open()
-            && let Some((index, name)) =
-                self.list.rename_request(keep_editing, self.model.playing())
+            && let Some((index, name)) = self
+                .list
+                .poll_rename(keep_editing, self.soundboard.playing())
         {
             self.commands.push(Command::Rename(index, name));
         }
@@ -232,8 +233,9 @@ impl SoundboardPanel {
 
     /// Must run every frame once shown, so the overlay viewport keeps existing.
     pub fn overlay_ui(&mut self, ctx: &egui::Context, allowed: bool) {
-        let enabled = allowed && self.model.settings().show_overlay && !self.model.importing();
-        let playing = self.model.now_playing().filter(|_| enabled);
+        let enabled =
+            allowed && self.soundboard.settings().show_overlay && !self.soundboard.importing();
+        let playing = self.soundboard.now_playing().filter(|_| enabled);
         self.overlay_visible = match self.overlay.show(ctx, playing) {
             Ok(visible) => visible,
             Err(error) => {
@@ -247,7 +249,7 @@ impl SoundboardPanel {
     }
 
     fn play_sound(&mut self, index: usize) {
-        match self.model.play(index) {
+        match self.soundboard.play(index) {
             Ok(()) => self.error.clear(),
             Err(error) => self.error = Message::error(error),
         }
@@ -262,7 +264,7 @@ impl SoundboardPanel {
     }
 
     fn begin_capture(&mut self, target: Target) {
-        self.model.stop();
+        self.soundboard.stop();
         self.message_for(&target).clear();
         self.capture.begin(target);
     }
@@ -273,12 +275,12 @@ impl SoundboardPanel {
         };
         // Closing the dialog cancels its captures, so without a draft only sound keys,
         // which `saved` merely checks against, can arrive here.
-        let mut saved = self.model.settings().keys;
+        let mut saved = self.soundboard.settings().keys;
         let keys = self
             .settings_dialog
             .draft_mut()
             .map_or(&mut saved, |draft| &mut draft.keys);
-        let result = self.model.bind(&target, key, keys);
+        let result = self.soundboard.bind(&target, key, keys);
         let message = self.message_for(&target);
         match result {
             Ok(()) => message.clear(),
@@ -299,20 +301,20 @@ impl SoundboardPanel {
             self.toolbar_ui(ui);
             let actions = self
                 .list
-                .ui(ui, &self.model.library().sounds, self.list_status());
+                .ui(ui, &self.soundboard.library().sounds, self.list_status());
             self.commands.extend(actions.into_iter().map(Command::List));
-            let actions = self
-                .list
-                .batch_ui(ui, &self.model.library().sounds, self.list_status());
+            let actions =
+                self.list
+                    .batch_ui(ui, &self.soundboard.library().sounds, self.list_status());
             self.commands
                 .extend(actions.into_iter().map(Command::Batch));
             self.playback_ui(ui);
         });
-        if let Some(ids) = self
-            .list
-            .delete_ui(ui.ctx(), &self.model.library().sounds, available)
+        if let Some(ids) =
+            self.list
+                .delete_ui(ui.ctx(), &self.soundboard.library().sounds, available)
         {
-            self.commands.push(Command::Remove(ids));
+            self.commands.push(Command::Delete(ids));
         }
         self.batch_rename_ui(ui.ctx(), available);
     }
@@ -324,19 +326,19 @@ impl SoundboardPanel {
                 break;
             }
             match command {
-                Command::List(action) => self.list_action(action),
-                Command::Batch(action) => self.batch_action(ctx, action),
+                Command::List(action) => self.apply_list_action(action),
+                Command::Batch(action) => self.apply_batch_action(ctx, action),
                 Command::Capture(target) => {
                     self.begin_capture(target);
                     ctx.request_repaint();
                 }
-                Command::Remove(ids) => {
-                    self.model.remove(&ids);
+                Command::Delete(ids) => {
+                    self.soundboard.delete(&ids);
                     self.error.clear();
                 }
                 Command::Rename(index, name) => {
                     let result = self
-                        .model
+                        .soundboard
                         .edit(Edit::Rename, move |library| library.rename(index, &name));
                     if let Err(error) = result {
                         self.list.rename_finished(false);
@@ -345,32 +347,32 @@ impl SoundboardPanel {
                 }
                 Command::BatchRename(plan) => {
                     let result = self
-                        .model
+                        .soundboard
                         .edit(Edit::BatchRename, move |library| library.rename_batch(plan));
-                    if let Some(tool) = &mut self.batch_rename {
-                        tool.apply_result(result);
+                    if let Some(dialog) = &mut self.batch_rename {
+                        dialog.apply_result(result);
                     }
                 }
                 Command::SaveRecording(audio, selection, name) => {
-                    self.model.save_recording(audio, selection, name)
+                    self.soundboard.save_recording(audio, selection, name)
                 }
                 Command::OpenSettings => {
-                    self.settings_dialog.open(self.model.settings());
+                    self.settings_dialog.open(self.soundboard.settings());
                     self.settings_error.clear();
-                    self.devices = Some(Task::run(
+                    self.devices = Some(Task::spawn(
                         "VoiceBoxOutputDevices",
                         &self.wake,
-                        devices::enumerate_soundboard_devices,
+                        devices::enumerate_all,
                     ));
                 }
                 Command::RecordImport => {
-                    self.model.stop();
+                    self.soundboard.stop();
                     self.list.cancel_rename();
                     self.list.cancel_delete();
                     self.capture.cancel();
                     self.recording_import = Some(RecordingImportDialog::new(self.wake.clone()));
                 }
-                Command::Import => self.model.import(super::picker::choose_files),
+                Command::Import => self.soundboard.import(super::picker::choose_files),
             }
         }
     }
@@ -381,7 +383,7 @@ impl SoundboardPanel {
             _ => None,
         };
         sound_list::Status {
-            active_sound: self.model.playback().sound_id,
+            active_sound: self.soundboard.playback().sound_id,
             capture: capturing
                 .filter(|ids| ids.len() == 1)
                 .and_then(|ids| ids.iter().next().copied()),
@@ -391,15 +393,15 @@ impl SoundboardPanel {
 
     fn batch_rename_ui(&mut self, ctx: &egui::Context, available: bool) {
         use batch_rename_dialog::{Action, Status};
-        let Some(tool) = &mut self.batch_rename else {
+        let Some(dialog) = &mut self.batch_rename else {
             return;
         };
         let status = Status {
             available,
-            busy: self.model.busy() || self.devices.is_some(),
-            playing: self.model.playing(),
+            busy: self.soundboard.busy() || self.devices.is_some(),
+            playing: self.soundboard.playing(),
         };
-        match tool.ui(ctx, self.model.library(), status) {
+        match dialog.ui(ctx, self.soundboard.library(), status) {
             None => {}
             Some(Action::Close) => {
                 self.list.clear_anchor();
@@ -416,7 +418,7 @@ impl SoundboardPanel {
         ui.horizontal(|ui| {
             ui.strong(
                 Message::SoundCount {
-                    count: self.model.library().sounds.len(),
+                    count: self.soundboard.library().sounds.len(),
                 }
                 .text(),
             );
@@ -427,7 +429,7 @@ impl SoundboardPanel {
                 }
             } else if ui
                 .add_enabled(
-                    !self.model.library().sounds.is_empty() && !self.renaming(),
+                    !self.soundboard.library().sounds.is_empty() && !self.renaming(),
                     egui::Button::new(Text::BatchManage.text()),
                 )
                 .clicked()
@@ -458,23 +460,23 @@ impl SoundboardPanel {
         });
     }
 
-    fn list_action(&mut self, action: sound_list::Action) {
+    fn apply_list_action(&mut self, action: sound_list::Action) {
         use sound_list::Action;
         let result = match action {
             Action::Play(index) => return self.play_sound(index),
-            Action::Stop => return self.model.stop(),
-            Action::Remove(id) => {
-                return self.model.remove(&HashSet::from([id]));
+            Action::Stop => return self.soundboard.stop(),
+            Action::Delete(id) => {
+                return self.soundboard.delete(&HashSet::from([id]));
             }
             Action::Capture(id) => return self.begin_capture(Target::Sounds(HashSet::from([id]))),
             Action::ClearHotkey(index) => {
-                let id = self.model.library().sounds[index].id;
-                self.model.edit(Edit::Hotkeys, move |library| {
+                let id = self.soundboard.library().sounds[index].id;
+                self.soundboard.edit(Edit::Hotkeys, move |library| {
                     library.set_hotkeys(&HashSet::from([id]), None)
                 })
             }
             Action::Move { from, to } => self
-                .model
+                .soundboard
                 .edit(Edit::Move, move |library| library.move_sound(from, to)),
         };
         if let Err(error) = result {
@@ -486,19 +488,19 @@ impl SoundboardPanel {
     fn playback_ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let key = self
-                .model
+                .soundboard
                 .settings()
                 .keys
                 .stop
                 .map(|key| Message::StopPlaybackHotkey { key }.text().into_owned())
                 .unwrap_or_else(|| Text::StopPlayback.text().into());
             if ui
-                .add_enabled(self.model.playing(), egui::Button::new(key))
+                .add_enabled(self.soundboard.playing(), egui::Button::new(key))
                 .clicked()
             {
                 self.commands.push(Command::List(sound_list::Action::Stop));
             }
-            let error = [&self.error, self.model.shortcut_error()]
+            let error = [&self.error, self.soundboard.shortcut_error()]
                 .into_iter()
                 .find(|error| !error.is_empty());
             if let Some(error) = error {
@@ -510,7 +512,7 @@ impl SoundboardPanel {
                     .show_tooltip_when_elided(false),
                 )
                 .on_hover_text(error.text());
-            } else if let Some(playing) = self.model.now_playing() {
+            } else if let Some(playing) = self.soundboard.now_playing() {
                 let duration_text = playing
                     .duration_secs
                     .map(format_duration)
@@ -531,21 +533,21 @@ impl SoundboardPanel {
         });
     }
 
-    fn batch_action(&mut self, ctx: &egui::Context, action: sound_list::BatchAction) {
+    fn apply_batch_action(&mut self, ctx: &egui::Context, action: sound_list::BatchAction) {
         use sound_list::BatchAction;
         let Some(ids) = self.list.selected().cloned() else {
             return;
         };
         let result = match action {
             BatchAction::Export => {
-                self.model.export(&ids, super::picker::choose_folder);
+                self.soundboard.export(&ids, super::picker::choose_folder);
                 Ok(())
             }
             BatchAction::Move(to_top) => self
-                .model
+                .soundboard
                 .edit(Edit::Move, move |library| library.move_sounds(&ids, to_top)),
             BatchAction::Rename => {
-                self.batch_rename = Some(BatchRenameDialog::new(self.model.library(), ids));
+                self.batch_rename = Some(BatchRenameDialog::new(self.soundboard.library(), ids));
                 return;
             }
             BatchAction::BindHotkey => {
@@ -555,7 +557,7 @@ impl SoundboardPanel {
                 ctx.request_repaint();
                 return;
             }
-            BatchAction::ClearHotkey => self.model.edit(Edit::Hotkeys, move |library| {
+            BatchAction::ClearHotkey => self.soundboard.edit(Edit::Hotkeys, move |library| {
                 library.set_hotkeys(&ids, None)
             }),
         };
@@ -576,14 +578,17 @@ impl SoundboardPanel {
             capture_message: &self.capture_message,
             error: (!self.settings_error.is_empty()).then_some(&self.settings_error),
         };
-        match self.settings_dialog.ui(ctx, self.model.settings(), status) {
+        match self
+            .settings_dialog
+            .ui(ctx, self.soundboard.settings(), status)
+        {
             None => {}
             Some(Action::Close) => {
                 self.capture.cancel();
                 self.capture_message.clear();
             }
             Some(Action::ClearMessage) => self.capture_message.clear(),
-            Some(Action::Save(draft)) => match self.model.validate_settings(&draft) {
+            Some(Action::Save(draft)) => match self.soundboard.validate_settings(&draft) {
                 Ok(()) => {
                     self.settings_error.clear();
                     return Some(draft);
@@ -609,11 +614,11 @@ impl SoundboardPanel {
             self.list.rename_finished(result.is_ok());
         }
         if kind == Edit::BatchRename
-            && let Some(tool) = &mut self.batch_rename
+            && let Some(dialog) = &mut self.batch_rename
         {
-            let closed = tool.complete(self.model.library(), result);
+            let closed = dialog.complete(self.soundboard.library(), result);
             if let Some(selected) = self.list.selected_mut() {
-                *selected = tool.selected().clone();
+                *selected = dialog.selected().clone();
             }
             if closed {
                 self.list.clear_anchor();

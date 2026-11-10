@@ -1,4 +1,5 @@
-//! Global shortcuts arrive on the main window; simulated keys use RAII.
+//! Keyboard I/O: the key held right now, global hotkeys delivered to the main window, and
+//! simulated key presses released by RAII.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -88,7 +89,7 @@ impl Registration {
                 u32::from(key.virtual_key_code),
             )
         }
-        .with_user_context(|| Message::RegisterHotkey { key })?;
+        .with_user_context(|| Message::RegisterHotkeyFailed { key })?;
         Ok(Self { window, key })
     }
 }
@@ -102,27 +103,28 @@ impl Drop for Registration {
     }
 }
 
-/// Global shortcuts delivered as `WM_HOTKEY` to a window owned by the calling thread.
+/// Global hotkeys delivered as `WM_HOTKEY` to a window owned by the calling thread.
 ///
 /// Window messages, unlike thread messages, are still dispatched while that thread
 /// runs a modal loop such as a popup menu or a window drag.
 pub struct Hotkeys {
     window: HWND,
     registrations: HashMap<Hotkey, Registration>,
-    pub pressed: mpsc::Receiver<Hotkey>,
+    /// Registered hotkeys pressed since the last read.
+    pub triggered: mpsc::Receiver<Hotkey>,
     // Boxed so its address stays fixed while the window subclass points at it.
     _subclass: Box<Subclass>,
 }
 struct Subclass {
-    pressed: mpsc::Sender<Hotkey>,
+    triggered: mpsc::Sender<Hotkey>,
     wake: Wake,
 }
 impl Hotkeys {
     /// Must be called on the thread that created `window`.
     pub fn new(window: HWND, wake: Wake) -> anyhow::Result<Self> {
-        let (sender, pressed) = mpsc::channel();
+        let (sender, triggered) = mpsc::channel();
         let subclass = Box::new(Subclass {
-            pressed: sender,
+            triggered: sender,
             wake,
         });
         unsafe {
@@ -137,13 +139,13 @@ impl Hotkeys {
         Ok(Self {
             window,
             registrations: HashMap::new(),
-            pressed,
+            triggered,
             _subclass: subclass,
         })
     }
 
     pub fn configure(&mut self, keys: HashSet<Hotkey>) -> anyhow::Result<()> {
-        // Keep existing registrations until every new shortcut succeeds.
+        // Keep existing registrations until every new hotkey succeeds.
         let added = keys
             .iter()
             .filter(|key| !self.registrations.contains_key(key))
@@ -179,7 +181,9 @@ unsafe extern "system" fn window_proc(
     if message == WM_HOTKEY {
         // The boxed data stays alive until `Hotkeys` removes this subclass.
         let subclass = unsafe { &*(data as *const Subclass) };
-        let _ = subclass.pressed.send(from_registration_id(wparam.0 as i32));
+        let _ = subclass
+            .triggered
+            .send(from_registration_id(wparam.0 as i32));
         (subclass.wake)();
         return LRESULT(0);
     }
@@ -204,7 +208,7 @@ impl HeldKeys {
         for vk in keys {
             // Never release a key the user was already holding themselves.
             if !is_key_down(vk) {
-                anyhow::ensure!(send_key(vk, false), Message::HoldHotkey { key });
+                anyhow::ensure!(send_key(vk, false), Message::HoldHotkeyFailed { key });
                 held.0.push(vk);
             }
         }

@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
+use voice_box_shared::pcm_transport::PCM_SAMPLE_RATE;
+
 use crate::{
     audio::{LOOPBACK_MAX_SECONDS, Recording},
     gui::widgets::{ButtonIcon, hint, icon_button, warning},
     i18n::{Details, Message, Text},
-    model::is_valid_name,
+    model::is_valid_sound_name,
     soundboard::recording::{Activity, Edge, Recorder, Selection},
     task::Wake,
 };
@@ -168,7 +170,7 @@ impl RecordingImportDialog {
         let total = clip.map_or(0, |clip| {
             clip.audio.samples.len() / clip.audio.channels as usize
         });
-        let rate = clip.map_or(48_000, |clip| clip.audio.sample_rate);
+        let rate = clip.map_or(PCM_SAMPLE_RATE, |clip| clip.audio.sample_rate);
         let duration_secs = total as f64 / f64::from(rate);
         let editable = !saving && !recording && total > 0;
         let mut selection = self.selection.unwrap_or(Selection { start: 0, end: 0 });
@@ -261,7 +263,7 @@ impl RecordingImportDialog {
         ui.add_space(12.0);
         let save = ui
             .horizontal_wrapped(|ui| {
-                let valid_name = is_valid_name(self.name.trim());
+                let valid_name = is_valid_sound_name(self.name.trim());
                 let save = ui
                     .add_enabled(
                         editable && selection.start < selection.end && valid_name,
@@ -275,7 +277,7 @@ impl RecordingImportDialog {
                 save
             })
             .inner;
-        if !self.name.trim().is_empty() && !is_valid_name(self.name.trim()) {
+        if !self.name.trim().is_empty() && !is_valid_sound_name(self.name.trim()) {
             warning(ui, Text::InvalidSoundNameHint.text());
         }
         save.then_some(selection)

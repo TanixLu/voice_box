@@ -1,3 +1,5 @@
+//! Initialization and effects: `Initialize`, `GetRegistrationProperties`, `IAudioSystemEffects3`.
+
 use core::{ffi::c_void, ptr};
 use std::sync::Arc;
 

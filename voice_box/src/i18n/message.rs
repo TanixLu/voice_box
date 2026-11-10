@@ -122,7 +122,7 @@ messages! {
     RenameSoundHint { name: String } => ("{name}\nDouble-click to rename", "{name}\n双击重命名");
     StopPlaybackHotkey { key: Hotkey } => ("Stop playback · {key}", "停止播放 · {key}");
     PreviewFailed { error: Details } => ("Preview failed: {error}", "试听失败：{error}");
-    CannotStartOperation { error: Details } => ("Cannot start operation: {error}", "无法开始操作：{error}");
+    StartOperationFailed { error: Details } => ("Cannot start operation: {error}", "无法开始操作：{error}");
     OperationFailed { error: Details } => ("Operation failed: {error}", "操作失败：{error}");
     UninstallFailed { error: Details } => ("Uninstallation incomplete: {error}", "卸载未完成：{error}");
     OpenWindowFailed { error: Details } => ("Cannot open the VoiceBox window: {error}", "无法打开 VoiceBox 窗口：{error}");
@@ -138,13 +138,13 @@ messages! {
     ReadPathFailed { path: String } => ("Failed to read {path}", "读取 {path} 失败");
     RecycleCancelled { path: String } => ("Recycling {path} was cancelled or did not complete", "回收 {path} 的操作已取消或未完成");
     RecycleIncomplete { path: String } => ("{path} still exists; recycling did not complete", "{path} 仍然存在，回收未完成");
-    OpenFxProperties { device: String } => ("Failed to open FxProperties for microphone {device}", "打开麦克风 {device} 的 FxProperties 失败");
-    OpenEndpointProperties { device: String } => ("Failed to open Properties for microphone {device}", "打开麦克风 {device} 的 Properties 失败");
-    UninstallMicrophone { device: String } => ("Failed to uninstall the VoiceBox APO for microphone {device}", "卸载麦克风 {device} 的 VoiceBox APO 失败");
-    DeleteApoRegistration { path: String } => ("Failed to delete the VoiceBox APO registration: {path}", "删除 VoiceBox APO 注册失败：{path}");
+    OpenFxPropertiesFailed { device: String } => ("Failed to open FxProperties for microphone {device}", "打开麦克风 {device} 的 FxProperties 失败");
+    OpenEndpointPropertiesFailed { device: String } => ("Failed to open Properties for microphone {device}", "打开麦克风 {device} 的 Properties 失败");
+    UninstallMicrophoneFailed { device: String } => ("Failed to uninstall the VoiceBox APO for microphone {device}", "卸载麦克风 {device} 的 VoiceBox APO 失败");
+    DeleteApoRegistrationFailed { path: String } => ("Failed to delete the VoiceBox APO registration: {path}", "删除 VoiceBox APO 注册失败：{path}");
     InvalidHotkey { key: Hotkey } => ("Invalid hotkey: {key}", "无效快捷键：{key}");
-    RegisterHotkey { key: Hotkey } => ("Cannot register {key}. It may be in use by another application or reserved by Windows", "无法注册 {key}，可能已被其他程序占用或由系统保留");
-    HoldHotkey { key: Hotkey } => ("Cannot hold {key} automatically. Check the game and VoiceBox permissions", "无法自动按住 {key}，请检查游戏与 VoiceBox 的权限");
+    RegisterHotkeyFailed { key: Hotkey } => ("Cannot register {key}. It may be in use by another application or reserved by Windows", "无法注册 {key}，可能已被其他程序占用或由系统保留");
+    HoldHotkeyFailed { key: Hotkey } => ("Cannot hold {key} automatically. Check the game and VoiceBox permissions", "无法自动按住 {key}，请检查游戏与 VoiceBox 的权限");
     HotkeyConflict { key: Hotkey } => ("{key} is already assigned to another action. Choose a different shortcut", "{key} 已绑定其他操作，请使用另一个快捷键");
     ImportFileFailed { path: String, error: Details } => ("{path}: {error}", "{path}：{error}");
 }

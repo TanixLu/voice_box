@@ -37,7 +37,7 @@ pub fn process(recording: &Recording, config: &ApoConfig) -> anyhow::Result<Vec<
         true,
         config,
     )
-    .user_context(Text::ProcessPreview)?;
+    .user_context(Text::ProcessPreviewFailed)?;
     // Drain the resamplers, model, FIFO and limiter, then remove the latency
     // so original and processed playback have the same length and start point.
     let delay_samples = processor.latency_frames() * channels;

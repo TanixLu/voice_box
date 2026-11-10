@@ -49,7 +49,7 @@ impl VoicePanel {
         }
     }
     pub fn poll(&mut self) {
-        match task::finished(&mut self.save) {
+        match task::take_finished(&mut self.save) {
             Some(Ok(config)) => self.saved = config,
             Some(Err(error)) => {
                 self.save_error = Message::OperationFailed {
@@ -69,10 +69,14 @@ impl VoicePanel {
             Command::Save => {
                 let config = self.config.clone();
                 self.save_error.clear();
-                self.save = Some(Task::run("VoiceBoxApoConfigSave", &self.wake, move || {
-                    config.save()?;
-                    Ok(config)
-                }));
+                self.save = Some(Task::spawn(
+                    "VoiceBoxApoConfigSave",
+                    &self.wake,
+                    move || {
+                        config.save()?;
+                        Ok(config)
+                    },
+                ));
             }
             Command::Record(device_id) => {
                 self.preview_error.clear();

@@ -43,7 +43,7 @@ pub fn run() -> anyhow::Result<()> {
     let _com_guard = ComGuard::sta()?;
     plugin::with_audio_service_stopped(|| {
         plugin::unregister_all()?;
-        recycle(apo_dll_path()).user_context(Text::RecycleApo)
+        recycle(apo_dll_path()).user_context(Text::RecycleApoFailed)
     })?;
     cleanup.finish()
 }
@@ -57,7 +57,7 @@ struct Cleanup {
 
 impl Cleanup {
     fn finish(mut self) -> anyhow::Result<()> {
-        unsafe { SetEvent(*self.complete).user_context(Text::SignalCleanup)? };
+        unsafe { SetEvent(*self.complete).user_context(Text::SignalCleanupFailed)? };
         self.committed = true;
         Ok(())
     }
@@ -121,7 +121,7 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .user_context(Text::StartCleanup)?;
+        .user_context(Text::StartCleanupFailed)?;
     ensure!(
         unsafe {
             WaitForMultipleObjects(&[*ready, HANDLE(cleanup.as_raw_handle())], false, INFINITE)

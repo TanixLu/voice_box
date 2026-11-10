@@ -1,4 +1,4 @@
-//! Application persistence. Connections, SQL and transactions stay inside this module.
+//! Sound library persistence. Connections, SQL and transactions stay inside this module.
 
 pub mod blob;
 mod maintenance;
@@ -32,8 +32,8 @@ fn open_read() -> anyhow::Result<Connection> {
 }
 
 fn open_with_flags(flags: OpenFlags) -> anyhow::Result<Connection> {
-    let connection =
-        Connection::open_with_flags(database_path(), flags).user_context(Text::OpenDatabase)?;
+    let connection = Connection::open_with_flags(database_path(), flags)
+        .user_context(Text::OpenDatabaseFailed)?;
     connection.busy_timeout(Duration::from_secs(5))?;
     // Mapping hot pages avoids a separate Windows read call for every database page.
     connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA mmap_size = 268435456;")?;

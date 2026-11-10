@@ -1,3 +1,5 @@
+//! Processing: `LockForProcess`, `UnlockForProcess`, `Reset`, `GetLatency` and `APOProcess`.
+
 use core::{ffi::c_void, ptr};
 use std::sync::atomic::Ordering;
 
@@ -18,7 +20,7 @@ use crate::{
     com::{
         ApoCom,
         formats::{
-            formats_match, is_supported_format, log_connection_format, read_format, sample_format,
+            formats_match, is_processable, log_connection_format, read_format, sample_format,
         },
         object_from,
         session::ProcessingSession,
@@ -98,7 +100,7 @@ pub unsafe extern "system" fn lock_for_process(
     };
     log_connection_format("LockForProcess input", &input_format);
     log_connection_format("LockForProcess output", &output_format);
-    if !is_supported_format(&input_format) || !formats_match(&input_format, &output_format) {
+    if !is_processable(&input_format) || !formats_match(&input_format, &output_format) {
         return fail(
             "unsupported or mismatched input/output format",
             APOERR_INVALID_CONNECTION_FORMAT,
@@ -304,6 +306,7 @@ pub unsafe extern "system" fn process(
         .fetch_add(input.u32ValidFrameCount as u64, Ordering::Relaxed);
 }
 
-pub unsafe extern "system" fn identity_frames(_: *mut c_void, frames: u32) -> u32 {
+/// `CalcInputFrames` and `CalcOutputFrames`: in-place processing keeps the frame count.
+pub unsafe extern "system" fn calc_frames(_: *mut c_void, frames: u32) -> u32 {
     frames
 }

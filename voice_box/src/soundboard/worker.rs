@@ -27,7 +27,7 @@ use crate::{
 
 /// Runtime output choices only; no GUI settings or persistence behavior.
 #[derive(Clone)]
-pub struct Config {
+pub struct PlaybackConfig {
     pub microphone_device: Option<String>,
     pub speaker_device: Option<String>,
     pub microphone_gain_percent: GainPercent,
@@ -36,7 +36,7 @@ pub struct Config {
     pub repeat: bool,
 }
 
-impl Config {
+impl PlaybackConfig {
     pub fn new(settings: &SoundboardSettings) -> Self {
         let id = |device: &Option<Endpoint>| device.as_ref().map(|device| device.id.clone());
         Self {
@@ -50,12 +50,12 @@ impl Config {
     }
 }
 
-pub enum Command {
+pub enum PlaybackCommand {
     Stop,
-    Replace(SoundId, u64, Config),
-    Configure(Config),
+    Replace(SoundId, u64, PlaybackConfig),
+    Configure(PlaybackConfig),
 }
-pub enum Event {
+pub enum PlaybackEvent {
     Started {
         revision: u64,
         duration_secs: Option<f64>,
@@ -135,19 +135,19 @@ impl PlaybackBuffer {
 }
 
 fn drain_commands(
-    commands: &mpsc::Receiver<Command>,
-    next_config: &mut Option<Config>,
+    commands: &mpsc::Receiver<PlaybackCommand>,
+    next_config: &mut Option<PlaybackConfig>,
 ) -> Result<Option<(SoundId, u64)>, &'static str> {
     let mut replacement = None;
     loop {
         match commands.try_recv() {
-            Ok(Command::Stop) => return Err("stopped"),
+            Ok(PlaybackCommand::Stop) => return Err("stopped"),
             Err(mpsc::TryRecvError::Disconnected) => return Err("controller_disconnected"),
-            Ok(Command::Replace(id, revision, next)) => {
+            Ok(PlaybackCommand::Replace(id, revision, next)) => {
                 replacement = Some((id, revision));
                 *next_config = Some(next);
             }
-            Ok(Command::Configure(next)) => *next_config = Some(next),
+            Ok(PlaybackCommand::Configure(next)) => *next_config = Some(next),
             Err(mpsc::TryRecvError::Empty) => return Ok(replacement),
         }
     }
@@ -205,7 +205,7 @@ impl MicrophoneRoute {
         let writer = match self.writer.take() {
             Some(writer) => writer,
             None => PcmWriter::open(transport.as_ref().map_err(Clone::clone)?)
-                .user_context(Text::CreatePlaybackBuffer)
+                .user_context(Text::CreatePlaybackBufferFailed)
                 .map_err(Details::new)?,
         };
         self.generation = self.writer.insert(writer).next_generation();
@@ -238,7 +238,7 @@ struct SpeakerRoute {
 }
 
 impl SpeakerRoute {
-    fn play(&mut self, config: &Config, buffer: &PlaybackBuffer) -> anyhow::Result<()> {
+    fn play(&mut self, config: &PlaybackConfig, buffer: &PlaybackBuffer) -> anyhow::Result<()> {
         if config.speaker_gain_percent.is_mute() || self.failed {
             self.monitor = None;
             return Ok(());
@@ -267,11 +267,11 @@ impl SpeakerRoute {
 /// `transport` names the shared memory of the configured soundboard microphone.
 pub fn run(
     id: SoundId,
-    mut config: Config,
+    mut config: PlaybackConfig,
     mut revision: u64,
     transport: Result<String, Details>,
-    commands: &mpsc::Receiver<Command>,
-    events: &mpsc::Sender<Event>,
+    commands: &mpsc::Receiver<PlaybackCommand>,
+    events: &mpsc::Sender<PlaybackEvent>,
 ) -> anyhow::Result<PlaybackOutcome> {
     let mut source = Source::open(id)?;
     let mut microphone = MicrophoneRoute::default();
@@ -289,7 +289,7 @@ pub fn run(
         repeat = config.repeat,
         "Soundboard playback started"
     );
-    let _ = events.send(Event::Started {
+    let _ = events.send(PlaybackEvent::Started {
         revision,
         duration_secs: source.decoder.duration_secs,
     });
@@ -331,7 +331,7 @@ pub fn run(
             // queue drains while the new sound's timeline is prepared.
             tracing::info!(sound_id = next_id, duration_secs = ?source.decoder.duration_secs,
                 speaker_stream_reused = speaker.monitor.is_some(), "Soundboard playback switched");
-            let _ = events.send(Event::Started {
+            let _ = events.send(PlaybackEvent::Started {
                 revision,
                 duration_secs: source.decoder.duration_secs,
             });
@@ -349,7 +349,7 @@ pub fn run(
                     return Err(anyhow::anyhow!(error));
                 }
                 tracing::warn!("{error}");
-                let _ = events.send(Event::OutputError(revision, error));
+                let _ = events.send(PlaybackEvent::OutputError(revision, error));
                 next.microphone_gain_percent = GainPercent::new(0);
             }
             config = next;
@@ -362,7 +362,7 @@ pub fn run(
         if config.microphone_gain_percent.is_mute() && config.speaker_gain_percent.is_mute() {
             break "outputs_muted";
         }
-        // The hold key belongs to `Config`, so it is pressed on this thread in step with
+        // The hold key belongs to `PlaybackConfig`, so it is pressed on this thread in step with
         // the audio and follows live reconfiguration like every other output choice.
         if config.hold_hotkey != held_binding {
             drop(held);
@@ -399,7 +399,7 @@ pub fn run(
                 return Err(error.user_context(Text::SpeakerPlaybackFailed));
             }
             tracing::warn!("Speaker playback failed; microphone output continues: {error:#}");
-            let _ = events.send(Event::OutputError(
+            let _ = events.send(PlaybackEvent::OutputError(
                 revision,
                 Message::SpeakerMonitorFailed {
                     error: Details::new(error),
@@ -416,7 +416,7 @@ pub fn run(
             {
                 elapsed_secs %= duration_secs;
             }
-            let _ = events.send(Event::Progress {
+            let _ = events.send(PlaybackEvent::Progress {
                 revision,
                 elapsed_secs,
             });
@@ -425,7 +425,7 @@ pub fn run(
         std::thread::sleep(Duration::from_millis(5));
     };
     let played_secs = played as f64 / f64::from(PCM_SAMPLE_RATE);
-    let _ = events.send(Event::Progress {
+    let _ = events.send(PlaybackEvent::Progress {
         revision,
         elapsed_secs: played_secs,
     });

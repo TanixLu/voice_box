@@ -33,11 +33,11 @@ use crate::{
     i18n::{Details, Message, Text},
     model::{Hotkey, Sound, SoundId},
     soundboard::{
-        bindings::{Action, Keys, Target},
+        bindings::{PlaybackKeys, ShortcutAction, Target},
         import::ImportedSounds,
         library::Library,
         player::Player,
-        recording::{Selection, save_clip},
+        recording::Selection,
         settings::SoundboardSettings,
         shortcuts::Shortcuts,
     },
@@ -71,9 +71,9 @@ pub enum Update {
     /// Shown as a dialog with this title.
     FileError(Text, Message),
     Edited(Edit, anyhow::Result<()>),
-    Removed(HashSet<SoundId>),
-    /// A recorded clip was saved, or failed to save.
-    Recorded(anyhow::Result<()>),
+    Deleted(HashSet<SoundId>),
+    /// A recording was saved as a sound, or failed to save.
+    RecordingSaved(anyhow::Result<()>),
 }
 
 /// Library writers exclude each other, so they share one slot. `Library` saves edits
@@ -83,8 +83,8 @@ enum LibraryTask {
     Edit(Edit, Task<Library>),
     Import(Task<ImportedSounds>),
     Export(Task<()>),
-    Remove(HashSet<SoundId>, Task<Library>),
-    Record(Task<Sound>),
+    Delete(HashSet<SoundId>, Task<Library>),
+    SaveRecording(Task<Sound>),
 }
 
 pub struct Soundboard {
@@ -99,7 +99,7 @@ pub struct Soundboard {
     wake: Wake,
 }
 impl Soundboard {
-    /// Global shortcuts are delivered to `window`, which must belong to the calling thread.
+    /// Shortcut hotkeys are delivered to `window`, which must belong to the calling thread.
     /// Registering on the main window avoids a dedicated message-loop thread.
     pub fn new(library: Library, settings: SoundboardSettings, wake: Wake, window: HWND) -> Self {
         Self {
@@ -134,17 +134,17 @@ impl Soundboard {
     }
     /// Registers the bound shortcuts, or none when disabled, and runs the pressed ones.
     /// Returns the result of the last playback a shortcut started.
-    pub fn shortcuts(&mut self, enabled: bool) -> Option<anyhow::Result<()>> {
-        let bindings = if enabled {
-            self.settings.keys.actions(&self.library.sounds)
+    pub fn poll_shortcuts(&mut self, enabled: bool) -> Option<anyhow::Result<()>> {
+        let shortcuts = if enabled {
+            self.settings.keys.shortcuts(&self.library.sounds)
         } else {
             HashMap::new()
         };
         let mut played = None;
-        for action in self.shortcuts.poll(bindings) {
+        for action in self.shortcuts.poll(shortcuts) {
             match action {
-                Action::Stop => self.stop(),
-                Action::Random(key) => {
+                ShortcutAction::Stop => self.stop(),
+                ShortcutAction::Random(key) => {
                     if let Some(index) = self.shuffle.choose(&self.library.sounds, key) {
                         played = Some(self.play(index));
                     }
@@ -155,7 +155,12 @@ impl Soundboard {
     }
     /// Binds `key` to `target`, checked against `keys`: the open settings draft, or the
     /// saved keys. Playback keys are stored in `keys`; sound keys are saved to the library.
-    pub fn bind(&mut self, target: &Target, key: Hotkey, keys: &mut Keys) -> anyhow::Result<()> {
+    pub fn bind(
+        &mut self,
+        target: &Target,
+        key: Hotkey,
+        keys: &mut PlaybackKeys,
+    ) -> anyhow::Result<()> {
         // The hold key is simulated rather than registered.
         if *target != Target::Hold {
             self.shortcuts.validate(key)?;
@@ -195,16 +200,16 @@ impl Soundboard {
         matches!(self.library_task, Some(LibraryTask::Import(_)))
     }
     pub fn saving_recording(&self) -> bool {
-        matches!(self.library_task, Some(LibraryTask::Record(_)))
+        matches!(self.library_task, Some(LibraryTask::SaveRecording(_)))
     }
     pub fn save_recording(&mut self, audio: Arc<Recording>, selection: Selection, name: String) {
         if self.library_busy() {
             return;
         }
-        let task = Task::run("VoiceBoxSaveRecording", &self.wake, move || {
-            save_clip(&audio, selection, &name)
+        let task = Task::spawn("VoiceBoxRecordingSave", &self.wake, move || {
+            recording::save(&audio, selection, &name)
         });
-        self.library_task = Some(LibraryTask::Record(task));
+        self.library_task = Some(LibraryTask::SaveRecording(task));
     }
     /// Applies `edit` to a copy of the library and saves it in the background.
     pub fn edit(
@@ -212,13 +217,13 @@ impl Soundboard {
         kind: Edit,
         edit: impl FnOnce(&mut Library) -> anyhow::Result<()> + Send + 'static,
     ) -> anyhow::Result<()> {
-        ensure!(!self.library_busy(), Text::RenameBusy);
+        ensure!(!self.library_busy(), Text::LibraryBusy);
         ensure!(
             !matches!(kind, Edit::Rename | Edit::BatchRename) || !self.playing(),
             Text::StopBeforeRename
         );
         let mut library = self.library.clone();
-        let task = Task::run("VoiceBoxLibrarySave", &self.wake, move || {
+        let task = Task::spawn("VoiceBoxLibrarySave", &self.wake, move || {
             edit(&mut library)?;
             library.save()?;
             Ok(library)
@@ -235,7 +240,7 @@ impl Soundboard {
         }
         // Importing disables playback controls; a queued replacement must not restart behind it.
         self.stop();
-        let task = Task::run("VoiceBoxSoundImport", &self.wake, move || {
+        let task = Task::spawn("VoiceBoxSoundImport", &self.wake, move || {
             select_files().and_then(import::from_files)
         });
         self.library_task = Some(LibraryTask::Import(task));
@@ -256,12 +261,12 @@ impl Soundboard {
             .filter(|sound| ids.contains(&sound.id))
             .cloned()
             .collect();
-        let task = Task::run("VoiceBoxSoundExport", &self.wake, move || {
+        let task = Task::spawn("VoiceBoxSoundExport", &self.wake, move || {
             select_folder()?.map_or(Ok(()), |folder| export::to_folder(&sounds, &folder))
         });
         self.library_task = Some(LibraryTask::Export(task));
     }
-    pub fn remove(&mut self, ids: &HashSet<SoundId>) {
+    pub fn delete(&mut self, ids: &HashSet<SoundId>) {
         if ids.is_empty() || self.library_busy() {
             return;
         }
@@ -274,16 +279,16 @@ impl Soundboard {
         self.player.cancel_queued();
         let selected = ids.clone();
         let mut library = self.library.clone();
-        let task = Task::run("VoiceBoxSoundRemoval", &self.wake, move || {
+        let task = Task::spawn("VoiceBoxSoundDelete", &self.wake, move || {
             // Waiting for playback, cascading BLOB deletion, transaction
             // commit and connection cleanup must all stay off the UI thread.
             if let Some(playback) = stopped_playback {
                 playback.wait();
             }
-            library.remove(&selected, reclaim_space)?;
+            library.delete(&selected, reclaim_space)?;
             Ok(library)
         });
-        self.library_task = Some(LibraryTask::Remove(ids.clone(), task));
+        self.library_task = Some(LibraryTask::Delete(ids.clone(), task));
     }
     pub fn play(&mut self, index: usize) -> anyhow::Result<()> {
         let Some(sound) = self.library.sounds.get(index) else {
@@ -363,16 +368,16 @@ impl Soundboard {
                     Update::FileError(Text::SoundExportFailedTitle, Message::error(error))
                 }
             },
-            LibraryTask::Remove(ids, task) => match task.poll()? {
+            LibraryTask::Delete(ids, task) => match task.poll()? {
                 Ok(library) => {
                     self.library = library;
-                    Update::Removed(std::mem::take(ids))
+                    Update::Deleted(std::mem::take(ids))
                 }
                 Err(error) => Update::Error(Message::DeleteSoundFailed {
                     error: Details::new(error),
                 }),
             },
-            LibraryTask::Record(task) => Update::Recorded(task.poll()?.map(|sound| {
+            LibraryTask::SaveRecording(task) => Update::RecordingSaved(task.poll()?.map(|sound| {
                 tracing::info!(sound_id = sound.id, "Recorded sound committed to library");
                 self.library.sounds.push(sound);
             })),

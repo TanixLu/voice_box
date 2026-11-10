@@ -2,16 +2,18 @@
 
 use std::sync::mpsc;
 
+use anyhow::ensure;
 use voice_box_shared::pcm_transport;
 
 use crate::{
     devices,
-    i18n::{Details, Message},
+    i18n::{Details, Message, Text},
     model::SoundId,
+    plugin::{self, PluginStatus},
     soundboard::{
         Update,
         settings::SoundboardSettings,
-        worker::{self, Command, Config, Event},
+        worker::{self, PlaybackCommand, PlaybackConfig, PlaybackEvent},
     },
     task::{Task, Wake},
 };
@@ -26,12 +28,12 @@ pub struct PlaybackStatus {
 struct Request {
     id: SoundId,
     duration_secs: f64,
-    config: Config,
+    config: PlaybackConfig,
 }
 
 struct Job {
-    sender: mpsc::Sender<Command>,
-    receiver: mpsc::Receiver<Event>,
+    sender: mpsc::Sender<PlaybackCommand>,
+    receiver: mpsc::Receiver<PlaybackEvent>,
     task: Task<()>,
 }
 
@@ -72,10 +74,10 @@ impl Player {
     }
 
     pub fn play(&mut self, id: SoundId, duration_secs: f64, settings: &SoundboardSettings) {
-        self.start(id, duration_secs, Config::new(settings));
+        self.start(id, duration_secs, PlaybackConfig::new(settings));
     }
 
-    fn start(&mut self, id: SoundId, duration_secs: f64, config: Config) {
+    fn start(&mut self, id: SoundId, duration_secs: f64, config: PlaybackConfig) {
         (self.wake)();
         self.revision = self.revision.wrapping_add(1);
         self.status = PlaybackStatus {
@@ -91,7 +93,9 @@ impl Player {
                 duration_secs,
                 config: config.clone(),
             });
-            let _ = job.sender.send(Command::Replace(id, self.revision, config));
+            let _ = job
+                .sender
+                .send(PlaybackCommand::Replace(id, self.revision, config));
             return;
         }
         self.job = Some(start_worker(id, self.revision, config, &self.wake));
@@ -100,7 +104,7 @@ impl Player {
     pub fn stop(&mut self) {
         self.queued = None;
         if let Some(job) = &self.job {
-            let _ = job.sender.send(Command::Stop);
+            let _ = job.sender.send(PlaybackCommand::Stop);
         }
     }
 
@@ -115,12 +119,12 @@ impl Player {
     }
 
     pub fn configure(&mut self, settings: &SoundboardSettings) {
-        let config = Config::new(settings);
+        let config = PlaybackConfig::new(settings);
         if let Some(request) = &mut self.queued {
             request.config = config.clone();
         }
         if let Some(job) = &self.job {
-            let _ = job.sender.send(Command::Configure(config));
+            let _ = job.sender.send(PlaybackCommand::Configure(config));
         }
     }
 
@@ -131,7 +135,7 @@ impl Player {
             let finished = job.task.poll();
             for event in job.receiver.try_iter() {
                 match event {
-                    Event::Started {
+                    PlaybackEvent::Started {
                         revision,
                         duration_secs,
                     } if revision == self.revision => {
@@ -139,11 +143,11 @@ impl Player {
                         self.status.duration_secs = duration_secs.or(self.status.duration_secs);
                         updates.push(Update::Cleared);
                     }
-                    Event::Progress {
+                    PlaybackEvent::Progress {
                         revision,
                         elapsed_secs,
                     } if revision == self.revision => self.status.elapsed_secs = elapsed_secs,
-                    Event::OutputError(revision, error) if revision == self.revision => {
+                    PlaybackEvent::OutputError(revision, error) if revision == self.revision => {
                         updates.push(Update::Error(error));
                     }
                     _ => {}
@@ -182,14 +186,21 @@ impl Drop for Player {
     }
 }
 
-fn start_worker(id: SoundId, revision: u64, config: Config, wake: &Wake) -> Job {
+fn start_worker(id: SoundId, revision: u64, config: PlaybackConfig, wake: &Wake) -> Job {
     let (sender, commands) = mpsc::channel();
     let (events, receiver) = mpsc::channel();
-    let task = Task::run("VoiceBoxSoundboard", wake, move || {
+    let task = Task::spawn("VoiceBoxPlayback", wake, move || {
         // A device stays fixed for a worker, so discovery and plugin checks happen once,
         // here: they use COM and the registry, which must stay off the UI thread.
-        let transport = devices::soundboard_microphone_guid(config.microphone_device.as_deref())
-            .and_then(|guid| pcm_transport::mapping_name(&guid))
+        // The soundboard sends through the plugin, so the microphone must have it installed.
+        let transport = devices::microphone_guid(config.microphone_device.as_deref())
+            .and_then(|guid| {
+                ensure!(
+                    plugin::device_status(&guid) == PluginStatus::Installed,
+                    Text::SoundboardMicrophonePluginRequired
+                );
+                pcm_transport::mapping_name(&guid)
+            })
             .map_err(Details::new);
         let outcome = worker::run(id, config, revision, transport, &commands, &events)?;
         tracing::info!(

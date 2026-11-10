@@ -1,4 +1,5 @@
-//! Global key bindings: the playback keys in the settings plus each sound's key.
+//! Binding hotkeys to targets: the playback keys in the settings plus each sound's key,
+//! and the shortcuts those bindings make.
 
 use std::collections::{HashMap, HashSet};
 
@@ -19,18 +20,18 @@ pub enum Target {
     Random,
 }
 
-/// What a pressed global shortcut asks the soundboard to do.
+/// What a pressed shortcut asks the soundboard to do.
 #[derive(Clone, Copy)]
-pub enum Action {
+pub enum ShortcutAction {
     Stop,
     /// A random sound bound to this key, or from the whole library.
     Random(Option<Hotkey>),
 }
 
-/// Saved keys that are no longer valid load as unbound.
+/// The hold, stop and random keys. Saved keys that are no longer valid load as unbound.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
-pub struct Keys {
+pub struct PlaybackKeys {
     /// Held down by the soundboard while a sound plays.
     #[serde(deserialize_with = "hold_key")]
     pub hold: Option<Hotkey>,
@@ -48,7 +49,7 @@ fn shortcut_key<'de, D: serde::Deserializer<'de>>(keys: D) -> Result<Option<Hotk
     Ok(Option::<Hotkey>::deserialize(keys)?.filter(|key| key.is_valid()))
 }
 
-impl Keys {
+impl PlaybackKeys {
     /// The preference a non-sound target is stored in.
     fn slot(&mut self, target: &Target) -> Option<&mut Option<Hotkey>> {
         match target {
@@ -69,12 +70,14 @@ impl Keys {
         Ok(())
     }
 
-    pub fn actions(&self, sounds: &[Sound]) -> HashMap<Hotkey, Action> {
+    /// Every shortcut: each sound's key plus the stop and random keys. The hold key is
+    /// simulated during playback rather than registered, so it is not one.
+    pub fn shortcuts(&self, sounds: &[Sound]) -> HashMap<Hotkey, ShortcutAction> {
         let sound_keys = sounds.iter().filter_map(|sound| sound.hotkey);
         sound_keys
-            .map(|key| (key, Action::Random(Some(key))))
-            .chain(self.stop.map(|key| (key, Action::Stop)))
-            .chain(self.random.map(|key| (key, Action::Random(None))))
+            .map(|key| (key, ShortcutAction::Random(Some(key))))
+            .chain(self.stop.map(|key| (key, ShortcutAction::Stop)))
+            .chain(self.random.map(|key| (key, ShortcutAction::Random(None))))
             .collect()
     }
 

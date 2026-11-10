@@ -16,7 +16,7 @@ use voice_box_shared::pcm_transport::PCM_SAMPLE_RATE;
 use crate::{
     database,
     i18n::{Details, Message, Text, UserContext},
-    model::{Sound, is_valid_name},
+    model::{Sound, is_valid_sound_name},
     soundboard::decoder::SoundDecoder,
 };
 
@@ -57,7 +57,7 @@ fn validate_files(sources: Vec<PathBuf>) -> anyhow::Result<(Vec<ValidatedFile>, 
     for (index, source) in sources.into_iter().enumerate() {
         let path = source
             .canonicalize()
-            .user_context(Text::ReadSourceAudioPath);
+            .user_context(Text::ReadSourceAudioPathFailed);
         if path.as_ref().is_ok_and(|path| !seen.insert(path.clone())) {
             continue;
         }
@@ -115,7 +115,7 @@ fn validate_files(sources: Vec<PathBuf>) -> anyhow::Result<(Vec<ValidatedFile>, 
 }
 
 fn validate_file(source: &Path) -> anyhow::Result<ValidatedFile> {
-    let mut file = File::open(source).user_context(Text::OpenAudioFile)?;
+    let mut file = File::open(source).user_context(Text::OpenAudioFileFailed)?;
     let metadata = file.metadata()?;
     ensure!(metadata.is_file(), Text::AudioIsNotFile);
     let name = source
@@ -124,7 +124,7 @@ fn validate_file(source: &Path) -> anyhow::Result<ValidatedFile> {
         .to_string_lossy()
         .trim()
         .to_owned();
-    ensure!(is_valid_name(&name), Text::InvalidSoundName);
+    ensure!(is_valid_sound_name(&name), Text::InvalidSoundName);
     let mut decoder = SoundDecoder::new(Box::new(file.try_clone()?))?;
     let mut frames = 0_u64;
     while decoder.next_frame()?.is_some() {

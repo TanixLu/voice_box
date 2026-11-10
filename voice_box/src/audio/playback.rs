@@ -34,7 +34,7 @@ pub fn play(
         recording.channels as usize,
         Some(recording.channel_mask),
     );
-    let stream = Stream::new(client, &format, true).user_context(Text::OpenPlaybackDevice)?;
+    let stream = Stream::new(client, &format, true).user_context(Text::OpenPlaybackDeviceFailed)?;
     let render: IAudioRenderClient = unsafe { stream.client.GetService()? };
     let channels = recording.channels as usize;
     let mut cursor = 0;

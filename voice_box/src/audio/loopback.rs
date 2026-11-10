@@ -1,4 +1,5 @@
-//! Default-speaker loopback, including time spent with no render packets.
+//! Default-speaker loopback in the PCM transport format, including time spent with no render
+//! packets.
 
 use std::{
     ptr, slice,
@@ -21,7 +22,7 @@ use windows::Win32::{
 
 use voice_box_shared::{
     dsp::clamp_sample,
-    pcm_transport::{PCM_CHANNELS, PcmFrame},
+    pcm_transport::{PCM_CHANNELS, PCM_SAMPLE_RATE, PcmFrame},
 };
 
 use crate::{
@@ -29,8 +30,6 @@ use crate::{
     i18n::{Text, UserContext},
     win::ComGuard,
 };
-
-const RATE: u32 = 48_000;
 
 fn clock_hns(frequency: i64) -> anyhow::Result<u64> {
     let mut counter = 0;
@@ -40,8 +39,8 @@ fn clock_hns(frequency: i64) -> anyhow::Result<u64> {
 
 // WASAPI timestamps use QPC in 100 ns units, independent of the negotiated rate.
 fn timestamp_frame(timestamp: u64, origin: u64) -> usize {
-    ((u128::from(timestamp.saturating_sub(origin)) * u128::from(RATE) + 5_000_000) / 10_000_000)
-        as usize
+    ((u128::from(timestamp.saturating_sub(origin)) * u128::from(PCM_SAMPLE_RATE) + 5_000_000)
+        / 10_000_000) as usize
 }
 
 fn place_packet(samples: &mut Vec<f32>, start: usize, frames: usize, data: Option<&[PcmFrame]>) {
@@ -67,30 +66,31 @@ pub fn capture(stop: &AtomicBool, started: &dyn Fn()) -> anyhow::Result<Recordin
         32,
         32,
         &SampleType::Float,
-        RATE as usize,
+        PCM_SAMPLE_RATE as usize,
         PCM_CHANNELS,
         Some(3),
     );
-    let stream = Stream::loopback(client, &format).user_context(Text::CaptureSpeaker)?;
+    let stream = Stream::loopback(client, &format).user_context(Text::CaptureSpeakerFailed)?;
     let capture: IAudioCaptureClient = unsafe { stream.client.GetService()? };
     let mut frequency = 0;
     unsafe { QueryPerformanceFrequency(&mut frequency)? };
-    ensure!(frequency > 0, Text::ReadRecordingClock);
+    ensure!(frequency > 0, Text::ReadRecordingClockFailed);
     let origin = clock_hns(frequency)?;
     unsafe { stream.client.Start()? };
     let begin = Instant::now();
     started();
-    let max_frames = RATE as usize * LOOPBACK_MAX_SECONDS as usize;
+    let max_frames = PCM_SAMPLE_RATE as usize * LOOPBACK_MAX_SECONDS as usize;
     let mut recording = Recording {
-        sample_rate: RATE,
+        sample_rate: PCM_SAMPLE_RATE,
         channels: PCM_CHANNELS as u16,
         channel_mask: 3,
         samples: Vec::new(),
     };
     let mut stopped_at = None;
     loop {
-        let elapsed_frames =
-            ((begin.elapsed().as_secs_f64() * f64::from(RATE)).round() as usize).min(max_frames);
+        let elapsed_frames = ((begin.elapsed().as_secs_f64() * f64::from(PCM_SAMPLE_RATE)).round()
+            as usize)
+            .min(max_frames);
         if stop.load(Ordering::Relaxed) || elapsed_frames >= max_frames {
             unsafe { stream.client.Stop()? };
             stopped_at = Some(elapsed_frames);
@@ -114,7 +114,7 @@ pub fn capture(stop: &AtomicBool, started: &dyn Fn()) -> anyhow::Result<Recordin
                 timestamp_frame(timestamp, origin)
             } else {
                 // A bad device timestamp must not turn a short recording into a huge gap.
-                ((begin.elapsed().as_secs_f64() * f64::from(RATE)) as usize)
+                ((begin.elapsed().as_secs_f64() * f64::from(PCM_SAMPLE_RATE)) as usize)
                     .saturating_sub(frames as usize)
             }
             .min(max_frames);

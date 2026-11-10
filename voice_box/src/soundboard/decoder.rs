@@ -56,7 +56,7 @@ impl SoundDecoder {
         );
         let decoder = symphonia::default::get_codecs()
             .make_audio_decoder(params, &AudioDecoderOptions::default().gapless(true))
-            .user_context(Text::CreateAudioDecoder)?;
+            .user_context(Text::CreateAudioDecoderFailed)?;
         let duration_secs = track.num_frames.map(|n| n as f64 / f64::from(rate));
         let id = track.id;
         let resamplers: [_; PCM_CHANNELS] = std::array::from_fn(|_| {
@@ -116,7 +116,7 @@ impl SoundDecoder {
             let Some(packet) = self
                 .format
                 .next_packet()
-                .user_context(Text::ReadAudioData)?
+                .user_context(Text::ReadAudioDataFailed)?
             else {
                 self.eof = true;
                 // Flush the converter's filter and partial chunk, but never append
@@ -133,7 +133,7 @@ impl SoundDecoder {
             let audio = self
                 .decoder
                 .decode(&packet)
-                .user_context(Text::DecodeAudio)?;
+                .user_context(Text::DecodeAudioFailed)?;
             ensure!(
                 audio.spec().rate() == self.rate
                     && audio.spec().channels().count() == self.channels,

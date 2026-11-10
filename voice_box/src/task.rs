@@ -32,7 +32,7 @@ pub struct Task<T> {
 impl<T: Send + 'static> Task<T> {
     /// `work` calls `started` once it is really running, and should return early
     /// when the flag it receives is set.
-    pub fn spawn(
+    pub fn spawn_cancellable(
         name: &'static str,
         wake: &Wake,
         work: impl FnOnce(&AtomicBool, &dyn Fn()) -> anyhow::Result<T> + Send + 'static,
@@ -65,7 +65,7 @@ impl<T: Send + 'static> Task<T> {
             Ok(thread) => (Some(events), None, Some(thread)),
             Err(error) => {
                 tracing::error!(task = name, "Cannot start task: {error}");
-                let error = anyhow::anyhow!(Message::CannotStartOperation {
+                let error = anyhow::anyhow!(Message::StartOperationFailed {
                     error: Details::new(error),
                 });
                 (None, Some(error), None)
@@ -81,12 +81,12 @@ impl<T: Send + 'static> Task<T> {
     }
 
     /// For work that can be neither cancelled nor observed starting.
-    pub fn run(
+    pub fn spawn(
         name: &'static str,
         wake: &Wake,
         work: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
     ) -> Self {
-        Self::spawn(name, wake, move |_, _| work())
+        Self::spawn_cancellable(name, wake, move |_, _| work())
     }
 
     /// Returns the result once; the task is spent afterwards.
@@ -140,7 +140,7 @@ impl<T> Drop for Task<T> {
 }
 
 /// Polls the task in `slot` and empties the slot once it has finished.
-pub fn finished<T: Send + 'static>(slot: &mut Option<Task<T>>) -> Option<anyhow::Result<T>> {
+pub fn take_finished<T: Send + 'static>(slot: &mut Option<Task<T>>) -> Option<anyhow::Result<T>> {
     let result = slot.as_mut()?.poll()?;
     *slot = None;
     Some(result)

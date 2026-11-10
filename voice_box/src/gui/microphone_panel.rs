@@ -2,13 +2,13 @@ use crate::{
     devices::{self, Microphone},
     gui::{Busy, widgets::microphone_label},
     i18n::{Details, Message, Text},
-    plugin::{self, PluginAction, PluginOperationResult, PluginStatus},
+    plugin::{self, PluginAction, PluginOutcome, PluginStatus},
     task::{Task, Wake},
 };
 
 enum Outcome {
     Devices(Vec<Microphone>, usize),
-    Plugin(PluginOperationResult),
+    Plugin(PluginOutcome),
 }
 
 /// An operation clicked while drawing; the app applies it once the frame is drawn.
@@ -62,7 +62,7 @@ impl MicrophonePanel {
                 self.replace_devices(devices, selected);
                 None
             }
-            Ok(Outcome::Plugin(PluginOperationResult { result, statuses })) => {
+            Ok(Outcome::Plugin(PluginOutcome { result, statuses })) => {
                 for (guid, status) in statuses {
                     if let Some(mic) = self.devices.iter_mut().find(|mic| mic.guid == guid) {
                         mic.plugin_status = status;
@@ -101,7 +101,7 @@ impl MicrophonePanel {
     ) {
         self.confirm_uninstall = false;
         self.error.clear();
-        self.job = Some((status, Task::run("VoiceBoxMicrophones", &self.wake, work)));
+        self.job = Some((status, Task::spawn("VoiceBoxMicrophones", &self.wake, work)));
     }
     pub fn refresh(&mut self) {
         self.start(Text::ReadingMicrophones, || {

@@ -9,7 +9,7 @@ use windows_core::{GUID, Interface as _};
 
 pub const APO_CLSID: GUID = GUID::from_u128(0xae672075_b244_4417_b5a5_fbd45b7f0268);
 pub const APO_NAME: &str = "VoiceBox APO";
-pub const COPYRIGHT: &str = "Copyright (C) 2026 Tanix";
+pub const APO_COPYRIGHT: &str = "Copyright (C) 2026 Tanix";
 
 pub fn registration_properties() -> APO_REG_PROPERTIES {
     let mut properties = APO_REG_PROPERTIES {
@@ -32,7 +32,7 @@ pub fn registration_properties() -> APO_REG_PROPERTIES {
         ..Default::default()
     };
     write_wide(&mut properties.szFriendlyName, APO_NAME);
-    write_wide(&mut properties.szCopyrightInfo, COPYRIGHT);
+    write_wide(&mut properties.szCopyrightInfo, APO_COPYRIGHT);
     properties
 }
 

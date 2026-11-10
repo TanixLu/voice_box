@@ -1,3 +1,5 @@
+//! Format negotiation: `IsInputFormatSupported`, `IsOutputFormatSupported`, `GetInputChannelCount`.
+
 use core::ffi::c_void;
 
 use windows::Win32::{
@@ -30,7 +32,7 @@ pub unsafe fn read_format(raw: *mut c_void) -> Result<UNCOMPRESSEDAUDIOFORMAT, H
         .map_err(|error| error.code())
 }
 
-pub fn is_supported_format(format: &UNCOMPRESSEDAUDIOFORMAT) -> bool {
+pub fn is_processable(format: &UNCOMPRESSEDAUDIOFORMAT) -> bool {
     (1..=MAX_CHANNELS as u32).contains(&format.dwSamplesPerFrame)
         && sample_format(format).is_some()
         && format.fFramesPerSecond.is_finite()
@@ -77,7 +79,7 @@ pub fn log_connection_format(label: &str, format: &UNCOMPRESSEDAUDIOFORMAT) {
         format.dwValidBitsPerSample,
         format.fFramesPerSecond,
         format.dwChannelMask,
-        is_supported_format(format)
+        is_processable(format)
     );
 }
 
@@ -113,7 +115,7 @@ unsafe fn negotiate_format(
         Some(format) if !formats_match(&requested_format, &format) => (opposite, format, S_FALSE),
         _ => (requested, requested_format, S_OK),
     };
-    if !is_supported_format(&format) {
+    if !is_processable(&format) {
         return APOERR_FORMAT_NOT_SUPPORTED;
     }
     unsafe { ((*unknown_vtable(selected)).AddRef)(selected) };

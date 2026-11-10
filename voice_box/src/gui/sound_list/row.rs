@@ -3,7 +3,7 @@
 use crate::{
     gui::{
         sound_list::Status,
-        widgets::{ButtonIcon, format_duration, hotkey_badge, icon_button, play_button},
+        widgets::{ButtonIcon, format_duration, hotkey_badge, icon_button},
     },
     i18n::{Message, Text},
     model::Sound,
@@ -211,6 +211,44 @@ pub fn show(ui: &mut egui::Ui, row: Row<'_>, edit: Option<&mut RenameEditor>) ->
                 }
             });
         });
+    });
+    response
+}
+
+fn play_button(ui: &mut egui::Ui, enabled: bool, active: bool) -> egui::Response {
+    let response = ui.add_enabled(
+        enabled,
+        egui::Button::new("").min_size(egui::vec2(34.0, 30.0)),
+    );
+    let color = ui.style().interact(&response).fg_stroke.color;
+    let center = response.rect.center();
+    if active {
+        ui.painter().rect_filled(
+            egui::Rect::from_center_size(center, egui::vec2(11.0, 11.0)),
+            0.0,
+            color,
+        );
+    } else {
+        ui.painter().add(egui::Shape::convex_polygon(
+            vec![
+                center + egui::vec2(-4.0, -6.0),
+                center + egui::vec2(-4.0, 6.0),
+                center + egui::vec2(6.0, 0.0),
+            ],
+            color,
+            egui::Stroke::NONE,
+        ));
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::Role::Button,
+            enabled,
+            if active {
+                Text::StopPlayback.text()
+            } else {
+                Text::PlaySound.text()
+            },
+        )
     });
     response
 }

@@ -1,4 +1,5 @@
 //! COM object identity, ownership and interface tables.
+//! Entry points live by topic in `effects`, `formats` and `processing`; `factory` creates objects.
 
 mod effects;
 pub mod factory;
@@ -38,7 +39,7 @@ use crate::{
         },
         formats::{get_input_channel_count, is_format_supported},
         processing::{
-            get_latency, identity_frames, lock_for_process, process, reset, unlock_for_process,
+            calc_frames, get_latency, lock_for_process, process, reset, unlock_for_process,
         },
         session::ProcessingCell,
     },
@@ -307,8 +308,8 @@ static CONTROL_VTABLE: IAudioProcessingObjectConfiguration_Vtbl =
 static REALTIME_VTABLE: IAudioProcessingObjectRT_Vtbl = IAudioProcessingObjectRT_Vtbl {
     base__: DELEGATING_UNKNOWN,
     APOProcess: process,
-    CalcInputFrames: identity_frames,
-    CalcOutputFrames: identity_frames,
+    CalcInputFrames: calc_frames,
+    CalcOutputFrames: calc_frames,
 };
 
 static SYSTEM_EFFECTS_VTABLE: IAudioSystemEffects3_Vtbl = IAudioSystemEffects3_Vtbl {

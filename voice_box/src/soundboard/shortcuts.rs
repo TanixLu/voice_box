@@ -1,4 +1,4 @@
-//! Global shortcut registration for the soundboard's key bindings.
+//! The soundboard's shortcuts, registered as global hotkeys and dispatched as actions.
 
 use std::collections::{HashMap, HashSet};
 
@@ -8,12 +8,12 @@ use crate::{
     hotkeys::Hotkeys,
     i18n::{Details, Message, Text},
     model::Hotkey,
-    soundboard::bindings::Action,
+    soundboard::bindings::ShortcutAction,
     task::Wake,
 };
 
 pub struct Shortcuts {
-    listener: Option<Hotkeys>,
+    hotkeys: Option<Hotkeys>,
     /// Last key set sent for registration, so a failure is not retried every frame.
     attempted: HashSet<Hotkey>,
     error: Message,
@@ -21,8 +21,8 @@ pub struct Shortcuts {
 
 impl Shortcuts {
     pub fn new(window: HWND, wake: Wake) -> Self {
-        let (listener, error) = match Hotkeys::new(window, wake) {
-            Ok(listener) => (Some(listener), Message::default()),
+        let (hotkeys, error) = match Hotkeys::new(window, wake) {
+            Ok(hotkeys) => (Some(hotkeys), Message::default()),
             Err(error) => (
                 None,
                 Message::EnableHotkeysFailed {
@@ -31,7 +31,7 @@ impl Shortcuts {
             ),
         };
         Self {
-            listener,
+            hotkeys,
             attempted: HashSet::new(),
             error,
         }
@@ -42,27 +42,27 @@ impl Shortcuts {
     }
     /// Unregisters everything; must run while the main window still exists.
     pub fn shutdown(&mut self) {
-        self.listener = None;
+        self.hotkeys = None;
     }
-    /// Checks that Windows will accept `key` as a global shortcut.
+    /// Checks that Windows will accept `key` as a global hotkey.
     pub fn validate(&self, key: Hotkey) -> anyhow::Result<()> {
-        self.listener
+        self.hotkeys
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!(Text::HotkeyServiceUnavailable))?
             .validate(key)
     }
 
-    /// Registers exactly `bindings` and returns the actions pressed since the last poll.
-    pub fn poll(&mut self, bindings: HashMap<Hotkey, Action>) -> Vec<Action> {
-        let Some(hotkeys) = &mut self.listener else {
+    /// Registers exactly `shortcuts` and returns the actions pressed since the last poll.
+    pub fn poll(&mut self, shortcuts: HashMap<Hotkey, ShortcutAction>) -> Vec<ShortcutAction> {
+        let Some(hotkeys) = &mut self.hotkeys else {
             return Vec::new();
         };
         let actions: Vec<_> = hotkeys
-            .pressed
+            .triggered
             .try_iter()
-            .filter_map(|key| bindings.get(&key).copied())
+            .filter_map(|key| shortcuts.get(&key).copied())
             .collect();
-        let keys: HashSet<_> = bindings.into_keys().collect();
+        let keys: HashSet<_> = shortcuts.into_keys().collect();
         if keys != self.attempted {
             match hotkeys.configure(keys.clone()) {
                 Ok(()) => self.error.clear(),
@@ -71,8 +71,11 @@ impl Shortcuts {
             self.attempted = keys;
         }
         // Stop takes precedence over playback queued in the same frame.
-        if actions.iter().any(|action| matches!(action, Action::Stop)) {
-            vec![Action::Stop]
+        if actions
+            .iter()
+            .any(|action| matches!(action, ShortcutAction::Stop))
+        {
+            vec![ShortcutAction::Stop]
         } else {
             actions
         }

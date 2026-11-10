@@ -7,7 +7,7 @@ use anyhow::ensure;
 use crate::{
     database,
     i18n::{Text, UserContext},
-    model::{Hotkey, Sound, SoundId, is_valid_name},
+    model::{Hotkey, Sound, SoundId, is_valid_sound_name},
     soundboard::rename::RenamePlan,
 };
 
@@ -17,14 +17,14 @@ pub struct Library {
 }
 
 impl Library {
-    pub fn try_load() -> anyhow::Result<Self> {
+    pub fn load() -> anyhow::Result<Self> {
         Ok(Self {
             sounds: database::sounds::load()?,
         })
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
-        database::sounds::save(&self.sounds).user_context(Text::SaveSoundLibrary)
+        database::sounds::save(&self.sounds).user_context(Text::SaveSoundLibraryFailed)
     }
 
     pub fn move_sounds(&mut self, ids: &HashSet<SoundId>, to_top: bool) -> anyhow::Result<()> {
@@ -95,7 +95,7 @@ impl Library {
 
     pub fn rename(&mut self, index: usize, name: &str) -> anyhow::Result<()> {
         let name = name.trim();
-        ensure!(is_valid_name(name), Text::InvalidSoundName);
+        ensure!(is_valid_sound_name(name), Text::InvalidSoundName);
         let sound = self
             .sounds
             .get_mut(index)
@@ -104,8 +104,8 @@ impl Library {
         Ok(())
     }
 
-    pub fn remove(&mut self, ids: &HashSet<SoundId>, reclaim_space: bool) -> anyhow::Result<()> {
-        database::sounds::remove(ids, reclaim_space)?;
+    pub fn delete(&mut self, ids: &HashSet<SoundId>, reclaim_space: bool) -> anyhow::Result<()> {
+        database::sounds::delete(ids, reclaim_space)?;
         self.sounds.retain(|sound| !ids.contains(&sound.id));
         Ok(())
     }

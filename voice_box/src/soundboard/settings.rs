@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::soundboard::bindings::Keys;
+use crate::soundboard::bindings::PlaybackKeys;
 
 /// A playback endpoint the user picked, remembered by name for when it is unplugged.
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -20,7 +20,7 @@ pub struct SoundboardSettings {
     pub speaker_gain_percent: GainPercent,
     pub show_overlay: bool,
     pub repeat: bool,
-    pub keys: Keys,
+    pub keys: PlaybackKeys,
 }
 
 impl Default for SoundboardSettings {
@@ -32,7 +32,7 @@ impl Default for SoundboardSettings {
             speaker_gain_percent: GainPercent::new(100),
             show_overlay: true,
             repeat: false,
-            keys: Keys::default(),
+            keys: PlaybackKeys::default(),
         }
     }
 }

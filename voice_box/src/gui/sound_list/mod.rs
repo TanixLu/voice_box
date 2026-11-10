@@ -20,7 +20,7 @@ pub struct Status {
 pub enum Action {
     Play(usize),
     Stop,
-    Remove(SoundId),
+    Delete(SoundId),
     Capture(SoundId),
     ClearHotkey(usize),
     Move { from: usize, to: usize },
@@ -37,7 +37,7 @@ pub enum BatchAction {
 struct RowActions {
     play: Option<usize>,
     stop: bool,
-    remove: Option<usize>,
+    delete: Option<usize>,
     delete_clicked: bool,
     capture: Option<SoundId>,
     rename: Option<(usize, String)>,
@@ -128,14 +128,16 @@ impl SoundList {
             selection.anchor = None;
         }
     }
-    pub fn remove_ids(&mut self, ids: &HashSet<SoundId>) {
+    /// Drops deleted sounds from the selection.
+    pub fn forget_deleted(&mut self, ids: &HashSet<SoundId>) {
         if let Some(selection) = &mut self.selection {
             selection.ids.retain(|id| !ids.contains(id));
             selection.anchor = None;
         }
         self.cancel_delete();
     }
-    pub fn rename_request(&mut self, keep_editing: bool, playing: bool) -> Option<(usize, String)> {
+    /// The edited name to save, once editing ends and playback allows it.
+    pub fn poll_rename(&mut self, keep_editing: bool, playing: bool) -> Option<(usize, String)> {
         let edit = self.rename_editor.as_mut()?;
         if !edit.request_focus && !keep_editing {
             edit.save_requested = true;
@@ -156,7 +158,7 @@ impl SoundList {
         let RowActions {
             play,
             stop,
-            remove,
+            delete,
             delete_clicked,
             capture,
             rename,
@@ -197,9 +199,9 @@ impl SoundList {
         } else if let Some(index) = play {
             actions.push(Action::Play(index));
         }
-        if let Some(index) = remove {
+        if let Some(index) = delete {
             self.pending_delete_index = None;
-            actions.push(Action::Remove(sounds[index].id));
+            actions.push(Action::Delete(sounds[index].id));
         }
         if let Some(target) = capture {
             actions.push(Action::Capture(target));
@@ -370,7 +372,7 @@ impl SoundList {
                                 row::Action::Delete => {
                                     result.delete_clicked = true;
                                     if self.pending_delete_index == Some(index) {
-                                        result.remove = Some(index);
+                                        result.delete = Some(index);
                                     } else {
                                         self.pending_delete_index = Some(index);
                                     }
@@ -623,10 +625,10 @@ impl SoundList {
                     }
                 });
             });
-        let removed = delete.then(|| selection.ids.clone());
+        let deleted = delete.then(|| selection.ids.clone());
         if delete || response.should_close() {
             selection.confirming_delete = false;
         }
-        removed
+        deleted
     }
 }

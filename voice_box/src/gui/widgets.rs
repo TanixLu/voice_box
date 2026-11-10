@@ -5,7 +5,7 @@ use crate::{
     plugin::PluginStatus,
 };
 
-pub const ICON_BUTTON_SIZE: f32 = 30.0;
+const ICON_BUTTON_SIZE: f32 = 30.0;
 
 /// Right-align a trailing button when it fits, otherwise let the row wrap it.
 /// Call inside `Ui::horizontal_wrapped`.
@@ -120,54 +120,6 @@ pub fn icon_button(ui: &mut egui::Ui, enabled: bool, icon: ButtonIcon) -> egui::
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, response.enabled(), label));
     response.on_hover_text(tooltip)
-}
-
-pub fn play_button(ui: &mut egui::Ui, enabled: bool, active: bool) -> egui::Response {
-    let response = ui.add_enabled(
-        enabled,
-        egui::Button::new("").min_size(egui::vec2(34.0, 30.0)),
-    );
-    let color = ui.style().interact(&response).fg_stroke.color;
-    let center = response.rect.center();
-    if active {
-        ui.painter().rect_filled(
-            egui::Rect::from_center_size(center, egui::vec2(11.0, 11.0)),
-            0.0,
-            color,
-        );
-    } else {
-        ui.painter().add(egui::Shape::convex_polygon(
-            vec![
-                center + egui::vec2(-4.0, -6.0),
-                center + egui::vec2(-4.0, 6.0),
-                center + egui::vec2(6.0, 0.0),
-            ],
-            color,
-            egui::Stroke::NONE,
-        ));
-    }
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::Role::Button,
-            enabled,
-            if active {
-                Text::StopPlayback.text()
-            } else {
-                Text::PlaySound.text()
-            },
-        )
-    });
-    response
-}
-
-pub fn section(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::group(ui.style())
-        .inner_margin(12)
-        .corner_radius(8)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            contents(ui);
-        });
 }
 
 pub fn hint(ui: &mut egui::Ui, text: &str) {

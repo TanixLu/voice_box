@@ -96,10 +96,11 @@ impl VoicePreview {
         if self.busy() {
             return;
         }
-        let task = Task::spawn("VoiceBoxRecording", &self.wake, move |stop, started| {
-            microphone::capture(&device_id, stop, started)
-                .map(|recording| Outcome::Recorded(Arc::new(recording)))
-        });
+        let task =
+            Task::spawn_cancellable("VoiceBoxRecording", &self.wake, move |stop, started| {
+                microphone::capture(&device_id, stop, started)
+                    .map(|recording| Outcome::Recorded(Arc::new(recording)))
+            });
         self.task = Some((Activity::Recording, task));
     }
 
@@ -121,7 +122,7 @@ impl VoicePreview {
         } else {
             Activity::PlayingOriginal
         };
-        let task = Task::spawn("VoiceBoxPreview", &self.wake, move |stop, started| {
+        let task = Task::spawn_cancellable("VoiceBoxPreview", &self.wake, move |stop, started| {
             let processed = match config {
                 Some(config) => {
                     let samples = match cached {

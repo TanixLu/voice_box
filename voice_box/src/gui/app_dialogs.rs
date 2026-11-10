@@ -33,7 +33,7 @@ impl VoiceBoxApp {
                     .clicked()
                 {
                     self.startup = Startup::Unsynced;
-                    let task = Task::run("VoiceBoxUninstall", &self.wake, uninstall::run);
+                    let task = Task::spawn("VoiceBoxUninstall", &self.wake, uninstall::run);
                     self.lifecycle = Lifecycle::Uninstalling(task);
                 }
                 if ui.button(Text::Cancel.text()).clicked() {

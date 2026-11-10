@@ -1,4 +1,5 @@
-//! One machine-wide, administrator-managed logon task; the database owns its intent.
+//! One machine-wide, administrator-managed logon task; `Settings::startup_enabled` owns its
+//! intent. The task launches VoiceBox as a silent start.
 
 use std::{os::windows::fs::MetadataExt, path::Path};
 
@@ -7,6 +8,10 @@ use windows::{
     Win32::{
         Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND},
         Security::{
+            Cryptography::{
+                BCRYPT_SHA256_ALG_HANDLE, BCryptHash, CRYPT_STRING, CRYPT_STRING_BASE64,
+                CRYPT_STRING_NOCRLF, CryptBinaryToStringW,
+            },
             DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
         },
         Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT,
@@ -21,14 +26,14 @@ use windows::{
             Variant::VARIANT,
         },
     },
-    core::{BSTR, Interface},
+    core::{BSTR, Interface, PWSTR},
 };
 
 use crate::{
     embedded::STARTUP_SCRIPT,
     i18n::{Text, UserContext},
     paths::{conhost_path, powershell_path, system_dir},
-    win::{self, ComGuard},
+    win::ComGuard,
 };
 
 const SILENT_START_ARG: &str = "--silent-start";
@@ -46,7 +51,8 @@ macro_rules! get {
     }};
 }
 
-pub fn silent_start() -> bool {
+/// Whether the logon task launched this process; see "silent start" in the crate docs.
+pub fn is_silent_start() -> bool {
     std::env::args().any(|arg| arg == SILENT_START_ARG)
 }
 
@@ -79,8 +85,7 @@ fn synchronize_inner(enabled: bool) -> anyhow::Result<bool> {
                 Text::StartupRedirectedPath
             );
         }
-        let arguments =
-            startup_arguments(&executable, &win::sha256(&std::fs::read(&executable)?)?)?;
+        let arguments = task_arguments(&executable, &sha256(&std::fs::read(&executable)?)?)?;
         let expected = definition(&service, &arguments)?;
         match root.GetTask(&BSTR::from(TASK_NAME)) {
             Ok(task) if matches_task(&task, &expected)? => return Ok(false),
@@ -242,7 +247,7 @@ fn matches_definition(
     }
 }
 
-fn startup_arguments(path: &Path, hash: &str) -> anyhow::Result<String> {
+fn task_arguments(path: &Path, hash: &str) -> anyhow::Result<String> {
     ensure!(path.is_absolute(), "Executable path must be absolute");
     let path = path.to_str().context("Invalid executable path")?;
     ensure!(
@@ -253,11 +258,33 @@ fn startup_arguments(path: &Path, hash: &str) -> anyhow::Result<String> {
     let script = STARTUP_SCRIPT
         .replace("__VOICEBOX_ARGUMENT__", SILENT_START_ARG)
         .replace("__VOICEBOX_SHA256__", hash)
-        .replace("__VOICEBOX_PATH__", &win::base64_encode(path.as_bytes())?);
+        .replace("__VOICEBOX_PATH__", &base64_encode(path.as_bytes())?);
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    let encoded = win::base64_encode(&bytes)?;
+    let encoded = base64_encode(&bytes)?;
     let arguments =
         format!("-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand {encoded}");
     ensure!(arguments.len() < 30_000, "Startup command is too long");
     Ok(arguments)
+}
+
+fn base64_encode(bytes: &[u8]) -> windows::core::Result<String> {
+    let flags = CRYPT_STRING(CRYPT_STRING_BASE64.0 | CRYPT_STRING_NOCRLF);
+    let mut length = 0;
+    unsafe {
+        CryptBinaryToStringW(bytes, flags, None, &mut length).ok()?;
+        let mut output = vec![0; length as usize];
+        CryptBinaryToStringW(bytes, flags, Some(PWSTR(output.as_mut_ptr())), &mut length).ok()?;
+        let end = output
+            .iter()
+            .position(|&unit| unit == 0)
+            .unwrap_or(output.len());
+        Ok(String::from_utf16_lossy(&output[..end]))
+    }
+}
+
+fn sha256(bytes: &[u8]) -> anyhow::Result<String> {
+    ensure!(bytes.len() <= u32::MAX as usize, "Executable is too large");
+    let mut hash = [0; 32];
+    unsafe { BCryptHash(BCRYPT_SHA256_ALG_HANDLE, None, bytes, &mut hash).ok()? };
+    Ok(hash.iter().map(|byte| format!("{byte:02X}")).collect())
 }
