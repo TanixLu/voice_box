@@ -129,8 +129,8 @@ $exitCode = 0
 $originalRustFlags = $env:RUSTFLAGS
 Push-Location -LiteralPath $PSScriptRoot
 try {
-    # Use deterministic PE timestamps while preserving caller-supplied flags.
-    $env:RUSTFLAGS = "$env:RUSTFLAGS -C link-arg=/Brepro".Trim()
+    # Link the CRT statically and use deterministic PE timestamps while preserving caller-supplied flags.
+    $env:RUSTFLAGS = "$env:RUSTFLAGS -C target-feature=+crt-static -C link-arg=/Brepro".Trim()
     $cargoPath = (Get-Command cargo -CommandType Application | Select-Object -First 1).Source
     $cargoArguments = @('--locked')
     $buildProfile = 'debug'
