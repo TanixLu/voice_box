@@ -19,27 +19,14 @@ use windows::{
 
 use voice_box_shared::{
     dsp::{MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
-    utils::wide_null,
+    win::wide_null,
 };
 
 use crate::{
-    audio::{PREVIEW_MAX_RECORD_SECONDS, PREVIEW_MAX_SAMPLES, Stream, enumerator},
+    audio::{MICROPHONE_MAX_SAMPLES, MICROPHONE_MAX_SECONDS, Recording, Stream, enumerator},
     i18n::{Text, UserContext},
-    utils::ComGuard,
+    win::ComGuard,
 };
-
-pub struct Recording {
-    pub sample_rate: u32,
-    pub channels: u16,
-    pub channel_mask: u32,
-    pub samples: Vec<f32>,
-}
-
-impl Recording {
-    pub fn duration_secs(&self) -> f64 {
-        self.samples.len() as f64 / f64::from(self.channels) / f64::from(self.sample_rate)
-    }
-}
 
 pub fn capture(
     device_id: &str,
@@ -89,9 +76,9 @@ pub fn capture(
     );
     let stream = Stream::new(client, &format, false).user_context(Text::OpenRawCapture)?;
     let capture: IAudioCaptureClient = unsafe { stream.client.GetService()? };
-    let max_frames = (rate * PREVIEW_MAX_RECORD_SECONDS) as usize;
+    let max_frames = (rate * MICROPHONE_MAX_SECONDS) as usize;
     let max_samples = (max_frames * channels as usize)
-        .min(PREVIEW_MAX_SAMPLES / channels as usize * channels as usize);
+        .min(MICROPHONE_MAX_SAMPLES / channels as usize * channels as usize);
     let mut recording = Recording {
         sample_rate: rate,
         channels,
@@ -140,7 +127,7 @@ pub fn capture(
         }
         if stop.load(Ordering::Relaxed)
             || recording.samples.len() >= max_samples
-            || begin.elapsed() >= Duration::from_secs(u64::from(PREVIEW_MAX_RECORD_SECONDS))
+            || begin.elapsed() >= Duration::from_secs(u64::from(MICROPHONE_MAX_SECONDS))
         {
             break;
         }

@@ -25,7 +25,7 @@ use windows_core::HSTRING;
 use crate::etw;
 
 static ACTIVE_WORKER_COUNT: AtomicU32 = AtomicU32::new(0);
-pub fn get_active_worker_count() -> u32 {
+pub fn active_count() -> u32 {
     ACTIVE_WORKER_COUNT.load(Ordering::Acquire)
 }
 struct ActiveWorkerGuard;
@@ -111,7 +111,11 @@ unsafe extern "system" fn thread_entry(raw_worker_context_ptr: *mut c_void) -> u
     {
         let action_result = catch_unwind(AssertUnwindSafe(action));
         if action_result.is_err() {
-            etw::apo_log!(etw::ERROR, etw::LIFECYCLE, "APO background worker panicked");
+            etw::apo_log!(
+                etw::level::ERROR,
+                etw::keyword::LIFECYCLE,
+                "APO background worker panicked"
+            );
         }
     }
     let dll_ref_handle = dll_ref.into_raw();

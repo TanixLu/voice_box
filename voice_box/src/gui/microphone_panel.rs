@@ -1,8 +1,8 @@
 use crate::{
     devices::{self, Microphone},
-    gui::Busy,
+    gui::{Busy, widgets::microphone_label},
     i18n::{Details, Message, Text},
-    setup::{self, PluginAction, PluginOperationResult, PluginStatus},
+    plugin::{self, PluginAction, PluginOperationResult, PluginStatus},
     task::{Task, Wake},
 };
 
@@ -26,24 +26,6 @@ pub struct MicrophonePanel {
     /// The running job and its status text.
     job: Option<(Text, Task<Outcome>)>,
     error: Message,
-}
-
-pub fn display_name(microphone: &Microphone) -> String {
-    let status = match microphone.plugin_status {
-        PluginStatus::Installed => Text::PluginInstalled.text(),
-        PluginStatus::NotInstalled => Text::PluginNotInstalled.text(),
-        PluginStatus::NeedsUpdate => Text::PluginNeedsUpdate.text(),
-    };
-    let name = if microphone.is_default {
-        Message::DefaultDevice {
-            name: microphone.name.clone(),
-        }
-        .text()
-        .into_owned()
-    } else {
-        microphone.name.clone()
-    };
-    format!("{name} ({status})")
 }
 
 impl MicrophonePanel {
@@ -131,9 +113,7 @@ impl MicrophonePanel {
         let guid = self.devices[self.selected].guid.clone();
         let guids = self.devices.iter().map(|mic| mic.guid.clone()).collect();
         self.start(status, move || {
-            Ok(Outcome::Plugin(setup::execute_plugin_action(
-                guid, guids, action,
-            )))
+            Ok(Outcome::Plugin(plugin::execute(guid, guids, action)))
         });
     }
 
@@ -162,7 +142,7 @@ impl MicrophonePanel {
         let name = self
             .devices
             .get(self.selected)
-            .map_or_else(|| Text::NoMicrophones.text().to_owned(), display_name);
+            .map_or_else(|| Text::NoMicrophones.text().to_owned(), microphone_label);
         ui.add_enabled_ui(idle && !self.devices.is_empty(), |ui| {
             egui::ComboBox::from_id_salt("microphone")
                 .width(ui.available_width())
@@ -176,7 +156,7 @@ impl MicrophonePanel {
                     for (index, microphone) in self.devices.iter().enumerate() {
                         let row = egui::Button::selectable(
                             self.selected == index,
-                            display_name(microphone),
+                            microphone_label(microphone),
                         )
                         .wrap()
                         .min_size(egui::vec2(ui.available_width(), 30.0));

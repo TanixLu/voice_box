@@ -12,12 +12,12 @@ use windows::Win32::{
 };
 
 use crate::{
-    audio::{Stream, capture::Recording, enumerator},
+    audio::{Recording, Stream, enumerator},
     i18n::{Text, UserContext},
-    utils::ComGuard,
+    win::ComGuard,
 };
 
-pub fn playback(
+pub fn play(
     recording: &Recording,
     samples: &[f32],
     stop: &AtomicBool,

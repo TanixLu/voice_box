@@ -68,8 +68,8 @@ pub fn sample_format(format: &UNCOMPRESSEDAUDIOFORMAT) -> Option<SampleFormat> {
 
 pub fn log_connection_format(label: &str, format: &UNCOMPRESSEDAUDIOFORMAT) {
     apo_log!(
-        etw::INFO,
-        etw::FORMAT,
+        etw::level::INFO,
+        etw::keyword::FORMAT,
         "{label} format_type={:?} channels={} container_bytes={} valid_bits={} sample_rate={} channel_mask=0x{:08x} supported={}",
         format.guidFormatType,
         format.dwSamplesPerFrame,
@@ -138,8 +138,8 @@ pub unsafe extern "system" fn is_format_supported(
     let object = unsafe { &*object_from(this) };
     let result = unsafe { negotiate_format(object, opposite, requested, supported) };
     apo_log!(
-        etw::VERBOSE,
-        etw::FORMAT,
+        etw::level::VERBOSE,
+        etw::keyword::FORMAT,
         "IsFormatSupported instance={object:p} result=0x{:08x}",
         result.0 as u32
     );
@@ -152,8 +152,8 @@ pub unsafe extern "system" fn get_input_channel_count(
 ) -> HRESULT {
     if count.is_null() {
         apo_log!(
-            etw::ERROR,
-            etw::FORMAT,
+            etw::level::ERROR,
+            etw::keyword::FORMAT,
             "GetInputChannelCount rejected null output pointer"
         );
         return E_POINTER;
@@ -162,8 +162,8 @@ pub unsafe extern "system" fn get_input_channel_count(
     let control = object.control();
     if !control.initialized {
         apo_log!(
-            etw::ERROR,
-            etw::FORMAT,
+            etw::level::ERROR,
+            etw::keyword::FORMAT,
             "GetInputChannelCount failed instance={object:p} reason=not_initialized result=0x{:08x}",
             APOERR_NOT_INITIALIZED.0 as u32
         );
@@ -172,8 +172,8 @@ pub unsafe extern "system" fn get_input_channel_count(
     let channels = control.input_channels;
     if channels == 0 {
         apo_log!(
-            etw::ERROR,
-            etw::FORMAT,
+            etw::level::ERROR,
+            etw::keyword::FORMAT,
             "GetInputChannelCount failed instance={object:p} reason=format_not_negotiated result=0x{:08x}",
             APOERR_NOT_INITIALIZED.0 as u32
         );
@@ -181,8 +181,8 @@ pub unsafe extern "system" fn get_input_channel_count(
     }
     unsafe { *count = channels };
     apo_log!(
-        etw::VERBOSE,
-        etw::FORMAT,
+        etw::level::VERBOSE,
+        etw::keyword::FORMAT,
         "GetInputChannelCount completed instance={object:p} channels={channels}"
     );
     S_OK

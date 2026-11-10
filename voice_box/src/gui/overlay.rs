@@ -176,7 +176,7 @@ fn draw(ui: &mut egui::Ui, playing: &NowPlaying) {
 
 fn configure_native_window() -> anyhow::Result<()> {
     unsafe {
-        let title = voice_box_shared::utils::wide_null(NATIVE_TITLE);
+        let title = voice_box_shared::win::wide_null(NATIVE_TITLE);
         let window = FindWindowW(None, PCWSTR(title.as_ptr()))?;
         let mut process_id = 0;
         GetWindowThreadProcessId(window, Some(&mut process_id));

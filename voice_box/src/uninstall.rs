@@ -25,23 +25,24 @@ use windows::{
     core::{Owned, PCWSTR},
 };
 
-use voice_box_shared::utils::wide_null;
+use voice_box_shared::win::wide_null;
 
 use crate::{
+    SINGLE_INSTANCE_MUTEX,
+    embedded::UNINSTALL_CLEANUP_SCRIPT,
     i18n::{Message, Text, UserContext, current_language},
     paths::{apo_dll_path, data_dir, powershell_path, system_dir},
-    setup,
-    static_data::UNINSTALL_CLEANUP_SCRIPT,
-    utils::{ComGuard, VOICE_BOX_SINGLE_INSTANCE},
+    plugin,
+    win::ComGuard,
 };
 
 // The GUI is already elevated; only self-deletion needs a separate process.
 pub fn run() -> anyhow::Result<()> {
-    crate::startup::synchronize_startup(false)?;
+    crate::startup::synchronize(false)?;
     let cleanup = start_cleanup(data_dir())?;
     let _com_guard = ComGuard::sta()?;
-    setup::with_audio_service_stopped(|| {
-        setup::unregister_all()?;
+    plugin::with_audio_service_stopped(|| {
+        plugin::unregister_all()?;
         recycle(apo_dll_path()).user_context(Text::RecycleApo)
     })?;
     cleanup.finish()
@@ -109,7 +110,7 @@ fn start_cleanup(directory: &Path) -> anyhow::Result<Cleanup> {
         .env("VOICEBOX_UNINSTALL_READY", event_name)
         .env("VOICEBOX_UNINSTALL_COMPLETE", complete_name)
         .env("VOICEBOX_UNINSTALL_CANCEL", cancel_name)
-        .env("VOICEBOX_SINGLE_INSTANCE_MUTEX", VOICE_BOX_SINGLE_INSTANCE)
+        .env("VOICEBOX_SINGLE_INSTANCE_MUTEX", SINGLE_INSTANCE_MUTEX)
         .env(
             "VOICEBOX_UNINSTALL_PROCESS_ID",
             std::process::id().to_string(),

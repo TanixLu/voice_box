@@ -1,7 +1,9 @@
+//! Modals owned by the app shell itself, drawn as `VoiceBoxApp` methods.
+
 use crate::{
+    embedded::LICENSES,
     gui::{Busy, Lifecycle, Startup, VoiceBoxApp, widgets::notice},
     i18n::Text,
-    static_data::LICENSES,
     task::Task,
     uninstall,
 };

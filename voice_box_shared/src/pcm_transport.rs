@@ -40,7 +40,7 @@ use windows_core::GUID;
 
 use crate::{
     dsp::finite_sample,
-    utils::{wide_null, win_qpf, win_try_create_named_mutex},
+    win::{qpc_frequency, try_create_named_mutex, wide_null},
 };
 
 pub const PCM_SAMPLE_RATE: u32 = 48_000;
@@ -54,7 +54,7 @@ pub const PCM_DECODE_AHEAD_FRAMES: u64 = 12_000; // 250 ms of decoded audio, bou
 const BUFFER_CAPACITY_FRAMES: usize = 32_768;
 const MAPPING_SIZE: usize = size_of::<Header>() + BUFFER_CAPACITY_FRAMES * size_of::<PcmSlot>();
 
-pub fn pcm_transport_name(guid: &str) -> anyhow::Result<String> {
+pub fn mapping_name(guid: &str) -> anyhow::Result<String> {
     let id = guid
         .strip_prefix('{')
         .and_then(|s| s.strip_suffix('}'))
@@ -212,7 +212,8 @@ pub fn pcm_now() -> u64 {
     if unsafe { QueryPerformanceCounter(&mut ticks) }.is_err() {
         0
     } else {
-        (i128::from(ticks.max(0)) * i128::from(PCM_SAMPLE_RATE) / i128::from(win_qpf())) as u64
+        (i128::from(ticks.max(0)) * i128::from(PCM_SAMPLE_RATE) / i128::from(qpc_frequency()))
+            as u64
     }
 }
 pub fn pcm_now_f64() -> f64 {
@@ -220,7 +221,7 @@ pub fn pcm_now_f64() -> f64 {
     if unsafe { QueryPerformanceCounter(&mut ticks) }.is_err() {
         0.0
     } else {
-        ticks.max(0) as f64 * f64::from(PCM_SAMPLE_RATE) / win_qpf() as f64
+        ticks.max(0) as f64 * f64::from(PCM_SAMPLE_RATE) / qpc_frequency() as f64
     }
 }
 
@@ -287,7 +288,7 @@ pub struct PcmWriter {
 }
 impl PcmWriter {
     pub fn open(name: &str) -> anyhow::Result<Self> {
-        let _writer_mutex = win_try_create_named_mutex(&format!("{name}.Writer"))?
+        let _writer_mutex = try_create_named_mutex(&format!("{name}.Writer"))?
             .ok_or_else(|| anyhow::anyhow!("PCM channel already has a writer: {name}"))?;
         let name = wide_null(name);
         // Administrators and the owner can write. The audio host can read,

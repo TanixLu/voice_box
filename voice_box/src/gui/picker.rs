@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
     i18n::{Text, current_language},
-    utils::ComGuard,
+    win::ComGuard,
 };
 
 pub fn choose_files() -> anyhow::Result<Vec<PathBuf>> {

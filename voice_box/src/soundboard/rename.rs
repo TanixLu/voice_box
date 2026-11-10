@@ -1,9 +1,9 @@
+//! Batch rename rules and the validated plan they produce; `Library` applies a plan.
+
 use std::{collections::HashSet, ops::Range};
 
-use anyhow::ensure;
-
 use crate::{
-    i18n::{Language, Text, UserContext, current_language},
+    i18n::{Language, Text, current_language},
     model::{SoundId, is_valid_name},
     soundboard::library::Library,
 };
@@ -149,22 +149,5 @@ impl RenamePlan {
     }
     pub fn change_count(&self) -> usize {
         self.entries.iter().filter(|entry| entry.changed()).count()
-    }
-}
-
-impl Library {
-    pub fn rename_batch(&mut self, mut plan: RenamePlan) -> anyhow::Result<()> {
-        plan.validate(self);
-        ensure!(
-            plan.error_count() == 0 && plan.change_count() > 0,
-            Text::RenameValidationFailed
-        );
-        for entry in plan.entries {
-            self.sounds
-                .get_mut(entry.index)
-                .user_context(Text::SoundNotFound)?
-                .name = entry.name;
-        }
-        Ok(())
     }
 }

@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    database::audio::AudioSource,
+    database::blob::AudioSource,
     i18n::{Message, Text, UserContext},
     model::Sound,
     soundboard::decoder::open_format,
@@ -14,11 +14,11 @@ use crate::{
 
 const MAX_FILENAME_ATTEMPTS: usize = 10_000;
 
-pub fn export_sounds(sounds: &[Sound], folder: &Path) -> anyhow::Result<()> {
-    export_sounds_with(sounds, folder, |sound| AudioSource::open(sound.id))
+pub fn to_folder(sounds: &[Sound], folder: &Path) -> anyhow::Result<()> {
+    to_folder_with(sounds, folder, |sound| AudioSource::open(sound.id))
 }
 
-fn export_sounds_with(
+fn to_folder_with(
     sounds: &[Sound],
     folder: &Path,
     open_source: impl Fn(&Sound) -> anyhow::Result<AudioSource>,

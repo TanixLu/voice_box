@@ -25,7 +25,7 @@ pub struct ImportedSounds {
     pub errors: Vec<Message>,
 }
 
-pub fn import_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSounds> {
+pub fn from_files(sources: Vec<PathBuf>) -> anyhow::Result<ImportedSounds> {
     let (files, mut imported) = validate_files(sources)?;
     if !files.is_empty() {
         let result = insert_files(files);

@@ -1,24 +1,27 @@
-use crate::utils::win_base64_encode;
+//! Files baked into the executable, exposed as raw data; the modules that use them
+//! interpret them (`plugin` installs the DLL, `startup` fills the script template).
+
+use std::sync::LazyLock;
 
 static COMPRESSED_APO_DLL: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/voice_box_apo.dll.lz4"));
-static APO_DLL: std::sync::LazyLock<Box<[u8]>> = std::sync::LazyLock::new(|| {
+pub static APO_DLL: LazyLock<Box<[u8]>> = LazyLock::new(|| {
     lz4_flex::block::decompress_size_prepended(COMPRESSED_APO_DLL)
         .expect("UNREACHABLE: embedded APO DLL should be valid LZ4 data")
         .into_boxed_slice()
 });
-pub fn apo_dll_bytes() -> &'static [u8] {
-    APO_DLL.as_ref()
-}
 
-pub static ICON_PNG_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon.png"));
+pub static ICON_PNG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon.png"));
+
+/// Contains `__VOICEBOX_*__` placeholders that `startup` replaces.
+pub static STARTUP_SCRIPT: &str = include_str!("startup.ps1");
 
 pub static UNINSTALL_CLEANUP_SCRIPT: &str = include_str!("uninstall_cleanup.ps1");
 
 pub static LICENSES: &str = concat!(
     "VoiceBox v",
     env!("CARGO_PKG_VERSION"),
-    "\nCopyright (c) 2026 Tanix\n\n",
+    "\nCopyright (C) 2026 Tanix\n\n",
     "Project source: https://github.com/TanixLu/voice_box\n\n",
     "Original VoiceBox code is licensed under MIT OR Apache-2.0, at your option.\n",
     "Third-party components and model weights retain their respective licenses.\n\n",
@@ -32,16 +35,3 @@ pub static LICENSES: &str = concat!(
         "/../THIRD_PARTY_LICENSES"
     )),
 );
-
-static STARTUP_SCRIPT: &str = include_str!("startup.ps1");
-pub fn startup_script(
-    startup_argument: &str,
-    hash: &str,
-    path: &str,
-) -> windows::core::Result<String> {
-    // Keep paths as encoded data, never PowerShell source.
-    Ok(STARTUP_SCRIPT
-        .replace("__VOICEBOX_ARGUMENT__", startup_argument)
-        .replace("__VOICEBOX_SHA256__", hash)
-        .replace("__VOICEBOX_PATH__", &win_base64_encode(path.as_bytes())?))
-}

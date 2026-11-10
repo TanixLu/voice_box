@@ -1,4 +1,4 @@
-//! Chunked audio byte streams. Transaction ownership stays with the caller.
+//! Audio bytes streamed to and from chunked SQL blobs. Transaction ownership stays with the caller.
 
 use std::{
     io::{self, Read, Seek, SeekFrom, Write},

@@ -1,4 +1,4 @@
-//! Global key bindings: the playback keys in the preferences plus each sound's key.
+//! Global key bindings: the playback keys in the settings plus each sound's key.
 
 use std::collections::{HashMap, HashSet};
 

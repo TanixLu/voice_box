@@ -25,12 +25,11 @@ use voice_box_shared::{
 };
 
 use crate::{
-    audio::{Stream, capture::Recording, enumerator},
+    audio::{LOOPBACK_MAX_SECONDS, Recording, Stream, enumerator},
     i18n::{Text, UserContext},
-    utils::ComGuard,
+    win::ComGuard,
 };
 
-pub const MAX_RECORD_SECONDS: u32 = 600;
 const RATE: u32 = 48_000;
 
 fn clock_hns(frequency: i64) -> anyhow::Result<u64> {
@@ -81,7 +80,7 @@ pub fn capture(stop: &AtomicBool, started: &dyn Fn()) -> anyhow::Result<Recordin
     unsafe { stream.client.Start()? };
     let begin = Instant::now();
     started();
-    let max_frames = RATE as usize * MAX_RECORD_SECONDS as usize;
+    let max_frames = RATE as usize * LOOPBACK_MAX_SECONDS as usize;
     let mut recording = Recording {
         sample_rate: RATE,
         channels: PCM_CHANNELS as u16,

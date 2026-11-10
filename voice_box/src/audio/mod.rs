@@ -1,11 +1,10 @@
-//! WASAPI capture and playback, and the voice tab's recording preview.
+//! WASAPI device I/O only: each submodule opens one kind of stream. Features built on
+//! these streams (the voice preview, the soundboard) live in their own modules.
 
-pub mod capture;
 pub mod loopback;
+pub mod microphone;
 pub mod monitor;
 pub mod playback;
-mod preview;
-pub mod voice_preview;
 
 use anyhow::bail;
 use wasapi::WaveFormat;
@@ -25,8 +24,23 @@ use windows::Win32::{
 
 use crate::i18n::Message;
 
-pub const PREVIEW_MAX_RECORD_SECONDS: u32 = 60;
-pub const PREVIEW_MAX_SAMPLES: usize = 16 * 1024 * 1024;
+pub const MICROPHONE_MAX_SECONDS: u32 = 60;
+pub const MICROPHONE_MAX_SAMPLES: usize = 16 * 1024 * 1024;
+pub const LOOPBACK_MAX_SECONDS: u32 = 600;
+
+/// Interleaved float samples captured from a device.
+pub struct Recording {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub channel_mask: u32,
+    pub samples: Vec<f32>,
+}
+
+impl Recording {
+    pub fn duration_secs(&self) -> f64 {
+        self.samples.len() as f64 / f64::from(self.channels) / f64::from(self.sample_rate)
+    }
+}
 
 struct AudioEvent(HANDLE);
 impl AudioEvent {

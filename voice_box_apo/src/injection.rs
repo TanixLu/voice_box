@@ -29,18 +29,18 @@ const FRAMES: usize = 4096; // ~85.3 ms at 48 kHz
 const HISTORY_FRAMES: u64 = PCM_SAMPLE_RATE as u64 / 100; // 10 ms
 const COPY_AHEAD_FRAMES: u64 = PCM_SAMPLE_RATE as u64 * 60 / 1000; // 60 ms
 
-struct SoundboardState {
+struct InjectionState {
     frames: [PcmSlot; FRAMES],
     generation: AtomicU16,
     deadline: AtomicU64,
 }
-impl SoundboardState {
+impl InjectionState {
     fn read_frame(&self, frame: u64, generation: u16) -> PcmFrame {
         self.frames[frame as usize % FRAMES].read(frame, generation)
     }
 }
 pub struct Injection {
-    state: Arc<LockedAllocation<SoundboardState>>,
+    state: Arc<LockedAllocation<InjectionState>>,
     position: f64,
     generation: u16,
     resampler: Resident<RandomAccessResampler>,
@@ -49,8 +49,8 @@ pub struct Injection {
 }
 impl Injection {
     pub fn start(name: String, rate: f64, max_frames: usize) -> anyhow::Result<Self> {
-        // SoundboardState contains only atomics with valid all-zero values.
-        let state = unsafe { LockedAllocation::<SoundboardState>::new_zeroed()? };
+        // InjectionState contains only atomics with valid all-zero values.
+        let state = unsafe { LockedAllocation::<InjectionState>::new_zeroed()? };
         let resampler =
             Resident::new(|| Ok(RandomAccessResampler::new(f64::from(PCM_SAMPLE_RATE), rate)))?;
         let matcher = Resident::new(|| Ok(RateMatcher::new(rate, max_frames)))?;
@@ -114,7 +114,7 @@ impl Drop for Injection {
     }
 }
 
-fn receive(name: String, state: &SoundboardState, stop: &AtomicBool) {
+fn receive(name: String, state: &InjectionState, stop: &AtomicBool) {
     let mut mapping = None;
     let mut cursor = 0;
     let mut previous = 0;
@@ -150,5 +150,9 @@ fn receive(name: String, state: &SoundboardState, stop: &AtomicBool) {
             20
         }));
     }
-    apo_log!(etw::INFO, etw::LIFECYCLE, "Soundboard receiver exited");
+    apo_log!(
+        etw::level::INFO,
+        etw::keyword::LIFECYCLE,
+        "Soundboard receiver exited"
+    );
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    audio::{capture::Recording, loopback::MAX_RECORD_SECONDS},
+    audio::{LOOPBACK_MAX_SECONDS, Recording},
     gui::widgets::{ButtonIcon, hint, icon_button, warning},
     i18n::{Details, Message, Text},
     model::is_valid_name,
@@ -14,7 +14,7 @@ pub enum Action {
     Save(Arc<Recording>, Selection, String),
 }
 
-pub struct RecordingImport {
+pub struct RecordingImportDialog {
     recorder: Recorder,
     selection: Option<Selection>,
     name: String,
@@ -23,7 +23,7 @@ pub struct RecordingImport {
     /// The soundboard is saving the clip, as of this frame.
     saving: bool,
 }
-impl RecordingImport {
+impl RecordingImportDialog {
     pub fn new(wake: Wake) -> Self {
         Self {
             recorder: Recorder::new(wake),
@@ -152,7 +152,7 @@ impl RecordingImport {
                 hint(
                     ui,
                     &Message::RecordingLimit {
-                        minutes: MAX_RECORD_SECONDS / 60,
+                        minutes: LOOPBACK_MAX_SECONDS / 60,
                     }
                     .text(),
                 );

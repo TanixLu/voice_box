@@ -1,3 +1,5 @@
+//! The playback thread: decodes one sound into the microphone transport and the speaker monitor.
+
 use std::{
     collections::VecDeque,
     sync::mpsc,
@@ -13,18 +15,17 @@ use voice_box_shared::pcm_transport::{
 
 use crate::{
     audio::monitor::Monitor,
-    database::audio::AudioSource,
+    database::blob::AudioSource,
     hotkeys::HeldKeys,
     i18n::{Details, Message, Text, UserContext},
     model::{Hotkey, SoundId},
     soundboard::{
         decoder::SoundDecoder,
-        prefs::{OutputDevice, Prefs},
+        settings::{Endpoint, GainPercent, SoundboardSettings},
     },
-    utils::GainPercent,
 };
 
-/// Runtime output choices only; no GUI preferences or persistence behavior.
+/// Runtime output choices only; no GUI settings or persistence behavior.
 #[derive(Clone)]
 pub struct Config {
     pub microphone_device: Option<String>,
@@ -36,15 +37,15 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(prefs: &Prefs) -> Self {
-        let id = |device: &Option<OutputDevice>| device.as_ref().map(|device| device.id.clone());
+    pub fn new(settings: &SoundboardSettings) -> Self {
+        let id = |device: &Option<Endpoint>| device.as_ref().map(|device| device.id.clone());
         Self {
-            microphone_device: id(&prefs.microphone_device),
-            speaker_device: id(&prefs.speaker_device),
-            microphone_gain_percent: prefs.microphone_gain_percent,
-            speaker_gain_percent: prefs.speaker_gain_percent,
-            hold_hotkey: prefs.keys.hold,
-            repeat: prefs.repeat,
+            microphone_device: id(&settings.microphone_device),
+            speaker_device: id(&settings.speaker_device),
+            microphone_gain_percent: settings.microphone_gain_percent,
+            speaker_gain_percent: settings.speaker_gain_percent,
+            hold_hotkey: settings.keys.hold,
+            repeat: settings.repeat,
         }
     }
 }

@@ -17,13 +17,13 @@ use windows::{
 use voice_box_shared::{
     dsp::{RateMatcher, ZeroLatencyLimiter},
     pcm_transport::{PCM_CHANNELS, PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame},
-    utils::wide_null,
+    win::wide_null,
 };
 
 use crate::{
     audio::{Stream, enumerator},
     i18n::Text,
-    utils::ComGuard,
+    win::ComGuard,
 };
 
 /// The soundboard reuses the same WASAPI/COM lifetime and format negotiation as

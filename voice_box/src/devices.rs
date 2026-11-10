@@ -3,8 +3,8 @@
 use wasapi::{DeviceEnumerator, DeviceState, Direction};
 
 use crate::{
-    setup::{self, PluginStatus},
-    utils::ComGuard,
+    plugin::{self, PluginStatus},
+    win::ComGuard,
 };
 
 pub struct Speaker {
@@ -58,7 +58,7 @@ pub fn soundboard_microphone_guid(device_id: Option<&str>) -> anyhow::Result<Str
         .next()
         .ok_or_else(|| anyhow::anyhow!("Invalid microphone ID"))?;
     anyhow::ensure!(
-        setup::device_plugin_status(guid) == PluginStatus::Installed,
+        plugin::device_status(guid) == PluginStatus::Installed,
         crate::i18n::Text::SoundboardMicrophonePluginRequired
     );
     Ok(guid.to_owned())
@@ -98,7 +98,7 @@ pub fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
             device_id: id,
             name,
             is_default,
-            plugin_status: setup::device_plugin_status(&guid),
+            plugin_status: plugin::device_status(&guid),
             guid,
         });
     }

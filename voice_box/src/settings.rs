@@ -5,7 +5,7 @@ use std::{fs, io};
 use crate::{
     i18n::{LanguagePreference, Text, UserContext},
     paths::{WriteMode, settings_path, write_file_with_parents},
-    soundboard::prefs::Prefs,
+    soundboard::settings::SoundboardSettings,
 };
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +15,7 @@ pub struct Settings {
     pub language_preference: LanguagePreference,
     pub theme_preference: egui::ThemePreference,
     pub startup_enabled: bool,
-    pub soundboard: Prefs,
+    pub soundboard: SoundboardSettings,
 }
 
 impl Default for Settings {
@@ -24,7 +24,7 @@ impl Default for Settings {
             language_preference: LanguagePreference::System,
             theme_preference: egui::ThemePreference::System,
             startup_enabled: false,
-            soundboard: Prefs::default(),
+            soundboard: SoundboardSettings::default(),
         }
     }
 }

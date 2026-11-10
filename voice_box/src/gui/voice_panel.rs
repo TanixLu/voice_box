@@ -1,7 +1,6 @@
-use voice_box_shared::{apo_config::ApoConfig, utils::GainDb};
+use voice_box_shared::apo_config::{ApoConfig, GainDb};
 
 use crate::{
-    audio::voice_preview::{Activity, VoicePreview},
     devices::Microphone,
     gui::{
         Busy,
@@ -9,6 +8,7 @@ use crate::{
     },
     i18n::{Details, Message, Text},
     task::{self, Task, Wake},
+    voice::{Activity, VoicePreview},
 };
 
 /// An operation clicked while drawing; the app applies it once the frame is drawn.

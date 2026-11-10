@@ -1,4 +1,4 @@
-//! Process and align recordings with the same DSP used by the real-time APO.
+//! Processes and aligns a recording offline with the same DSP chain as the real-time APO.
 
 use std::{mem::size_of, slice};
 
@@ -10,7 +10,7 @@ use voice_box_shared::{
 };
 
 use crate::{
-    audio::{PREVIEW_MAX_RECORD_SECONDS, PREVIEW_MAX_SAMPLES, capture::Recording},
+    audio::{MICROPHONE_MAX_SAMPLES, MICROPHONE_MAX_SECONDS, Recording},
     i18n::{Text, UserContext},
 };
 
@@ -22,9 +22,9 @@ pub fn process(recording: &Recording, config: &ApoConfig) -> anyhow::Result<Vec<
             && (1..=MAX_CHANNELS).contains(&channels)
             && !samples.is_empty()
             && samples.len().is_multiple_of(channels)
-            && samples.len() <= PREVIEW_MAX_SAMPLES
+            && samples.len() <= MICROPHONE_MAX_SAMPLES
             && samples.len() / channels
-                <= recording.sample_rate as usize * PREVIEW_MAX_RECORD_SECONDS as usize,
+                <= recording.sample_rate as usize * MICROPHONE_MAX_SECONDS as usize,
         Text::InvalidRecordingData
     );
     if config.gain_db.is_mute() {

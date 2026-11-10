@@ -206,7 +206,7 @@ catalog! {
     NoMatchingSounds => ("No matching sounds", "没有匹配的音效");
     SoundImportFailedTitle => ("Sound import failed", "音效导入失败");
     SoundExportFailedTitle => ("Sound export failed", "音效导出失败");
-    SoundSettings => ("Sound settings", "音效设置");
+    SoundboardSettings => ("Sound settings", "音效设置");
     MicrophoneOutput => ("Microphone output", "麦克风输出");
     FollowSystemDefault => ("Follow system default", "跟随系统默认");
     OutputDeviceUnavailable => ("Selected device unavailable", "所选设备不可用");
@@ -218,8 +218,8 @@ catalog! {
     HoldDuringPlayback => ("Hold key during playback", "播放时自动按住");
     StopHotkey => ("Stop playback shortcut", "停止播放快捷键");
     RandomHotkey => ("Random playback shortcut", "随机播放快捷键");
-    UnsavedSoundSettings => ("There are unsaved changes. Save to apply them; closing discards unsaved changes.", "有未保存的修改，保存后生效；关闭将放弃未保存的修改。");
-    SoundSettingsApplied => ("The current settings are active.", "当前设置已生效。");
+    UnsavedSoundboardSettings => ("There are unsaved changes. Save to apply them; closing discards unsaved changes.", "有未保存的修改，保存后生效；关闭将放弃未保存的修改。");
+    SoundboardSettingsApplied => ("The current settings are active.", "当前设置已生效。");
     NoOutput => ("No output", "不输出");
     RecordingName => ("Recording", "录音");
     StopCapture => ("Stop recording", "停止录制");

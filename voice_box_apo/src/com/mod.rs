@@ -31,7 +31,6 @@ use windows::Win32::{
 use windows_core::{GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface};
 
 use crate::{
-    apo_config_watcher::{ApoConfigWatcher, RtConfig},
     com::{
         effects::{
             get_controllable_effects_list, get_effects_list, get_registration_properties,
@@ -43,6 +42,7 @@ use crate::{
         },
         session::ProcessingCell,
     },
+    config::{ConfigWatcher, RtConfig},
     etw::{self, apo_log},
     memory::LockedPages,
 };
@@ -85,7 +85,7 @@ struct ApoCom {
 struct ControlState {
     // This lease also covers the APO and RtConfig allocations.
     resident_pages: Option<LockedPages>,
-    config_watcher: Option<ApoConfigWatcher>,
+    config_watcher: Option<ConfigWatcher>,
     soundboard_name: Option<String>,
     injection_stop: Option<Arc<AtomicBool>>,
     initialized: bool,
@@ -127,8 +127,8 @@ unsafe extern "system" fn delegating_query_interface(
 ) -> HRESULT {
     if iid.is_null() || output.is_null() {
         apo_log!(
-            etw::ERROR,
-            etw::LIFECYCLE,
+            etw::level::ERROR,
+            etw::keyword::LIFECYCLE,
             "Delegating QueryInterface rejected null argument iid={iid:p} output={output:p}"
         );
         return E_POINTER;
@@ -139,11 +139,11 @@ unsafe extern "system" fn delegating_query_interface(
     let result = unsafe { ((*unknown_vtable(outer)).QueryInterface)(outer, iid, output) };
     apo_log!(
         if result == S_OK {
-            etw::VERBOSE
+            etw::level::VERBOSE
         } else {
-            etw::WARNING
+            etw::level::WARNING
         },
-        etw::LIFECYCLE,
+        etw::keyword::LIFECYCLE,
         "Delegating QueryInterface instance={object:p} iid={requested:?} result=0x{:08x}",
         result.0 as u32
     );
@@ -169,8 +169,8 @@ unsafe extern "system" fn inner_query_interface(
 ) -> HRESULT {
     if iid.is_null() || output.is_null() {
         apo_log!(
-            etw::ERROR,
-            etw::LIFECYCLE,
+            etw::level::ERROR,
+            etw::keyword::LIFECYCLE,
             "Inner QueryInterface rejected null argument iid={iid:p} output={output:p}"
         );
         return E_POINTER;
@@ -221,8 +221,8 @@ unsafe extern "system" fn inner_query_interface(
         )
     } else {
         apo_log!(
-            etw::WARNING,
-            etw::LIFECYCLE,
+            etw::level::WARNING,
+            etw::keyword::LIFECYCLE,
             "Inner QueryInterface instance={object:p} iid={iid:?} result=0x{:08x}",
             E_NOINTERFACE.0 as u32
         );
@@ -238,8 +238,8 @@ unsafe extern "system" fn inner_query_interface(
         }
     }
     apo_log!(
-        etw::VERBOSE,
-        etw::LIFECYCLE,
+        etw::level::VERBOSE,
+        etw::keyword::LIFECYCLE,
         "Inner QueryInterface instance={object:p} interface={name} iid={iid:?} result=0x{:08x}",
         S_OK.0 as u32
     );
@@ -258,8 +258,8 @@ unsafe extern "system" fn inner_release(this: *mut c_void) -> u32 {
         fence(Ordering::Acquire);
         let live_objects = LIVE_OBJECTS.load(Ordering::Relaxed);
         apo_log!(
-            etw::INFO,
-            etw::LIFECYCLE,
+            etw::level::INFO,
+            etw::keyword::LIFECYCLE,
             "Destroy instance={object:p} initialized={} locked={} process_calls={} processed_frames={} live_objects={live_objects}",
             unsafe { (*object).control().initialized },
             unsafe { (*object).processing.is_accepting() },

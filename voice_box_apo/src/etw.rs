@@ -8,15 +8,22 @@ use windows::Win32::System::Diagnostics::Etw::{
 };
 use windows_core::{GUID, PCWSTR};
 
-use voice_box_shared::utils::wide_null;
+use voice_box_shared::win::wide_null;
 
-pub const ERROR: u8 = 2;
-pub const WARNING: u8 = 3;
-pub const INFO: u8 = 4;
-pub const VERBOSE: u8 = 5;
-pub const LIFECYCLE: u64 = 1 << 0;
-pub const FORMAT: u64 = 1 << 1;
-pub const APO_CONFIG: u64 = 1 << 2;
+/// Event severities, the first argument of `apo_log!`.
+pub mod level {
+    pub const ERROR: u8 = 2;
+    pub const WARNING: u8 = 3;
+    pub const INFO: u8 = 4;
+    pub const VERBOSE: u8 = 5;
+}
+
+/// Event categories a trace session can filter on, the second argument of `apo_log!`.
+pub mod keyword {
+    pub const LIFECYCLE: u64 = 1 << 0;
+    pub const FORMAT: u64 = 1 << 1;
+    pub const APO_CONFIG: u64 = 1 << 2;
+}
 
 const PROVIDER: GUID = GUID::from_u128(0xd75e13f3_18c2_45f2_9397_9a6641423354);
 static REGISTRATION: AtomicI64 = AtomicI64::new(0);

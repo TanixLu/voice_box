@@ -6,16 +6,15 @@ use crate::{
     i18n::{Message, Text},
     soundboard::{
         bindings::Target,
-        prefs::{OutputDevice, Prefs},
+        settings::{Endpoint, GainPercent, SoundboardSettings},
     },
-    utils::GainPercent,
 };
 
 #[derive(Default)]
-pub struct SoundSettings {
-    draft: Option<Prefs>,
-    microphones: Vec<(OutputDevice, String)>,
-    speakers: Vec<(OutputDevice, String)>,
+pub struct SoundboardSettingsDialog {
+    draft: Option<SoundboardSettings>,
+    microphones: Vec<(Endpoint, String)>,
+    speakers: Vec<(Endpoint, String)>,
 }
 
 pub struct Status<'a> {
@@ -26,34 +25,33 @@ pub struct Status<'a> {
 }
 
 pub enum Action {
-    None,
-    Closed,
-    Save(Prefs),
+    Close,
+    Save(SoundboardSettings),
     Capture(Target),
     ClearMessage,
 }
 
-impl SoundSettings {
-    pub fn open(&mut self, prefs: &Prefs) {
-        self.draft = Some(prefs.clone());
+impl SoundboardSettingsDialog {
+    pub fn open(&mut self, settings: &SoundboardSettings) {
+        self.draft = Some(settings.clone());
     }
     pub fn is_open(&self) -> bool {
         self.draft.is_some()
     }
-    pub fn draft_mut(&mut self) -> Option<&mut Prefs> {
+    pub fn draft_mut(&mut self) -> Option<&mut SoundboardSettings> {
         self.draft.as_mut()
     }
 
-    fn is_dirty(&self, prefs: &Prefs) -> bool {
-        self.draft.as_ref().is_some_and(|draft| draft != prefs)
+    fn is_dirty(&self, settings: &SoundboardSettings) -> bool {
+        self.draft.as_ref().is_some_and(|draft| draft != settings)
     }
     pub fn set_devices(&mut self, microphones: Vec<Microphone>, speakers: Vec<Speaker>) {
         self.microphones = microphones
             .into_iter()
             .map(|mic| {
-                let name = super::microphone::display_name(&mic);
+                let name = super::widgets::microphone_label(&mic);
                 (
-                    OutputDevice {
+                    Endpoint {
                         id: mic.device_id,
                         name: mic.name,
                     },
@@ -64,7 +62,7 @@ impl SoundSettings {
         self.speakers = speakers
             .into_iter()
             .map(|speaker| {
-                let device = OutputDevice {
+                let device = Endpoint {
                     id: speaker.device_id,
                     name: speaker.name.clone(),
                 };
@@ -79,11 +77,14 @@ impl SoundSettings {
             })
             .collect();
     }
-    pub fn ui(&mut self, ctx: &egui::Context, current: &Prefs, status: Status<'_>) -> Action {
-        if self.draft.is_none() {
-            return Action::None;
-        }
-        let defaults = Prefs::default();
+    pub fn ui(
+        &mut self,
+        ctx: &egui::Context,
+        current: &SoundboardSettings,
+        status: Status<'_>,
+    ) -> Option<Action> {
+        self.draft.as_ref()?;
+        let defaults = SoundboardSettings::default();
         let available = ctx.content_rect().size();
         let capture_target = status.capture_target;
         let idle = !status.busy;
@@ -91,7 +92,7 @@ impl SoundSettings {
         let mut save = false;
         let mut close = false;
         let mut clear_message = false;
-        let response = egui::Modal::new(egui::Id::unique("sound_settings"))
+        let response = egui::Modal::new(egui::Id::unique("soundboard_settings"))
             .frame(egui::Frame::popup(&ctx.style_of(ctx.theme())).inner_margin(16))
             .show(ctx, |ui| {
                 if !idle {
@@ -100,7 +101,7 @@ impl SoundSettings {
                 ui.set_width((available.x - 64.0).clamp(240.0, 460.0));
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new(Text::SoundSettings.text())
+                        egui::RichText::new(Text::SoundboardSettings.text())
                             .size(17.0)
                             .strong(),
                     );
@@ -190,9 +191,9 @@ impl SoundSettings {
                     }
                 });
                 if self.is_dirty(current) {
-                    warning(ui, Text::UnsavedSoundSettings.text());
+                    warning(ui, Text::UnsavedSoundboardSettings.text());
                 } else {
-                    hint(ui, Text::SoundSettingsApplied.text());
+                    hint(ui, Text::SoundboardSettingsApplied.text());
                 }
                 if let Some(error) = status.error {
                     warning(ui, &error.text());
@@ -201,19 +202,19 @@ impl SoundSettings {
         // Ignore backdrop clicks so they do not discard unsaved settings.
         if idle && (close || (!response.backdrop_response.clicked() && response.should_close())) {
             self.draft = None;
-            Action::Closed
+            Some(Action::Close)
         } else if save {
             let draft = self
                 .draft
                 .clone()
                 .expect("UNREACHABLE: settings draft should exist while rendering the dialog");
-            Action::Save(draft)
+            Some(Action::Save(draft))
         } else if let Some(target) = capture {
-            Action::Capture(target)
+            Some(Action::Capture(target))
         } else if clear_message {
-            Action::ClearMessage
+            Some(Action::ClearMessage)
         } else {
-            Action::None
+            None
         }
     }
 }
@@ -221,8 +222,8 @@ impl SoundSettings {
 fn output_device_picker(
     ui: &mut egui::Ui,
     id: &str,
-    selected: &mut Option<OutputDevice>,
-    devices: &[(OutputDevice, String)],
+    selected: &mut Option<Endpoint>,
+    devices: &[(Endpoint, String)],
 ) {
     let name = match selected {
         None => Text::FollowSystemDefault.text().to_owned(),

@@ -11,7 +11,7 @@ pub use crate::i18n::{
     message::{Details, Message, UserContext},
     text::Text,
 };
-use crate::{model::Hotkey, utils::win_preferred_ui_languages};
+use crate::{model::Hotkey, win};
 
 #[derive(Clone, Copy, TryFromPrimitive, IntoPrimitive, EnumIter)]
 #[repr(u8)]
@@ -49,7 +49,7 @@ impl LanguagePreference {
     pub fn resolve(self) -> Language {
         match self {
             Self::System => {
-                for tag in win_preferred_ui_languages() {
+                for tag in win::preferred_ui_languages() {
                     let tag = tag.replace('_', "-").to_ascii_lowercase();
                     match tag.as_str() {
                         "zh-cn" | "zh-sg" | "zh-hans" | "zh-hans-cn" | "zh-hans-sg"

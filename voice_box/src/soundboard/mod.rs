@@ -10,13 +10,13 @@ mod decoder;
 mod export;
 mod import;
 pub mod library;
-mod playback;
 mod player;
-pub mod prefs;
 pub mod recording;
 pub mod rename;
+pub mod settings;
 mod shortcuts;
 mod shuffle;
+mod worker;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -29,16 +29,16 @@ use windows::Win32::Foundation::HWND;
 
 pub use crate::soundboard::player::PlaybackStatus;
 use crate::{
-    audio::capture::Recording,
+    audio::Recording,
     i18n::{Details, Message, Text},
     model::{Hotkey, Sound, SoundId},
     soundboard::{
         bindings::{Action, Keys, Target},
-        import::{ImportedSounds, import_files},
+        import::ImportedSounds,
         library::Library,
         player::Player,
-        prefs::Prefs,
         recording::{Selection, save_clip},
+        settings::SoundboardSettings,
         shortcuts::Shortcuts,
     },
     task::{Task, Wake},
@@ -89,10 +89,10 @@ enum LibraryTask {
 
 pub struct Soundboard {
     library: Library,
-    prefs: Prefs,
+    settings: SoundboardSettings,
     player: Player,
     /// Owned here, not by the app shell, because the bindings and their validation
-    /// come from the library and preferences this type already owns.
+    /// come from the library and settings this type already owns.
     shortcuts: Shortcuts,
     library_task: Option<LibraryTask>,
     shuffle: shuffle::Shuffle,
@@ -101,10 +101,10 @@ pub struct Soundboard {
 impl Soundboard {
     /// Global shortcuts are delivered to `window`, which must belong to the calling thread.
     /// Registering on the main window avoids a dedicated message-loop thread.
-    pub fn new(library: Library, prefs: Prefs, wake: Wake, window: HWND) -> Self {
+    pub fn new(library: Library, settings: SoundboardSettings, wake: Wake, window: HWND) -> Self {
         Self {
             library,
-            prefs,
+            settings,
             player: Player::new(wake.clone()),
             shortcuts: Shortcuts::new(window, wake.clone()),
             wake,
@@ -112,19 +112,19 @@ impl Soundboard {
             shuffle: shuffle::Shuffle::default(),
         }
     }
-    pub fn prefs(&self) -> &Prefs {
-        &self.prefs
+    pub fn settings(&self) -> &SoundboardSettings {
+        &self.settings
     }
-    pub fn configure(&mut self, prefs: Prefs) {
-        let devices = |prefs: &Prefs| {
-            [&prefs.microphone_device, &prefs.speaker_device]
+    pub fn configure(&mut self, settings: SoundboardSettings) {
+        let devices = |settings: &SoundboardSettings| {
+            [&settings.microphone_device, &settings.speaker_device]
                 .map(|device| device.as_ref().map(|device| device.id.clone()))
         };
-        if devices(&prefs) != devices(&self.prefs) {
+        if devices(&settings) != devices(&self.settings) {
             self.stop();
         }
-        self.player.configure(&prefs);
-        self.prefs = prefs;
+        self.player.configure(&settings);
+        self.settings = settings;
     }
     pub fn library(&self) -> &Library {
         &self.library
@@ -136,7 +136,7 @@ impl Soundboard {
     /// Returns the result of the last playback a shortcut started.
     pub fn shortcuts(&mut self, enabled: bool) -> Option<anyhow::Result<()>> {
         let bindings = if enabled {
-            self.prefs.keys.actions(&self.library.sounds)
+            self.settings.keys.actions(&self.library.sounds)
         } else {
             HashMap::new()
         };
@@ -169,13 +169,13 @@ impl Soundboard {
             library.set_hotkeys(&ids, Some(key))
         })
     }
-    /// Checks preferences against the library's keys and with Windows before saving.
-    pub fn validate_prefs(&self, prefs: &Prefs) -> anyhow::Result<()> {
-        [prefs.keys.stop, prefs.keys.random]
+    /// Checks settings against the library's keys and with Windows before saving.
+    pub fn validate_settings(&self, settings: &SoundboardSettings) -> anyhow::Result<()> {
+        [settings.keys.stop, settings.keys.random]
             .into_iter()
             .flatten()
             .try_for_each(|key| self.shortcuts.validate(key))?;
-        prefs.keys.validate_all(&self.library.sounds)
+        settings.keys.validate_all(&self.library.sounds)
     }
     /// Must run while the main window still exists.
     pub fn shutdown(&mut self) {
@@ -236,7 +236,7 @@ impl Soundboard {
         // Importing disables playback controls; a queued replacement must not restart behind it.
         self.stop();
         let task = Task::run("VoiceBoxSoundImport", &self.wake, move || {
-            select_files().and_then(import_files)
+            select_files().and_then(import::from_files)
         });
         self.library_task = Some(LibraryTask::Import(task));
     }
@@ -257,7 +257,7 @@ impl Soundboard {
             .cloned()
             .collect();
         let task = Task::run("VoiceBoxSoundExport", &self.wake, move || {
-            select_folder()?.map_or(Ok(()), |folder| export::export_sounds(&sounds, &folder))
+            select_folder()?.map_or(Ok(()), |folder| export::to_folder(&sounds, &folder))
         });
         self.library_task = Some(LibraryTask::Export(task));
     }
@@ -293,12 +293,13 @@ impl Soundboard {
             return Ok(());
         }
         ensure!(
-            !self.prefs.speaker_gain_percent.is_mute()
-                || !self.prefs.microphone_gain_percent.is_mute(),
+            !self.settings.speaker_gain_percent.is_mute()
+                || !self.settings.microphone_gain_percent.is_mute(),
             Text::OutputsMuted
         );
         self.shuffle.last = Some(sound.id);
-        self.player.play(sound.id, sound.duration_secs, &self.prefs);
+        self.player
+            .play(sound.id, sound.duration_secs, &self.settings);
         Ok(())
     }
     pub fn stop(&mut self) {
@@ -318,7 +319,7 @@ impl Soundboard {
                 .duration_secs
                 .or(Some(sound.duration_secs))
                 .filter(|duration_secs| duration_secs.is_finite() && *duration_secs > 0.0),
-            repeat: self.prefs.repeat,
+            repeat: self.settings.repeat,
         })
     }
     pub fn poll(&mut self) -> Vec<Update> {

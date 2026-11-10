@@ -10,7 +10,7 @@ use std::{
 
 use voice_box_shared::{apo_config::ApoConfig, dsp::AudioProcessor};
 
-use crate::{memory::Resident, soundboard::Injection};
+use crate::{injection::Injection, memory::Resident};
 
 pub(super) struct ProcessingSession {
     dsp: Resident<AudioProcessor>,

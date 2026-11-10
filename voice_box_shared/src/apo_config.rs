@@ -11,8 +11,6 @@ use windows::{
     core::HSTRING,
 };
 
-use crate::utils::GainDb;
-
 /// Under HKEY_LOCAL_MACHINE, which the audio engine's service account can read and watch.
 pub const APO_CONFIG_KEY: &str = r"SOFTWARE\VoiceBox";
 const APO_CONFIG_VALUE: &str = "ApoConfig";
@@ -82,5 +80,46 @@ impl ApoConfig {
         }
         .ok()?;
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "i8", into = "i8")]
+pub struct GainDb(i8);
+
+impl From<i8> for GainDb {
+    fn from(value: i8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<GainDb> for i8 {
+    fn from(gain: GainDb) -> Self {
+        gain.0
+    }
+}
+
+impl GainDb {
+    pub const MIN_VALUE: i8 = -60;
+    pub const MAX_VALUE: i8 = 60;
+
+    pub fn new(value: i8) -> Self {
+        Self(value.clamp(Self::MIN_VALUE, Self::MAX_VALUE))
+    }
+
+    pub fn is_mute(&self) -> bool {
+        self.0 == Self::MIN_VALUE
+    }
+
+    pub fn as_i8(&self) -> i8 {
+        self.0
+    }
+
+    pub fn as_f32_gain(&self) -> f32 {
+        if self.is_mute() {
+            0.0
+        } else {
+            10.0_f32.powf(self.0 as f32 / 20.0)
+        }
     }
 }

@@ -1,14 +1,13 @@
-//! Cancellable background recording of the voice tab, played back original or processed.
+//! The voice tab: a cancellable test recording, played back original or processed.
+
+mod offline;
 
 use std::sync::{Arc, atomic::Ordering};
 
 use voice_box_shared::apo_config::ApoConfig;
 
 use crate::{
-    audio::{
-        capture::{Recording, capture},
-        playback::playback,
-    },
+    audio::{Recording, microphone, playback},
     task::{Task, Wake},
 };
 
@@ -98,7 +97,7 @@ impl VoicePreview {
             return;
         }
         let task = Task::spawn("VoiceBoxRecording", &self.wake, move |stop, started| {
-            capture(&device_id, stop, started)
+            microphone::capture(&device_id, stop, started)
                 .map(|recording| Outcome::Recorded(Arc::new(recording)))
         });
         self.task = Some((Activity::Recording, task));
@@ -127,7 +126,7 @@ impl VoicePreview {
                 Some(config) => {
                     let samples = match cached {
                         Some(samples) => samples,
-                        None => Arc::new(super::preview::process(&recording, &config)?),
+                        None => Arc::new(offline::process(&recording, &config)?),
                     };
                     Some(ProcessedRecording { config, samples })
                 }
@@ -139,7 +138,7 @@ impl VoicePreview {
                     .map_or(recording.samples.as_slice(), |processed| {
                         processed.samples.as_slice()
                     });
-                playback(&recording, samples, stop, started)?;
+                playback::play(&recording, samples, stop, started)?;
             }
             Ok(Outcome::Played(processed))
         });

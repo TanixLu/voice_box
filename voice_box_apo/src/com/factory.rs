@@ -1,7 +1,7 @@
 use core::{ffi::c_void, ptr};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use voice_box_shared::utils::APO_CLSID;
+use voice_box_shared::apo_identity::APO_CLSID;
 use windows::Win32::{
     Foundation::{
         CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_NOINTERFACE, E_POINTER, S_FALSE, S_OK,
@@ -13,7 +13,7 @@ use windows_core::{BOOL, GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface};
 use crate::{
     com::{LIVE_OBJECTS, create_apo, inner_query_interface, inner_release},
     etw::{self, apo_log},
-    worker::get_active_worker_count,
+    worker,
 };
 
 static SERVER_LOCKS: AtomicU32 = AtomicU32::new(0);
@@ -74,11 +74,11 @@ unsafe extern "system" fn factory_create_instance(
     unsafe { inner_release(inner) };
     apo_log!(
         if result == S_OK {
-            etw::INFO
+            etw::level::INFO
         } else {
-            etw::ERROR
+            etw::level::ERROR
         },
-        etw::LIFECYCLE,
+        etw::keyword::LIFECYCLE,
         "CreateInstance instance={object:p} aggregated={} result=0x{:08x}",
         !outer.is_null(),
         result.0 as u32
@@ -133,11 +133,11 @@ pub unsafe extern "system" fn DllGetClassObject(
         unsafe { factory_query_interface(&CLASS_FACTORY as *const _ as *mut c_void, iid, output) };
     apo_log!(
         if result == S_OK {
-            etw::VERBOSE
+            etw::level::VERBOSE
         } else {
-            etw::WARNING
+            etw::level::WARNING
         },
-        etw::LIFECYCLE,
+        etw::keyword::LIFECYCLE,
         "DllGetClassObject result=0x{:08x}",
         result.0 as u32
     );
@@ -149,7 +149,7 @@ pub extern "system" fn DllCanUnloadNow() -> HRESULT {
     if LIVE_OBJECTS.load(Ordering::Acquire) == 0
         && SERVER_LOCKS.load(Ordering::Acquire) == 0
         && FACTORY_REFS.load(Ordering::Acquire) == 1
-        && get_active_worker_count() == 0
+        && worker::active_count() == 0
     {
         etw::unregister();
         S_OK

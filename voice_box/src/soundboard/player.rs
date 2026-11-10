@@ -2,7 +2,7 @@
 
 use std::sync::mpsc;
 
-use voice_box_shared::pcm_transport::pcm_transport_name;
+use voice_box_shared::pcm_transport;
 
 use crate::{
     devices,
@@ -10,8 +10,8 @@ use crate::{
     model::SoundId,
     soundboard::{
         Update,
-        playback::{self, Command, Config, Event},
-        prefs::Prefs,
+        settings::SoundboardSettings,
+        worker::{self, Command, Config, Event},
     },
     task::{Task, Wake},
 };
@@ -71,8 +71,8 @@ impl Player {
         self.job.is_some()
     }
 
-    pub fn play(&mut self, id: SoundId, duration_secs: f64, prefs: &Prefs) {
-        self.start(id, duration_secs, Config::new(prefs));
+    pub fn play(&mut self, id: SoundId, duration_secs: f64, settings: &SoundboardSettings) {
+        self.start(id, duration_secs, Config::new(settings));
     }
 
     fn start(&mut self, id: SoundId, duration_secs: f64, config: Config) {
@@ -114,8 +114,8 @@ impl Player {
         self.queued = None;
     }
 
-    pub fn configure(&mut self, prefs: &Prefs) {
-        let config = Config::new(prefs);
+    pub fn configure(&mut self, settings: &SoundboardSettings) {
+        let config = Config::new(settings);
         if let Some(request) = &mut self.queued {
             request.config = config.clone();
         }
@@ -189,9 +189,9 @@ fn start_worker(id: SoundId, revision: u64, config: Config, wake: &Wake) -> Job 
         // A device stays fixed for a worker, so discovery and plugin checks happen once,
         // here: they use COM and the registry, which must stay off the UI thread.
         let transport = devices::soundboard_microphone_guid(config.microphone_device.as_deref())
-            .and_then(|guid| pcm_transport_name(&guid))
+            .and_then(|guid| pcm_transport::mapping_name(&guid))
             .map_err(Details::new);
-        let outcome = playback::run(id, config, revision, transport, &commands, &events)?;
+        let outcome = worker::run(id, config, revision, transport, &commands, &events)?;
         tracing::info!(
             sound_id = outcome.sound_id,
             reason = outcome.reason,

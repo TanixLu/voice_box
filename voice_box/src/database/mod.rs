@@ -1,7 +1,6 @@
 //! Application persistence. Connections, SQL and transactions stay inside this module.
 
-pub mod audio;
-mod codecs;
+pub mod blob;
 mod maintenance;
 pub mod sounds;
 

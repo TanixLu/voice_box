@@ -8,6 +8,7 @@ use crate::{
     database,
     i18n::{Text, UserContext},
     model::{Hotkey, Sound, SoundId, is_valid_name},
+    soundboard::rename::RenamePlan,
 };
 
 #[derive(Clone, Default)]
@@ -73,6 +74,21 @@ impl Library {
         );
         for index in indices {
             self.sounds[index].hotkey = key;
+        }
+        Ok(())
+    }
+
+    pub fn rename_batch(&mut self, mut plan: RenamePlan) -> anyhow::Result<()> {
+        plan.validate(self);
+        ensure!(
+            plan.error_count() == 0 && plan.change_count() > 0,
+            Text::RenameValidationFailed
+        );
+        for entry in plan.entries {
+            self.sounds
+                .get_mut(entry.index)
+                .user_context(Text::SoundNotFound)?
+                .name = entry.name;
         }
         Ok(())
     }

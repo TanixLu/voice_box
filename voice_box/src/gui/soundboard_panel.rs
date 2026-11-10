@@ -3,23 +3,23 @@ use std::{collections::HashSet, sync::Arc};
 use windows::Win32::Foundation::HWND;
 
 use crate::{
-    audio::capture::Recording,
+    audio::Recording,
     devices::{self, Microphone, Speaker},
     gui::{
         Busy,
-        batch_rename::{self, BatchRename},
+        batch_rename_dialog::{self, BatchRenameDialog},
         key_capture::KeyCapture,
         overlay::Overlay,
-        recording_import::{self, RecordingImport},
+        recording_import_dialog::{self, RecordingImportDialog},
         sound_list::{self, SoundList},
-        sound_settings::{self, SoundSettings},
+        soundboard_settings_dialog::{self, SoundboardSettingsDialog},
         widgets::{format_duration, notice},
     },
     i18n::{Details, Message, Text},
     model::SoundId,
     soundboard::{
-        Edit, Soundboard, Update, bindings::Target, library::Library, prefs::Prefs,
-        recording::Selection, rename::RenamePlan,
+        Edit, Soundboard, Update, bindings::Target, library::Library, recording::Selection,
+        rename::RenamePlan, settings::SoundboardSettings,
     },
     task::{self, Task, Wake},
 };
@@ -45,14 +45,14 @@ pub struct SoundboardPanel {
     wake: Wake,
     model: Soundboard,
     capture: KeyCapture,
-    settings: SoundSettings,
+    settings_dialog: SoundboardSettingsDialog,
     settings_error: Message,
     /// Binding feedback for the playback keys in the settings dialog.
     capture_message: Message,
     devices: Option<Task<(Vec<Microphone>, Vec<Speaker>)>>,
     list: SoundList,
-    batch_rename: Option<BatchRename>,
-    recording_import: Option<RecordingImport>,
+    batch_rename: Option<BatchRenameDialog>,
+    recording_import: Option<RecordingImportDialog>,
     error: Message,
     file_error: Option<(Text, Message)>,
     overlay: Overlay,
@@ -61,12 +61,12 @@ pub struct SoundboardPanel {
 }
 
 impl SoundboardPanel {
-    pub fn new(wake: Wake, window: HWND, library: Library, prefs: Prefs) -> Self {
+    pub fn new(wake: Wake, window: HWND, library: Library, settings: SoundboardSettings) -> Self {
         Self {
-            model: Soundboard::new(library, prefs, wake.clone(), window),
+            model: Soundboard::new(library, settings, wake.clone(), window),
             capture: KeyCapture::default(),
             wake,
-            settings: SoundSettings::default(),
+            settings_dialog: SoundboardSettingsDialog::default(),
             settings_error: Message::default(),
             capture_message: Message::default(),
             devices: None,
@@ -80,8 +80,8 @@ impl SoundboardPanel {
             commands: Vec::new(),
         }
     }
-    pub fn apply_prefs(&mut self, prefs: Prefs) {
-        self.model.configure(prefs);
+    pub fn apply_settings(&mut self, settings: SoundboardSettings) {
+        self.model.configure(settings);
     }
     pub fn capturing(&self) -> bool {
         self.capture.target().is_some()
@@ -136,7 +136,9 @@ impl SoundboardPanel {
             }
         }
         match task::finished(&mut self.devices) {
-            Some(Ok((microphones, speakers))) => self.settings.set_devices(microphones, speakers),
+            Some(Ok((microphones, speakers))) => {
+                self.settings_dialog.set_devices(microphones, speakers)
+            }
             Some(Err(error)) => self.settings_error = Message::error(error),
             None => {}
         }
@@ -167,7 +169,7 @@ impl SoundboardPanel {
             None => {}
         }
         // Bootstrap the overlay while minimized; visible children keep UI passes running.
-        if self.model.prefs().show_overlay
+        if self.model.settings().show_overlay
             && self.model.playing()
             && !self.overlay_visible
             && ctx.input(|input| input.viewport().visible() == Some(false))
@@ -194,20 +196,25 @@ impl SoundboardPanel {
         }
     }
 
-    /// Dialogs; returns validated preferences for the caller to save.
-    pub fn windows(&mut self, ctx: &egui::Context, blocked: bool, visible: bool) -> Option<Prefs> {
-        let prefs = self.settings_ui(ctx, blocked);
+    /// Dialogs; returns validated settings for the caller to save.
+    pub fn windows(
+        &mut self,
+        ctx: &egui::Context,
+        blocked: bool,
+        visible: bool,
+    ) -> Option<SoundboardSettings> {
+        let settings = self.settings_ui(ctx, blocked);
         if let Some(tool) = &mut self.recording_import {
             match tool.ui(ctx, self.model.saving_recording()) {
-                Some(recording_import::Action::Close) => self.recording_import = None,
-                Some(recording_import::Action::Save(audio, selection, name)) => {
+                Some(recording_import_dialog::Action::Close) => self.recording_import = None,
+                Some(recording_import_dialog::Action::Save(audio, selection, name)) => {
                     self.commands
                         .push(Command::SaveRecording(audio, selection, name));
                 }
                 None => {}
             }
         }
-        let keep_editing = visible && !self.settings.is_open();
+        let keep_editing = visible && !self.settings_dialog.is_open();
         if !blocked
             && !self.recording_open()
             && let Some((index, name)) =
@@ -220,12 +227,12 @@ impl SoundboardPanel {
         {
             self.file_error = None;
         }
-        prefs
+        settings
     }
 
     /// Must run every frame once shown, so the overlay viewport keeps existing.
     pub fn overlay_ui(&mut self, ctx: &egui::Context, allowed: bool) {
-        let enabled = allowed && self.model.prefs().show_overlay && !self.model.importing();
+        let enabled = allowed && self.model.settings().show_overlay && !self.model.importing();
         let playing = self.model.now_playing().filter(|_| enabled);
         self.overlay_visible = match self.overlay.show(ctx, playing) {
             Ok(visible) => visible,
@@ -266,9 +273,9 @@ impl SoundboardPanel {
         };
         // Closing the dialog cancels its captures, so without a draft only sound keys,
         // which `saved` merely checks against, can arrive here.
-        let mut saved = self.model.prefs().keys;
+        let mut saved = self.model.settings().keys;
         let keys = self
-            .settings
+            .settings_dialog
             .draft_mut()
             .map_or(&mut saved, |draft| &mut draft.keys);
         let result = self.model.bind(&target, key, keys);
@@ -284,8 +291,10 @@ impl SoundboardPanel {
 
     /// Operations clicked here are queued, so `available` holds for the whole frame.
     pub fn ui(&mut self, ui: &mut egui::Ui, others: Busy) {
-        let available =
-            !self.working() && !others.any() && !self.settings.is_open() && !self.recording_open();
+        let available = !self.working()
+            && !others.any()
+            && !self.settings_dialog.is_open()
+            && !self.recording_open();
         ui.add_enabled_ui(available, |ui| {
             self.toolbar_ui(ui);
             let actions = self
@@ -346,7 +355,7 @@ impl SoundboardPanel {
                     self.model.save_recording(audio, selection, name)
                 }
                 Command::OpenSettings => {
-                    self.settings.open(self.model.prefs());
+                    self.settings_dialog.open(self.model.settings());
                     self.settings_error.clear();
                     self.devices = Some(Task::run(
                         "VoiceBoxOutputDevices",
@@ -359,7 +368,7 @@ impl SoundboardPanel {
                     self.list.cancel_rename();
                     self.list.cancel_delete();
                     self.capture.cancel();
-                    self.recording_import = Some(RecordingImport::new(self.wake.clone()));
+                    self.recording_import = Some(RecordingImportDialog::new(self.wake.clone()));
                 }
                 Command::Import => self.model.import(super::picker::choose_files),
             }
@@ -381,7 +390,7 @@ impl SoundboardPanel {
     }
 
     fn batch_rename_ui(&mut self, ctx: &egui::Context, available: bool) {
-        use batch_rename::{Action, Status};
+        use batch_rename_dialog::{Action, Status};
         let Some(tool) = &mut self.batch_rename else {
             return;
         };
@@ -391,13 +400,15 @@ impl SoundboardPanel {
             playing: self.model.playing(),
         };
         match tool.ui(ctx, self.model.library(), status) {
-            Action::None => {}
-            Action::Closed => {
+            None => {}
+            Some(Action::Close) => {
                 self.list.clear_anchor();
                 self.batch_rename = None;
             }
-            Action::StopPlayback => self.commands.push(Command::List(sound_list::Action::Stop)),
-            Action::Apply(plan) => self.commands.push(Command::BatchRename(plan)),
+            Some(Action::StopPlayback) => {
+                self.commands.push(Command::List(sound_list::Action::Stop))
+            }
+            Some(Action::Apply(plan)) => self.commands.push(Command::BatchRename(plan)),
         }
     }
 
@@ -476,7 +487,7 @@ impl SoundboardPanel {
         ui.horizontal(|ui| {
             let key = self
                 .model
-                .prefs()
+                .settings()
                 .keys
                 .stop
                 .map(|key| Message::StopPlaybackHotkey { key }.text().into_owned())
@@ -534,7 +545,7 @@ impl SoundboardPanel {
                 .model
                 .edit(Edit::Move, move |library| library.move_sounds(&ids, to_top)),
             BatchAction::Rename => {
-                self.batch_rename = Some(BatchRename::new(self.model.library(), ids));
+                self.batch_rename = Some(BatchRenameDialog::new(self.model.library(), ids));
                 return;
             }
             BatchAction::BindHotkey => {
@@ -557,22 +568,22 @@ impl SoundboardPanel {
         }
     }
 
-    fn settings_ui(&mut self, ctx: &egui::Context, blocked: bool) -> Option<Prefs> {
-        use sound_settings::{Action, Status};
+    fn settings_ui(&mut self, ctx: &egui::Context, blocked: bool) -> Option<SoundboardSettings> {
+        use soundboard_settings_dialog::{Action, Status};
         let status = Status {
             busy: blocked || self.capturing(),
             capture_target: self.capture.target(),
             capture_message: &self.capture_message,
             error: (!self.settings_error.is_empty()).then_some(&self.settings_error),
         };
-        match self.settings.ui(ctx, self.model.prefs(), status) {
-            Action::None => {}
-            Action::Closed => {
+        match self.settings_dialog.ui(ctx, self.model.settings(), status) {
+            None => {}
+            Some(Action::Close) => {
                 self.capture.cancel();
                 self.capture_message.clear();
             }
-            Action::ClearMessage => self.capture_message.clear(),
-            Action::Save(draft) => match self.model.validate_prefs(&draft) {
+            Some(Action::ClearMessage) => self.capture_message.clear(),
+            Some(Action::Save(draft)) => match self.model.validate_settings(&draft) {
                 Ok(()) => {
                     self.settings_error.clear();
                     return Some(draft);
@@ -584,7 +595,7 @@ impl SoundboardPanel {
                     };
                 }
             },
-            Action::Capture(target) => self.commands.push(Command::Capture(target)),
+            Some(Action::Capture(target)) => self.commands.push(Command::Capture(target)),
         }
         None
     }

@@ -16,8 +16,7 @@ pub struct Status {
     pub playing: bool,
 }
 pub enum Action {
-    None,
-    Closed,
+    Close,
     Apply(RenamePlan),
     StopPlayback,
 }
@@ -28,7 +27,7 @@ struct Footer {
     stop: bool,
 }
 
-pub struct BatchRename {
+pub struct BatchRenameDialog {
     selected: HashSet<SoundId>,
     rule: RenameRule,
     plan: RenamePlan,
@@ -36,7 +35,7 @@ pub struct BatchRename {
     applying: bool,
 }
 
-impl BatchRename {
+impl BatchRenameDialog {
     pub fn new(library: &Library, selected: HashSet<SoundId>) -> Self {
         let rule = RenameRule::default();
         let plan = RenamePlan::new(library, &selected, &rule);
@@ -106,7 +105,7 @@ impl BatchRename {
         }
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context, library: &Library, status: Status) -> Action {
+    pub fn ui(&mut self, ctx: &egui::Context, library: &Library, status: Status) -> Option<Action> {
         let mut apply = false;
         let mut close = false;
         let mut stop = false;
@@ -150,14 +149,18 @@ impl BatchRename {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
         if !self.applying && (close || response.should_close()) {
-            Action::Closed
+            Some(Action::Close)
         } else if apply {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
-            Action::Apply(RenamePlan::new(library, &self.selected, &self.rule))
+            Some(Action::Apply(RenamePlan::new(
+                library,
+                &self.selected,
+                &self.rule,
+            )))
         } else if stop {
-            Action::StopPlayback
+            Some(Action::StopPlayback)
         } else {
-            Action::None
+            None
         }
     }
     fn rule_ui(&mut self, ui: &mut egui::Ui, library: &Library, available: bool) {

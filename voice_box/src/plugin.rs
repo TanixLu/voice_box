@@ -1,3 +1,5 @@
+//! The APO plugin: its DLL, COM registration and per-microphone effect association.
+
 use std::path::Path;
 
 use restart_manager::{RestartSession, ShutdownOptions};
@@ -15,14 +17,14 @@ use winreg::{
 
 use voice_box_shared::{
     apo_config::APO_CONFIG_KEY,
-    utils::{APO_CLSID, APO_NAME, COPYRIGHT, apo_registration_properties},
+    apo_identity::{self, APO_CLSID, APO_NAME, COPYRIGHT},
 };
 
 use crate::{
+    embedded::APO_DLL,
     i18n::{Message, Text, UserContext},
     paths::{WriteMode, apo_dll_path, write_file_with_parents},
-    registry::{read_registry_value, write_registry_value},
-    static_data::apo_dll_bytes,
+    registry,
 };
 
 const DISABLE_PROTECTED_AUDIO_DG_REG_PATH: &str =
@@ -37,7 +39,7 @@ fn string_registration_values(apo_dll: &Path) -> anyhow::Result<[(String, String
     let guid = plugin_guid();
     let com = format!(r"HKLM\SOFTWARE\Classes\CLSID\{guid}\");
     let apo = format!(r"HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}\");
-    let properties = apo_registration_properties();
+    let properties = apo_identity::registration_properties();
     Ok([
         (com.clone(), APO_NAME.into()),
         (format!(r"{com}InprocServer32\"), apo_dll.into()),
@@ -57,7 +59,7 @@ fn string_registration_values(apo_dll: &Path) -> anyhow::Result<[(String, String
 fn dword_registration_values() -> [(String, u32); 10] {
     let guid = plugin_guid();
     let apo = format!(r"HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}\");
-    let properties = apo_registration_properties();
+    let properties = apo_identity::registration_properties();
     [
         (DISABLE_PROTECTED_AUDIO_DG_REG_PATH.into(), 1),
         (format!("{apo}MajorVersion"), properties.u32MajorVersion),
@@ -127,11 +129,7 @@ pub struct PluginOperationResult {
 }
 
 /// Runs `action` on `guid`, then rereads the status of every device in `guids`.
-pub fn execute_plugin_action(
-    guid: String,
-    guids: Vec<String>,
-    action: PluginAction,
-) -> PluginOperationResult {
+pub fn execute(guid: String, guids: Vec<String>, action: PluginAction) -> PluginOperationResult {
     tracing::info!(?action, %guid, "Starting microphone plugin operation");
     let result = match action {
         PluginAction::Install => install_device_plugin(&guid),
@@ -141,7 +139,7 @@ pub fn execute_plugin_action(
     let statuses = guids
         .into_iter()
         .map(|guid| {
-            let status = device_plugin_status(&guid);
+            let status = device_status(&guid);
             (guid, status)
         })
         .collect();
@@ -150,7 +148,7 @@ pub fn execute_plugin_action(
 
 // An endpoint association alone does not mean the bundled DLL and registration
 // are current.
-pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
+pub fn device_status(device_guid: &str) -> PluginStatus {
     let plugin_guid = plugin_guid();
     let root = RegKey::predef(HKEY_LOCAL_MACHINE);
     let fx_path = format!(
@@ -170,7 +168,7 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
     }
     // Check whether the DLL needs to be updated.
     let apo_dll = apo_dll_path();
-    if std::fs::read(apo_dll).ok().as_deref() != Some(apo_dll_bytes()) {
+    if std::fs::read(apo_dll).ok().as_deref() != Some(&APO_DLL[..]) {
         return PluginStatus::NeedsUpdate;
     }
 
@@ -179,13 +177,12 @@ pub fn device_plugin_status(device_guid: &str) -> PluginStatus {
         return PluginStatus::NeedsUpdate;
     };
     for (reg_path, expected_value) in string_values {
-        if read_registry_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str())
-        {
+        if registry::read::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str()) {
             return PluginStatus::NeedsUpdate;
         }
     }
     for (reg_path, expected_value) in dword_registration_values() {
-        if read_registry_value::<u32>(&reg_path).ok() != Some(expected_value) {
+        if registry::read::<u32>(&reg_path).ok() != Some(expected_value) {
             return PluginStatus::NeedsUpdate;
         }
     }
@@ -273,24 +270,23 @@ fn write_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     let apo_dll_path = apo_dll_path();
     let string_values = string_registration_values(apo_dll_path)?;
     // Update the DLL.
-    if std::fs::read(apo_dll_path).ok().as_deref() != Some(apo_dll_bytes()) {
+    if std::fs::read(apo_dll_path).ok().as_deref() != Some(&APO_DLL[..]) {
         write_file_with_parents(apo_dll_path, WriteMode::AtomicReplace, |file| {
-            file.write_all(apo_dll_bytes())
+            file.write_all(&APO_DLL)
         })?;
         info!("Updated APO DLL at {}", apo_dll_path.display());
     }
 
     // Update the registry.
     for (reg_path, expected_value) in string_values {
-        if read_registry_value::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str())
-        {
-            write_registry_value(&reg_path, &expected_value)?;
+        if registry::read::<String>(&reg_path).ok().as_deref() != Some(expected_value.as_str()) {
+            registry::write(&reg_path, &expected_value)?;
             info!("Updated registry key {} to {}", reg_path, expected_value);
         }
     }
     for (reg_path, expected_value) in dword_registration_values() {
-        if read_registry_value::<u32>(&reg_path).ok() != Some(expected_value) {
-            write_registry_value(&reg_path, &expected_value)?;
+        if registry::read::<u32>(&reg_path).ok() != Some(expected_value) {
+            registry::write(&reg_path, &expected_value)?;
             info!("Updated registry key {} to {}", reg_path, expected_value);
         }
     }
@@ -464,10 +460,10 @@ fn delete_tree_transacted(
 }
 
 fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
-    if device_plugin_status(device_guid) != PluginStatus::Installed {
+    if device_status(device_guid) != PluginStatus::Installed {
         run_device_plugin_operation(device_guid, false)?;
         anyhow::ensure!(
-            device_plugin_status(device_guid) == PluginStatus::Installed,
+            device_status(device_guid) == PluginStatus::Installed,
             Text::PluginVerificationFailed
         );
     }

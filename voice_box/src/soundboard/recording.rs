@@ -12,7 +12,7 @@ use anyhow::ensure;
 use voice_box_shared::pcm_transport::{PCM_CHANNELS, PcmFrame};
 
 use crate::{
-    audio::{capture::Recording, loopback, playback::playback},
+    audio::{Recording, loopback, playback},
     i18n::{Text, UserContext},
     model::{Sound, is_valid_name},
     task::{Task, Wake},
@@ -219,7 +219,7 @@ impl Recorder {
                     &self.wake,
                     move |stop, started| {
                         if !stop.load(Ordering::Relaxed) {
-                            playback(&audio, &audio.samples[samples], stop, started)?;
+                            playback::play(&audio, &audio.samples[samples], stop, started)?;
                         }
                         Ok(Outcome::Previewed)
                     },

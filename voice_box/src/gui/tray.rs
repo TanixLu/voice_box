@@ -24,21 +24,22 @@ use windows::{
     core::{PCWSTR, w},
 };
 
-use voice_box_shared::utils::wide_null;
+use voice_box_shared::win::wide_null;
 
 use crate::i18n::Text;
 
 const CALLBACK: u32 = WM_APP + 20;
 const NIN_KEYSELECT: u32 = NIN_SELECT | NINF_KEY;
 
-pub enum Action {
+/// A tray-menu or icon notification from Windows, not a widget intent.
+pub enum Event {
     Show = 1,
     Exit,
 }
 
 pub struct Tray {
     data: Box<Data>,
-    pub receiver: mpsc::Receiver<Action>,
+    pub receiver: mpsc::Receiver<Event>,
 }
 
 struct Data {
@@ -48,7 +49,7 @@ struct Data {
     available: Cell<bool>,
     startup_hidden: Cell<bool>,
     ctx: egui::Context,
-    sender: mpsc::Sender<Action>,
+    sender: mpsc::Sender<Event>,
 }
 
 impl Tray {
@@ -122,11 +123,11 @@ impl Data {
         }
     }
 
-    fn send(&self, action: Action) {
-        if matches!(action, Action::Show) {
+    fn send(&self, event: Event) {
+        if matches!(event, Event::Show) {
             self.startup_hidden.set(false);
         }
-        let _ = self.sender.send(action);
+        let _ = self.sender.send(event);
         self.ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 
@@ -136,12 +137,7 @@ impl Data {
             let result = (|| {
                 let show = wide_null(Text::ShowMainWindow.text());
                 let exit = wide_null(Text::Exit.text());
-                AppendMenuW(
-                    menu,
-                    MF_STRING,
-                    Action::Show as usize,
-                    PCWSTR(show.as_ptr()),
-                )?;
+                AppendMenuW(menu, MF_STRING, Event::Show as usize, PCWSTR(show.as_ptr()))?;
                 AppendMenuW(
                     menu,
                     if self.exit_enabled.get() {
@@ -149,7 +145,7 @@ impl Data {
                     } else {
                         MF_STRING | MF_GRAYED
                     },
-                    Action::Exit as usize,
+                    Event::Exit as usize,
                     PCWSTR(exit.as_ptr()),
                 )?;
                 let mut point = Default::default();
@@ -166,10 +162,10 @@ impl Data {
                 )
                 .0 as usize;
                 PostMessageW(Some(self.icon.hWnd), WM_NULL, WPARAM(0), LPARAM(0))?;
-                if selected == Action::Show as usize {
-                    self.send(Action::Show);
-                } else if selected == Action::Exit as usize && self.exit_enabled.get() {
-                    self.send(Action::Exit);
+                if selected == Event::Show as usize {
+                    self.send(Event::Show);
+                } else if selected == Event::Exit as usize && self.exit_enabled.get() {
+                    self.send(Event::Exit);
                 } else {
                     let _ = Shell_NotifyIconW(NIM_SETFOCUS, &self.icon);
                 }
@@ -214,11 +210,11 @@ unsafe extern "system" fn window_proc(
         data.available.set(false);
         if let Err(error) = data.add_icon() {
             tracing::warn!("Failed to restore tray icon: {error}");
-            data.send(Action::Show);
+            data.send(Event::Show);
         }
     } else if message == CALLBACK {
         match lparam.0 as u32 & 0xffff {
-            NIN_SELECT | NIN_KEYSELECT => data.send(Action::Show),
+            NIN_SELECT | NIN_KEYSELECT => data.send(Event::Show),
             WM_CONTEXTMENU => {
                 if let Err(error) = data.show_menu() {
                     tracing::warn!("Failed to show tray menu: {error}");

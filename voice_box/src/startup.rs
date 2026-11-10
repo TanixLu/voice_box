@@ -25,10 +25,10 @@ use windows::{
 };
 
 use crate::{
+    embedded::STARTUP_SCRIPT,
     i18n::{Text, UserContext},
     paths::{conhost_path, powershell_path, system_dir},
-    static_data::startup_script,
-    utils::{ComGuard, win_base64_encode, win_sha256},
+    win::{self, ComGuard},
 };
 
 const SILENT_START_ARG: &str = "--silent-start";
@@ -51,7 +51,7 @@ pub fn silent_start() -> bool {
 }
 
 /// Returns true only when an enabled task was registered or repaired.
-pub fn synchronize_startup(enabled: bool) -> anyhow::Result<bool> {
+pub fn synchronize(enabled: bool) -> anyhow::Result<bool> {
     synchronize_inner(enabled).user_context(Text::SyncStartupFailed)
 }
 
@@ -79,7 +79,8 @@ fn synchronize_inner(enabled: bool) -> anyhow::Result<bool> {
                 Text::StartupRedirectedPath
             );
         }
-        let arguments = startup_arguments(&executable, &win_sha256(&std::fs::read(&executable)?)?)?;
+        let arguments =
+            startup_arguments(&executable, &win::sha256(&std::fs::read(&executable)?)?)?;
         let expected = definition(&service, &arguments)?;
         match root.GetTask(&BSTR::from(TASK_NAME)) {
             Ok(task) if matches_task(&task, &expected)? => return Ok(false),
@@ -248,9 +249,13 @@ fn startup_arguments(path: &Path, hash: &str) -> anyhow::Result<String> {
         hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()),
         "Invalid SHA-256"
     );
-    let script = startup_script(SILENT_START_ARG, hash, path)?;
+    // Keep paths as encoded data, never PowerShell source.
+    let script = STARTUP_SCRIPT
+        .replace("__VOICEBOX_ARGUMENT__", SILENT_START_ARG)
+        .replace("__VOICEBOX_SHA256__", hash)
+        .replace("__VOICEBOX_PATH__", &win::base64_encode(path.as_bytes())?);
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    let encoded = win_base64_encode(&bytes)?;
+    let encoded = win::base64_encode(&bytes)?;
     let arguments =
         format!("-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand {encoded}");
     ensure!(arguments.len() < 30_000, "Startup command is too long");

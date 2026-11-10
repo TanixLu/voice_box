@@ -21,8 +21,9 @@ use windows::Win32::{
 use windows_core::{BOOL, GUID, HRESULT};
 
 use voice_box_shared::{
-    pcm_transport::pcm_transport_name,
-    utils::{APO_CLSID, apo_registration_properties, win_qpf},
+    apo_identity::{self, APO_CLSID},
+    pcm_transport,
+    win::qpc_frequency,
 };
 
 use crate::{
@@ -44,7 +45,7 @@ pub unsafe extern "system" fn get_registration_properties(
         return E_OUTOFMEMORY;
     }
 
-    let properties = apo_registration_properties();
+    let properties = apo_identity::registration_properties();
 
     unsafe {
         memory.write(properties);
@@ -89,15 +90,15 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
             )
         } else {
             apo_log!(
-                etw::ERROR,
-                etw::LIFECYCLE,
+                etw::level::ERROR,
+                etw::keyword::LIFECYCLE,
                 "Initialize rejected instance={object:p} unsupported_data_size={size}"
             );
             return E_INVALIDARG;
         };
 
     // Cache the frequency before real-time processing.
-    let _ = win_qpf();
+    let _ = qpc_frequency();
 
     let mut control = object.control();
     // A concurrent or reentrant call may have initialized the instance in the meantime.
@@ -109,12 +110,12 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
     if mode != AUDIO_SIGNALPROCESSINGMODE_RAW {
         // Discovery objects also expose live effect lists and change events.
         // They watch APO configuration but still cannot allocate/process a DSP graph.
-        match crate::apo_config_watcher::ApoConfigWatcher::start(Arc::clone(&object.config)) {
+        match crate::config::ConfigWatcher::start(Arc::clone(&object.config)) {
             Ok(worker) => control.config_watcher = Some(worker),
             Err(error) => {
                 apo_log!(
-                    etw::WARNING,
-                    etw::APO_CONFIG,
+                    etw::level::WARNING,
+                    etw::keyword::APO_CONFIG,
                     "APO configuration watcher failed: {error}"
                 );
             }
@@ -124,8 +125,8 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
     control.discovery_only = discovery_only;
     control.initialized = true;
     apo_log!(
-        etw::INFO,
-        etw::LIFECYCLE,
+        etw::level::INFO,
+        etw::keyword::LIFECYCLE,
         "Initialize completed instance={object:p} system_effects_version={version} data_size={size} mode={} mode_guid={mode:?} discovery_only={discovery_only}",
         processing_mode_name(&mode)
     );
@@ -150,7 +151,7 @@ fn soundboard_name(
     unsafe {
         CoTaskMemFree(Some(text.0.cast()));
     }
-    pcm_transport_name(&guid.ok()?).ok()
+    pcm_transport::mapping_name(&guid.ok()?).ok()
 }
 
 fn processing_mode_name(mode: &GUID) -> &'static str {
@@ -218,8 +219,8 @@ pub unsafe extern "system" fn get_effects_list(
         *count = 1;
     }
     apo_log!(
-        etw::INFO,
-        etw::LIFECYCLE,
+        etw::level::INFO,
+        etw::keyword::LIFECYCLE,
         "GetEffectsList instance={object:p} denoise={denoise}"
     );
     S_OK
@@ -273,8 +274,8 @@ pub unsafe extern "system" fn get_controllable_effects_list(
         *count = 1;
     }
     apo_log!(
-        etw::INFO,
-        etw::LIFECYCLE,
+        etw::level::INFO,
+        etw::keyword::LIFECYCLE,
         "GetControllableSystemEffectsList instance={object:p} denoise={denoise} controllable=false"
     );
     S_OK
@@ -287,8 +288,8 @@ pub unsafe extern "system" fn set_effect_state(
 ) -> HRESULT {
     let object = unsafe { object_from(this) };
     apo_log!(
-        etw::WARNING,
-        etw::LIFECYCLE,
+        etw::level::WARNING,
+        etw::keyword::LIFECYCLE,
         "SetAudioSystemEffectState rejected instance={object:p} effect={effect:?} state={} result=0x{:08x}",
         state.0,
         E_NOTIMPL.0 as u32

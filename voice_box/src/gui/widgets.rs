@@ -1,6 +1,8 @@
 use crate::{
+    devices::Microphone,
     i18n::{Message, Text},
     model::Hotkey,
+    plugin::PluginStatus,
 };
 
 pub const ICON_BUTTON_SIZE: f32 = 30.0;
@@ -334,4 +336,23 @@ pub fn notice(ctx: &egui::Context, title: Text, message: &Message) -> bool {
             }
         })
         .should_close()
+}
+
+/// A microphone with its default marker and plugin status, as every device list shows it.
+pub fn microphone_label(microphone: &Microphone) -> String {
+    let status = match microphone.plugin_status {
+        PluginStatus::Installed => Text::PluginInstalled.text(),
+        PluginStatus::NotInstalled => Text::PluginNotInstalled.text(),
+        PluginStatus::NeedsUpdate => Text::PluginNeedsUpdate.text(),
+    };
+    let name = if microphone.is_default {
+        Message::DefaultDevice {
+            name: microphone.name.clone(),
+        }
+        .text()
+        .into_owned()
+    } else {
+        microphone.name.clone()
+    };
+    format!("{name} ({status})")
 }

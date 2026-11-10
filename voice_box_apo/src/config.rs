@@ -23,10 +23,7 @@ use windows::{
     core::HSTRING,
 };
 
-use voice_box_shared::{
-    apo_config::{APO_CONFIG_KEY, ApoConfig},
-    utils::GainDb,
-};
+use voice_box_shared::apo_config::{APO_CONFIG_KEY, ApoConfig, GainDb};
 
 use crate::{etw, worker};
 
@@ -172,10 +169,10 @@ impl RtConfig {
     }
 }
 
-pub struct ApoConfigWatcher {
+pub struct ConfigWatcher {
     stop: Arc<Event>,
 }
-impl ApoConfigWatcher {
+impl ConfigWatcher {
     pub fn start(config: Arc<RtConfig>) -> windows::core::Result<Self> {
         if let Ok(apo_config) = ApoConfig::load() {
             config.store(apo_config);
@@ -183,13 +180,13 @@ impl ApoConfigWatcher {
         let stop = Arc::new(Event(unsafe { CreateEventW(None, true, false, None)? }));
         let changed = Event(unsafe { CreateEventW(None, false, false, None)? });
         let worker_stop = Arc::clone(&stop);
-        worker::spawn("VoiceBoxApoConfigWatcher", move || {
+        worker::spawn("VoiceBoxConfigWatcher", move || {
             run(&worker_stop, &changed, &config)
         })?;
         Ok(Self { stop })
     }
 }
-impl Drop for ApoConfigWatcher {
+impl Drop for ConfigWatcher {
     fn drop(&mut self) {
         unsafe {
             let _ = SetEvent(self.stop.handle());
@@ -248,8 +245,8 @@ fn run(stop: &Event, changed: &Event, config: &RtConfig) {
             WAIT_FAILED => {
                 let error = windows::core::Error::from_thread();
                 etw::apo_log!(
-                    etw::ERROR,
-                    etw::APO_CONFIG,
+                    etw::level::ERROR,
+                    etw::keyword::APO_CONFIG,
                     "APO configuration wait failed; watcher exiting: {error}"
                 );
                 break;
@@ -266,14 +263,14 @@ fn log_status_change(faulted: &mut bool, error: Option<&anyhow::Error>) {
     *faulted = error.is_some();
     if let Some(error) = error {
         etw::apo_log!(
-            etw::WARNING,
-            etw::APO_CONFIG,
+            etw::level::WARNING,
+            etw::keyword::APO_CONFIG,
             "APO configuration reload failed; will retry: {error:#}"
         );
     } else {
         etw::apo_log!(
-            etw::INFO,
-            etw::APO_CONFIG,
+            etw::level::INFO,
+            etw::keyword::APO_CONFIG,
             "APO configuration reload recovered"
         );
     }
