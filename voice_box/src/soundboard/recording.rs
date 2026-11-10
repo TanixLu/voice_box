@@ -220,7 +220,8 @@ impl Recorder {
                     &self.wake,
                     move |stop, started| {
                         if !stop.load(Ordering::Relaxed) {
-                            playback::play(&audio, &audio.samples[samples], stop, started)?;
+                            let source = playback::once(&audio.samples[samples]);
+                            playback::play(&audio, source, stop, started)?;
                         }
                         Ok(Outcome::Previewed)
                     },

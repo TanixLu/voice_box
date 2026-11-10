@@ -1,5 +1,5 @@
 use std::{
-    ptr,
+    slice,
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
@@ -17,9 +17,21 @@ use crate::{
     win::ComGuard,
 };
 
+/// A `play` source that plays `samples` once.
+pub fn once(mut samples: &[f32]) -> impl FnMut(&mut [f32]) -> usize + '_ {
+    move |buffer| {
+        let (head, tail) = samples.split_at(buffer.len().min(samples.len()));
+        buffer[..head.len()].copy_from_slice(head);
+        samples = tail;
+        head.len()
+    }
+}
+
+/// Plays audio in `recording`'s format. `source` fills a buffer of whole frames
+/// and returns how many samples it wrote; fewer than requested ends the audio.
 pub fn play(
     recording: &Recording,
-    samples: &[f32],
+    mut source: impl FnMut(&mut [f32]) -> usize,
     stop: &AtomicBool,
     started: &dyn Fn(),
 ) -> anyhow::Result<()> {
@@ -37,25 +49,23 @@ pub fn play(
     let stream = Stream::new(client, &format, true).user_context(Text::OpenPlaybackDeviceFailed)?;
     let render: IAudioRenderClient = unsafe { stream.client.GetService()? };
     let channels = recording.channels as usize;
-    let mut cursor = 0;
-    let write = |cursor: &mut usize, available: u32| -> anyhow::Result<()> {
-        let frames = (available as usize).min((samples.len() - *cursor) / channels);
-        if frames == 0 {
-            return Ok(());
+    let mut finished = false;
+    // Returns whether any frames were written.
+    let mut write = |finished: &mut bool, available: u32| -> anyhow::Result<bool> {
+        if *finished || available == 0 {
+            return Ok(false);
         }
-        let data = unsafe { render.GetBuffer(frames as u32)? };
-        unsafe {
-            ptr::copy_nonoverlapping(
-                samples.as_ptr().add(*cursor).cast::<u8>(),
-                data,
-                frames * channels * size_of::<f32>(),
-            );
-            render.ReleaseBuffer(frames as u32, 0)?;
-        }
-        *cursor += frames * channels;
-        Ok(())
+        let frames = unsafe {
+            let data = render.GetBuffer(available)?;
+            let buffer =
+                slice::from_raw_parts_mut(data.cast::<f32>(), available as usize * channels);
+            (source(buffer) / channels) as u32
+        };
+        unsafe { render.ReleaseBuffer(frames, 0)? };
+        *finished = frames < available;
+        Ok(frames > 0)
     };
-    write(&mut cursor, unsafe { stream.client.GetBufferSize()? })?;
+    write(&mut finished, unsafe { stream.client.GetBufferSize()? })?;
     unsafe {
         stream.client.Start()?;
     }
@@ -69,7 +79,7 @@ pub fn play(
         let padding = unsafe { stream.client.GetCurrentPadding()? };
         // A short recording may be completely queued before Start; wait until
         // the last frames have actually played, rather than cutting off its tail.
-        if padding == 0 && cursor == samples.len() {
+        if padding == 0 && finished {
             return Ok(());
         }
         if padding != last_padding {
@@ -81,9 +91,7 @@ pub fn play(
             Text::PlaybackDeviceUnresponsive
         );
         let capacity = unsafe { stream.client.GetBufferSize()? };
-        let previous_cursor = cursor;
-        write(&mut cursor, capacity.saturating_sub(padding))?;
-        if cursor != previous_cursor {
+        if write(&mut finished, capacity.saturating_sub(padding))? {
             last_progress = Instant::now();
         }
         stream.event.wait()?;

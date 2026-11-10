@@ -31,7 +31,6 @@ catalog! {
     OpeningMicrophone => ("Opening microphone…", "正在打开麦克风…");
     PreparingProcessedAudio => ("Preparing processed audio…", "正在准备处理后的声音…");
     OpeningPlaybackDevice => ("Opening playback device…", "正在打开播放设备…");
-    InvalidRecordingData => ("Invalid recording data", "录音数据无效");
     ProcessPreviewFailed => ("Failed to process the preview recording", "处理试听录音失败");
     OpenPlaybackDeviceFailed => ("Failed to open the playback device", "开启播放设备失败");
     PlaybackDeviceUnresponsive => ("The playback device is not responding. Check its connection", "播放设备没有响应，请检查设备连接");
@@ -180,7 +179,7 @@ catalog! {
     FinishRecording => ("Finish recording", "结束录音");
     StartRecording => ("Start recording", "开始录音");
     PlayOriginal => ("Play original", "播放原音频");
-    PlayProcessed => ("Play processed", "播放处理后声音");
+    PlayProcessed => ("Play processed ⟳", "播放处理后声音 ⟳");
     Stopping => ("Stopping…", "正在停止…");
     OperationIncomplete => ("The operation did not complete. Please try again.", "操作未完成，请重试。");
     ImportSoundsTitle => ("Import sounds", "批量导入音效");

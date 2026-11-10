@@ -15,8 +15,10 @@ use crate::{
 pub enum Command {
     Save,
     Record(String),
-    /// Plays the recording, processed with this configuration when present.
-    Play(Option<ApoConfig>),
+    /// Plays the recording once, or loops it processed with the live configuration.
+    Play {
+        processed: bool,
+    },
     Stop,
 }
 
@@ -82,9 +84,9 @@ impl VoicePanel {
                 self.preview_error.clear();
                 self.preview.record(device_id);
             }
-            Command::Play(config) => {
+            Command::Play { processed } => {
                 self.preview_error.clear();
-                self.preview.play(config);
+                self.preview.play(processed);
             }
             Command::Stop => self.preview.stop(),
         }
@@ -187,6 +189,7 @@ impl VoicePanel {
                 self.config = defaults;
             }
         });
+        self.preview.set_config(&self.config);
         if !self.save_error.is_empty() {
             warning(ui, &self.save_error.text());
         } else if self.config != self.saved {
@@ -244,7 +247,7 @@ impl VoicePanel {
                 command = Some(if activity == Some(Activity::PlayingOriginal) {
                     Command::Stop
                 } else {
-                    Command::Play(None)
+                    Command::Play { processed: false }
                 });
             }
             // Place processed playback at the right on normal window sizes;
@@ -266,7 +269,7 @@ impl VoicePanel {
                 command = Some(if activity == Some(Activity::PlayingProcessed) {
                     Command::Stop
                 } else {
-                    Command::Play(Some(self.config.clone()))
+                    Command::Play { processed: true }
                 });
             }
         });
