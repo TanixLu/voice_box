@@ -127,6 +127,8 @@ pub fn run(settings: Settings, silent_start: bool) -> anyhow::Result<()> {
             .with_min_inner_size([380.0, 340.0]),
         persist_window: true,
         persistence_path: Some(ui_state_path().to_path_buf()),
+        // `fonts::install` provides the DirectWrite fallback.
+        system_font_fallback: false,
         ..Default::default()
     };
     eframe::run_native(

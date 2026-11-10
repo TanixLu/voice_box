@@ -13,7 +13,6 @@ eframe = { version = "0.37", default-features = false, features = [
     "glow",
     "links",
     "persistence",
-    "system_fonts",
 ] }
 egui = { version = "0.37", default-features = false, features = ["serde"] }
 egui-winit = { version = "0.37", default-features = false }

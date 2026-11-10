@@ -66,17 +66,22 @@ impl VoiceBoxApp {
             ui.separator();
             ui.spacing_mut().scroll.floating = false;
             ui.spacing_mut().scroll.bar_inner_margin = 14.0;
-            egui::ScrollArea::vertical()
+            // Lay out only the visible lines; one label for the whole notice costs tens of MB.
+            let lines: Vec<&str> = LICENSES.lines().collect();
+            let row_height = ui.text_style_height(&egui::TextStyle::Body);
+            egui::ScrollArea::both()
                 .id_salt("copyright_scroll")
                 .max_height((available.y - 180.0).clamp(60.0, 360.0))
                 .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.add(egui::Label::new(LICENSES).wrap().selectable(true));
+                .show_rows(ui, row_height, lines.len(), |ui, rows| {
+                    for line in &lines[rows] {
+                        ui.add(egui::Label::new(*line).extend());
+                    }
                 });
             ui.separator();
             ui.horizontal(|ui| {
                 if ui.button(Text::CopyAll.text()).clicked() {
-                    ctx.copy_text(LICENSES.to_owned());
+                    ctx.copy_text(LICENSES.clone());
                 }
                 if ui.button(Text::Close.text()).clicked() {
                     ui.close();

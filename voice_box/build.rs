@@ -71,6 +71,31 @@ fn compress_apo_dll(out: &Path) {
     fs::write(output, compressed).expect("Failed to write compressed APO DLL");
 }
 
+fn compress_licenses(out: &Path) {
+    let read = |path: &str| {
+        println!("cargo:rerun-if-changed={path}");
+        fs::read_to_string(path).unwrap_or_else(|error| panic!("Failed to read {path}: {error}"))
+    };
+    let text = format!(
+        "VoiceBox v{}\nCopyright (C) 2026 Tanix\n\n\
+         Project source: https://github.com/TanixLu/voice_box\n\n\
+         Original VoiceBox code is licensed under MIT OR Apache-2.0, at your option.\n\
+         Third-party components and model weights retain their respective licenses.\n\n\
+         ===== VoiceBox: MIT License =====\n\n{}\
+         \n===== VoiceBox: Apache License 2.0 =====\n\n{}\
+         \n===== Third-party licenses and notices =====\n\n{}",
+        env!("CARGO_PKG_VERSION"),
+        read("../LICENSE-MIT"),
+        read("../LICENSE-APACHE"),
+        read("../THIRD_PARTY_LICENSES"),
+    );
+    fs::write(
+        out.join("licenses.txt.lz4"),
+        lz4_flex::block::compress_prepend_size(text.as_bytes()),
+    )
+    .expect("Failed to write compressed licenses");
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../assets/icon.svg");
@@ -79,6 +104,7 @@ fn main() {
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR should be set by Cargo"));
     generate_icons(&out);
     compress_apo_dll(&out);
+    compress_licenses(&out);
 
     let target = env::var("TARGET").expect("TARGET should be set by Cargo");
     if !target.contains("windows") {

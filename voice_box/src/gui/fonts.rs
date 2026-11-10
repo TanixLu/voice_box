@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    ffi::c_void,
     sync::{Arc, Mutex},
 };
 
@@ -9,19 +10,18 @@ use egui::{
     epaint::text::{Blob, FallbackRequest, FontProvider},
 };
 use windows::{
-    Win32::{
-        Globalization::GetUserDefaultLocaleName,
-        Graphics::DirectWrite::{
-            DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_WEIGHT_REGULAR, DWRITE_READING_DIRECTION,
-            DWRITE_READING_DIRECTION_LEFT_TO_RIGHT, DWriteCreateFactory, IDWriteFactory2,
-            IDWriteFontCollection, IDWriteFontFallback, IDWriteNumberSubstitution,
-            IDWriteTextAnalysisSource, IDWriteTextAnalysisSource_Impl,
-        },
-        System::SystemServices::LOCALE_NAME_MAX_LENGTH,
+    Win32::Graphics::DirectWrite::{
+        DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_WEIGHT_REGULAR, DWRITE_READING_DIRECTION,
+        DWRITE_READING_DIRECTION_LEFT_TO_RIGHT, DWriteCreateFactory, IDWriteFactory2,
+        IDWriteFontCollection, IDWriteFontFallback, IDWriteFontFileStream,
+        IDWriteNumberSubstitution, IDWriteTextAnalysisSource, IDWriteTextAnalysisSource_Impl,
     },
-    core::{Interface, OutRef, implement, w},
+    core::{Interface, OutRef, PCWSTR, implement, w},
 };
+
+/// Han glyphs follow the locale; Simplified Chinese is the app's only CJK language.
+const FALLBACK_LOCALE: PCWSTR = w!("zh-CN");
 
 pub fn install(ctx: &egui::Context) {
     match DirectWriteFonts::new() {
@@ -32,20 +32,14 @@ pub fn install(ctx: &egui::Context) {
 
 struct DirectWriteFonts {
     fallback: IDWriteFontFallback,
-    locale: [u16; LOCALE_NAME_MAX_LENGTH as usize],
     files: Mutex<HashMap<String, Blob>>,
 }
 
 impl DirectWriteFonts {
     fn new() -> anyhow::Result<Self> {
         let factory: IDWriteFactory2 = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
-        let mut locale = [0; LOCALE_NAME_MAX_LENGTH as usize];
-        if unsafe { GetUserDefaultLocaleName(&mut locale) } == 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
         Ok(Self {
             fallback: unsafe { factory.GetSystemFontFallback()? },
-            locale,
             files: Mutex::new(HashMap::new()),
         })
     }
@@ -56,11 +50,7 @@ impl DirectWriteFonts {
         }
         let text: Vec<u16> = request.cluster.encode_utf16().collect();
         let length = text.len().try_into()?;
-        let source: IDWriteTextAnalysisSource = TextSource {
-            text,
-            locale: self.locale,
-        }
-        .into();
+        let source: IDWriteTextAnalysisSource = TextSource { text }.into();
         let family = match request.family {
             FontFamily::Monospace => w!("Consolas"),
             _ => w!("Segoe UI"),
@@ -105,23 +95,9 @@ impl DirectWriteFonts {
             let blob = if let Some(blob) = cache.get(&file_key) {
                 Arc::clone(blob)
             } else {
-                let stream = loader.CreateStreamFromKey(key, key_size)?;
-                let size = usize::try_from(stream.GetFileSize()?)?;
-                ensure!(
-                    size > 0 && size <= isize::MAX as usize,
-                    "Invalid font file size"
-                );
-                let mut fragment = std::ptr::null_mut();
-                let mut context = std::ptr::null_mut();
-                stream.ReadFileFragment(&mut fragment, 0, size as u64, &mut context)?;
-                let bytes = if fragment.is_null() {
-                    None
-                } else {
-                    Some(std::slice::from_raw_parts(fragment.cast::<u8>(), size).to_vec())
-                };
-                stream.ReleaseFileFragment(context);
-                let blob: Blob =
-                    Arc::new(bytes.context("DirectWrite returned a null font fragment")?);
+                let blob: Blob = Arc::new(FontFragment::new(
+                    loader.CreateStreamFromKey(key, key_size)?,
+                )?);
                 cache.insert(file_key.clone(), Arc::clone(&blob));
                 blob
             };
@@ -162,10 +138,57 @@ impl FontProvider for DirectWriteFonts {
     }
 }
 
+/// A whole font file, kept as DirectWrite's file-backed fragment instead of a heap copy.
+struct FontFragment {
+    stream: IDWriteFontFileStream,
+    context: *mut c_void,
+    bytes: *const [u8],
+}
+
+// SAFETY: DirectWrite file streams are free-threaded, and the fragment stays
+// read-only and mapped until `Drop` releases it.
+unsafe impl Send for FontFragment {}
+unsafe impl Sync for FontFragment {}
+
+impl FontFragment {
+    fn new(stream: IDWriteFontFileStream) -> anyhow::Result<Self> {
+        let size = usize::try_from(unsafe { stream.GetFileSize()? })?;
+        ensure!(
+            size > 0 && size <= isize::MAX as usize,
+            "Invalid font file size"
+        );
+        let mut fragment = std::ptr::null_mut();
+        let mut context = std::ptr::null_mut();
+        unsafe { stream.ReadFileFragment(&mut fragment, 0, size as u64, &mut context)? };
+        let font = Self {
+            stream,
+            context,
+            bytes: std::ptr::slice_from_raw_parts(fragment.cast::<u8>(), size),
+        };
+        ensure!(
+            !font.bytes.is_null(),
+            "DirectWrite returned a null font fragment"
+        );
+        Ok(font)
+    }
+}
+
+impl AsRef<[u8]> for FontFragment {
+    fn as_ref(&self) -> &[u8] {
+        // SAFETY: `new` rejected a null fragment, which stays valid until `Drop`.
+        unsafe { &*self.bytes }
+    }
+}
+
+impl Drop for FontFragment {
+    fn drop(&mut self) {
+        unsafe { self.stream.ReleaseFileFragment(self.context) };
+    }
+}
+
 #[implement(IDWriteTextAnalysisSource)]
 struct TextSource {
     text: Vec<u16>,
-    locale: [u16; LOCALE_NAME_MAX_LENGTH as usize],
 }
 
 impl IDWriteTextAnalysisSource_Impl for TextSource_Impl {
@@ -217,7 +240,7 @@ impl IDWriteTextAnalysisSource_Impl for TextSource_Impl {
     ) -> windows::core::Result<()> {
         unsafe {
             *length = (self.text.len() as u32).saturating_sub(position);
-            *locale = self.locale.as_ptr().cast_mut();
+            *locale = FALLBACK_LOCALE.as_ptr().cast_mut();
         }
         Ok(())
     }
