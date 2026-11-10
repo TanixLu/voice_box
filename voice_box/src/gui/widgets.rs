@@ -274,7 +274,7 @@ pub fn notice(ctx: &egui::Context, title: Text, message: &Message) -> bool {
         .show(ctx, |ui| {
             ui.set_width((available.x - 64.0).clamp(180.0, 600.0));
             ui.heading(egui::RichText::new(title.text()).size(24.0));
-            ui.separator();
+            ui.add_space(8.0);
             ui.spacing_mut().scroll.floating = false;
             egui::ScrollArea::vertical()
                 .max_height((available.y - 160.0).clamp(60.0, 400.0))
@@ -282,7 +282,7 @@ pub fn notice(ctx: &egui::Context, title: Text, message: &Message) -> bool {
                 .show(ui, |ui| {
                     ui.add(egui::Label::new(message.text()).wrap().selectable(true));
                 });
-            ui.separator();
+            ui.add_space(12.0);
             if ui.button(Text::Close.text()).clicked() {
                 ui.close();
             }

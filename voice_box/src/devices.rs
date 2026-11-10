@@ -22,8 +22,8 @@ pub struct Speaker {
     pub is_default: bool,
 }
 
-/// The microphones, with the index of the default one.
-pub fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
+/// The microphones, with the default one first.
+pub fn enumerate_microphones() -> anyhow::Result<Vec<Microphone>> {
     let _com_guard = ComGuard::mta()?;
     let enumerator = DeviceEnumerator::new()?;
     let default_id = enumerator
@@ -31,35 +31,30 @@ pub fn enumerate_microphones() -> anyhow::Result<(Vec<Microphone>, usize)> {
         .and_then(|device| device.get_id())
         .ok();
     let mut microphones = Vec::new();
-    let mut selected = 0;
     for device in &enumerator.get_device_collection(&Direction::Capture)? {
         let device = device?;
         let id = device.get_id()?;
         let guid = endpoint_guid(&id)?.to_owned();
-        let is_default = default_id.as_deref() == Some(&id);
-        if is_default {
-            selected = microphones.len();
-        }
-        let name = device.get_friendlyname()?;
         microphones.push(Microphone {
+            name: device.get_friendlyname()?,
+            is_default: default_id.as_deref() == Some(&id),
             device_id: id,
-            name,
-            is_default,
             plugin_status: plugin::device_status(&guid),
             guid,
         });
     }
+    microphones.sort_by_key(|mic| !mic.is_default);
     tracing::info!(
         count = microphones.len(),
         default_device_id = ?default_id,
         "Microphone discovery completed"
     );
-    Ok((microphones, selected))
+    Ok(microphones)
 }
 
 /// Every microphone and speaker.
 pub fn enumerate_all() -> anyhow::Result<(Vec<Microphone>, Vec<Speaker>)> {
-    let (microphones, _) = enumerate_microphones()?;
+    let microphones = enumerate_microphones()?;
     let _com_guard = ComGuard::mta()?;
     let enumerator = DeviceEnumerator::new()?;
     let default_id = enumerator

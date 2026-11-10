@@ -7,7 +7,7 @@ use crate::{
 };
 
 enum Outcome {
-    Devices(Vec<Microphone>, usize),
+    Devices(Vec<Microphone>),
     Plugin(PluginOutcome),
 }
 
@@ -58,8 +58,8 @@ impl MicrophonePanel {
         };
         self.job = None;
         let error = match result {
-            Ok(Outcome::Devices(devices, selected)) => {
-                self.replace_devices(devices, selected);
+            Ok(Outcome::Devices(devices)) => {
+                self.replace_devices(devices);
                 None
             }
             Ok(Outcome::Plugin(PluginOutcome { result, statuses })) => {
@@ -78,7 +78,8 @@ impl MicrophonePanel {
             };
         }
     }
-    fn replace_devices(&mut self, devices: Vec<Microphone>, selected: usize) {
+    /// Keeps the preferred microphone selected, falling back to the default one, listed first.
+    fn replace_devices(&mut self, devices: Vec<Microphone>) {
         let selected = self
             .preferred_guid
             .as_ref()
@@ -87,7 +88,7 @@ impl MicrophonePanel {
                     .iter()
                     .position(|mic| mic.guid.eq_ignore_ascii_case(guid))
             })
-            .unwrap_or(selected);
+            .unwrap_or(0);
         self.devices = devices;
         self.selected = selected;
         if self.preferred_guid.is_none() {
@@ -105,8 +106,7 @@ impl MicrophonePanel {
     }
     pub fn refresh(&mut self) {
         self.start(Text::ReadingMicrophones, || {
-            devices::enumerate_microphones()
-                .map(|(devices, selected)| Outcome::Devices(devices, selected))
+            devices::enumerate_microphones().map(Outcome::Devices)
         });
     }
     fn run_plugin_action(&mut self, status: Text, action: PluginAction) {
