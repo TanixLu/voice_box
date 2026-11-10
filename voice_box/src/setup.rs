@@ -14,7 +14,7 @@ use winreg::{
 };
 
 use voice_box_shared::{
-    apo_cfg::APO_CFG_KEY,
+    apo_config::APO_CONFIG_KEY,
     utils::{APO_CLSID, APO_NAME, COPYRIGHT, apo_registration_properties},
 };
 
@@ -134,7 +134,7 @@ pub fn execute_plugin_action(
 ) -> PluginOperationResult {
     tracing::info!(?action, %guid, "Starting microphone plugin operation");
     let result = match action {
-        PluginAction::Install => ensure_device_plugin_installed(&guid),
+        PluginAction::Install => install_device_plugin(&guid),
         PluginAction::Uninstall => uninstall_device_plugin(&guid),
     };
     // Recheck even after failure: the operation can have partially succeeded.
@@ -268,7 +268,8 @@ pub fn with_audio_service_stopped(
     Ok(())
 }
 
-fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
+/// Writes the DLL, registration and device effects; the audio service must be stopped.
+fn write_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     let apo_dll_path = apo_dll_path();
     let string_values = string_registration_values(apo_dll_path)?;
     // Update the DLL.
@@ -427,7 +428,7 @@ pub fn unregister_all() -> anyhow::Result<()> {
     for path in [
         format!(r"SOFTWARE\Classes\CLSID\{guid}"),
         format!(r"SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\{guid}"),
-        APO_CFG_KEY.to_owned(),
+        APO_CONFIG_KEY.to_owned(),
     ] {
         delete_tree_transacted(&root, &path, &transaction).with_user_context(|| {
             Message::DeleteApoRegistration {
@@ -462,7 +463,7 @@ fn delete_tree_transacted(
     root.delete_subkey_transacted_with_flags(path, transaction, KEY_WOW64_64KEY)
 }
 
-fn ensure_device_plugin_installed(device_guid: &str) -> anyhow::Result<()> {
+fn install_device_plugin(device_guid: &str) -> anyhow::Result<()> {
     if device_plugin_status(device_guid) != PluginStatus::Installed {
         run_device_plugin_operation(device_guid, false)?;
         anyhow::ensure!(
@@ -489,7 +490,7 @@ fn run_device_plugin_operation(device_guid: &str, uninstall: bool) -> anyhow::Re
         if uninstall {
             update_device_effects(device_guid, true)
         } else {
-            install_device_plugin(device_guid)
+            write_device_plugin(device_guid)
         }
     })
 }

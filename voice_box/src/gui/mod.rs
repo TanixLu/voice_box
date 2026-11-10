@@ -1,7 +1,7 @@
 mod batch_rename;
 mod dialogs;
 mod fonts;
-mod hotkey_binding;
+mod key_capture;
 mod microphone;
 mod overlay;
 mod picker;
@@ -16,7 +16,7 @@ mod widgets;
 
 use egui_winit::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use strum::IntoEnumIterator;
-use voice_box_shared::apo_cfg::ApoCfg;
+use voice_box_shared::apo_config::ApoConfig;
 use windows::Win32::Foundation::HWND;
 
 use crate::{
@@ -82,9 +82,9 @@ fn close_to_tray(ctx: &egui::Context, exiting: bool, tray_available: bool) {
 }
 
 pub fn run(settings: Settings, start_in_tray: bool) -> anyhow::Result<()> {
-    let apo_config = ApoCfg::load().unwrap_or_else(|error| {
+    let apo_config = ApoConfig::load().unwrap_or_else(|error| {
         tracing::warn!("Failed to load the APO configuration; using defaults: {error:#}");
-        ApoCfg::default()
+        ApoConfig::default()
     });
     let library = Library::try_load()?;
     let icon = eframe::icon_data::from_png_bytes(ICON_PNG_DATA)?;
@@ -162,7 +162,7 @@ struct VoiceBoxApp {
 impl VoiceBoxApp {
     fn new(
         cc: &eframe::CreationContext<'_>,
-        apo_config: ApoCfg,
+        apo_config: ApoConfig,
         settings: Settings,
         library: Library,
         start_in_tray: bool,

@@ -14,8 +14,8 @@ use std::{
 use voice_box_shared::{
     dsp::{RandomAccessResampler, RateMatcher},
     pcm_transport::{
-        PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame, PcmReader, PcmSlot, pcm_frame,
-        pcm_frame_f64,
+        PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame, PcmReader, PcmSlot, pcm_now,
+        pcm_now_f64,
     },
 };
 
@@ -79,7 +79,7 @@ impl Injection {
         if frames == 0 {
             return None;
         }
-        let now = pcm_frame_f64();
+        let now = pcm_now_f64();
         let generation = self.state.generation.load(Acquire);
         let deadline = self.state.deadline.load(Acquire) as f64;
         // Let a lagging source finish its tail after its scheduled QPC end.
@@ -119,7 +119,7 @@ fn receive(name: String, state: &SoundboardState, stop: &AtomicBool) {
     let mut cursor = 0;
     let mut previous = 0;
     while !stop.load(Relaxed) {
-        let now = pcm_frame();
+        let now = pcm_now();
         if mapping.is_none() {
             mapping = PcmReader::open(&name).ok();
         }

@@ -53,7 +53,7 @@ pub unsafe extern "system" fn lock_for_process(
     let fail = |reason: &str, result: HRESULT| {
         apo_log!(
             etw::ERROR,
-            etw::APO_CFG,
+            etw::APO_CONFIG,
             "LockForProcess failed instance={object:p} inputs={input_count} outputs={output_count} reason={reason} result=0x{:08x}",
             result.0 as u32
         );
@@ -202,7 +202,7 @@ pub unsafe extern "system" fn lock_for_process(
     access.install(session);
     apo_log!(
         etw::INFO,
-        etw::APO_CFG,
+        etw::APO_CONFIG,
         "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} effect=denoise enabled={} latency_hns={}",
         max_input_frames,
         max_output_frames,
@@ -228,7 +228,7 @@ pub unsafe extern "system" fn unlock_for_process(this: *mut c_void) -> HRESULT {
     }
     apo_log!(
         etw::INFO,
-        etw::APO_CFG,
+        etw::APO_CONFIG,
         "UnlockForProcess completed instance={object:p} process_calls={} processed_frames={}",
         object.process_calls.load(Ordering::Relaxed),
         object.processed_frames.load(Ordering::Relaxed)

@@ -8,7 +8,7 @@ use anyhow::ensure;
 
 use voice_box_shared::pcm_transport::{
     PCM_DECODE_AHEAD_FRAMES, PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame, PcmWriter,
-    pcm_frame,
+    pcm_now,
 };
 
 use crate::{
@@ -135,7 +135,7 @@ impl PlaybackBuffer {
 
 fn drain_commands(
     commands: &mpsc::Receiver<Command>,
-    configure: &mut Option<Config>,
+    next_config: &mut Option<Config>,
 ) -> Result<Option<(SoundId, u64)>, &'static str> {
     let mut replacement = None;
     loop {
@@ -144,9 +144,9 @@ fn drain_commands(
             Err(mpsc::TryRecvError::Disconnected) => return Err("controller_disconnected"),
             Ok(Command::Replace(id, revision, next)) => {
                 replacement = Some((id, revision));
-                *configure = Some(next);
+                *next_config = Some(next);
             }
-            Ok(Command::Configure(next)) => *configure = Some(next),
+            Ok(Command::Configure(next)) => *next_config = Some(next),
             Err(mpsc::TryRecvError::Empty) => return Ok(replacement),
         }
     }
@@ -218,7 +218,7 @@ impl MicrophoneRoute {
         let Some(writer) = self.writer.as_mut().filter(|_| self.generation != 0) else {
             return;
         };
-        let now = pcm_frame();
+        let now = pcm_now();
         self.cursor = self.cursor.max(buffer.base).max(now.saturating_sub(480));
         while self.cursor < buffer.end() {
             let [left, right] = buffer.sample(self.cursor);
@@ -237,20 +237,20 @@ struct SpeakerRoute {
 }
 
 impl SpeakerRoute {
-    fn play(&mut self, settings: &Config, buffer: &PlaybackBuffer) -> anyhow::Result<()> {
-        if settings.speaker_gain_percent.is_mute() || self.failed {
+    fn play(&mut self, config: &Config, buffer: &PlaybackBuffer) -> anyhow::Result<()> {
+        if config.speaker_gain_percent.is_mute() || self.failed {
             self.monitor = None;
             return Ok(());
         }
-        let gain = settings.speaker_gain_percent.as_f32_gain();
+        let gain = config.speaker_gain_percent.as_f32_gain();
         let result = self
             .monitor
             .take()
-            .map_or_else(|| Monitor::open(settings.speaker_device.as_deref()), Ok)
+            .map_or_else(|| Monitor::open(config.speaker_device.as_deref()), Ok)
             .and_then(|monitor| {
                 // Opening a device or decoding a packet can take time. Read the
                 // current clock so the render queue does not use a stale timeline.
-                self.monitor.insert(monitor).fill(pcm_frame(), |frame| {
+                self.monitor.insert(monitor).fill(pcm_now(), |frame| {
                     let [left, right] = buffer.sample(frame);
                     [left * gain, right * gain]
                 })
@@ -266,7 +266,7 @@ impl SpeakerRoute {
 /// `transport` names the shared memory of the configured soundboard microphone.
 pub fn run(
     id: SoundId,
-    mut settings: Config,
+    mut config: Config,
     mut revision: u64,
     transport: Result<String, Details>,
     commands: &mpsc::Receiver<Command>,
@@ -275,7 +275,7 @@ pub fn run(
     let mut source = Source::open(id)?;
     let mut microphone = MicrophoneRoute::default();
     let mut speaker = SpeakerRoute::default();
-    let mut pending = PlaybackBuffer::new(pcm_frame() + 4800);
+    let mut buffer = PlaybackBuffer::new(pcm_now() + 4800);
     let mut played = 0_u64;
     let mut held = HeldKeys::default();
     let mut held_binding = None;
@@ -283,33 +283,33 @@ pub fn run(
     tracing::info!(
         sound_id = id,
         duration_secs = ?source.decoder.duration_secs,
-        speaker_gain_percent = ?settings.speaker_gain_percent,
-        microphone_gain_percent = ?settings.microphone_gain_percent,
-        repeat = settings.repeat,
+        speaker_gain_percent = ?config.speaker_gain_percent,
+        microphone_gain_percent = ?config.microphone_gain_percent,
+        repeat = config.repeat,
         "Soundboard playback started"
     );
     let _ = events.send(Event::Started {
         revision,
         duration_secs: source.decoder.duration_secs,
     });
-    // Queue the initial settings through the same output validation as live changes.
-    let mut configure = Some(settings.clone());
+    // Queue the initial configuration through the same output validation as live changes.
+    let mut next_config = Some(config.clone());
     let reason = 'playback: loop {
-        let mut now = pcm_frame();
+        let mut now = pcm_now();
         // Keep the EOF timestamp fixed while lagging outputs finish reading.
         let advance_to = if source.eof {
-            now.min(pending.end())
+            now.min(buffer.end())
         } else {
             now
         };
-        played += pending.advance(advance_to);
+        played += buffer.advance(advance_to);
         // Coalesce rapid requests before decoding or touching WASAPI. A stop
         // cancels pending replacements; the controller retains later requests.
-        let replacement = match drain_commands(commands, &mut configure) {
+        let replacement = match drain_commands(commands, &mut next_config) {
             Ok(replacement) => replacement,
             Err(reason) => break 'playback reason,
         };
-        if configure.is_some() {
+        if next_config.is_some() {
             speaker.failed = false;
         }
         if let Some((next_id, next_revision)) = replacement {
@@ -322,8 +322,8 @@ pub fn run(
             microphone.stop();
             source = Source::open(next_id)?;
             revision = next_revision;
-            now = pcm_frame();
-            pending.reset(now + 4800);
+            now = pcm_now();
+            buffer.reset(now + 4800);
             played = 0;
             progress = Instant::now();
             // Keep the render client running on its owning COM thread. Its short
@@ -335,13 +335,13 @@ pub fn run(
                 duration_secs: source.decoder.duration_secs,
             });
         }
-        if let Some(mut next) = configure.take() {
-            if next.microphone_gain_percent != settings.microphone_gain_percent {
+        if let Some(mut next) = next_config.take() {
+            if next.microphone_gain_percent != config.microphone_gain_percent {
                 microphone.stop();
             }
             if !next.microphone_gain_percent.is_mute()
                 && microphone.generation == 0
-                && let Err(error) = microphone.start(&transport, &pending, now)
+                && let Err(error) = microphone.start(&transport, &buffer, now)
             {
                 let error = Message::MicrophoneOutputFailed { error };
                 if next.speaker_gain_percent.is_mute() {
@@ -351,50 +351,50 @@ pub fn run(
                 let _ = events.send(Event::OutputError(revision, error));
                 next.microphone_gain_percent = GainPercent::new(0);
             }
-            settings = next;
-            if pending.samples.is_empty() {
+            config = next;
+            if buffer.samples.is_empty() {
                 // Device discovery can block; schedule startup after it finishes.
-                now = pcm_frame();
-                pending.reset(now + 4800);
+                now = pcm_now();
+                buffer.reset(now + 4800);
             }
         }
-        if settings.microphone_gain_percent.is_mute() && settings.speaker_gain_percent.is_mute() {
+        if config.microphone_gain_percent.is_mute() && config.speaker_gain_percent.is_mute() {
             break "outputs_muted";
         }
         // The hold key belongs to `Config`, so it is pressed on this thread in step with
         // the audio and follows live reconfiguration like every other output choice.
-        if settings.hold_hotkey != held_binding {
+        if config.hold_hotkey != held_binding {
             drop(held);
-            held = match settings.hold_hotkey {
+            held = match config.hold_hotkey {
                 Some(key) => HeldKeys::press(key)?,
                 None => HeldKeys::default(),
             };
-            held_binding = settings.hold_hotkey;
+            held_binding = config.hold_hotkey;
         }
-        if source.eof && settings.repeat {
+        if source.eof && config.repeat {
             source.restart()?;
         }
-        let fill_end = (now + PCM_DECODE_AHEAD_FRAMES).min(pending.end() + 2400);
-        while !source.eof && pending.end() < fill_end {
+        let fill_end = (now + PCM_DECODE_AHEAD_FRAMES).min(buffer.end() + 2400);
+        while !source.eof && buffer.end() < fill_end {
             // Decode at most 50 ms per pass so stop/configuration stay responsive.
             match source.decoder.next_frame()? {
                 Some(stereo) => {
-                    pending.samples.push_back(stereo);
+                    buffer.samples.push_back(stereo);
                     source.decoded += 1;
                 }
-                None if settings.repeat && source.decoded > 0 => source.restart()?,
+                None if config.repeat && source.decoded > 0 => source.restart()?,
                 None => {
                     ensure!(
-                        played > 0 || !pending.samples.is_empty(),
+                        played > 0 || !buffer.samples.is_empty(),
                         Text::NoPlayableAudio
                     );
                     source.eof = true;
                 }
             }
         }
-        microphone.write(&pending, settings.microphone_gain_percent.as_f32_gain());
-        if let Err(error) = speaker.play(&settings, &pending) {
-            if settings.microphone_gain_percent.is_mute() {
+        microphone.write(&buffer, config.microphone_gain_percent.as_f32_gain());
+        if let Err(error) = speaker.play(&config, &buffer) {
+            if config.microphone_gain_percent.is_mute() {
                 return Err(error.user_context(Text::SpeakerPlaybackFailed));
             }
             tracing::warn!("Speaker playback failed; microphone output continues: {error:#}");
@@ -405,12 +405,12 @@ pub fn run(
                 },
             ));
         }
-        if source.eof && pending.end().saturating_add(PCM_MAX_CURSOR_DRIFT_FRAMES) <= now {
+        if source.eof && buffer.end().saturating_add(PCM_MAX_CURSOR_DRIFT_FRAMES) <= now {
             break "completed";
         }
         if progress.elapsed() >= Duration::from_millis(100) {
             let mut elapsed_secs = played as f64 / f64::from(PCM_SAMPLE_RATE);
-            if settings.repeat
+            if config.repeat
                 && let Some(duration_secs) = source.decoder.duration_secs.filter(|&d| d > 0.0)
             {
                 elapsed_secs %= duration_secs;

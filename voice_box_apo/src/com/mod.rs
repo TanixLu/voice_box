@@ -31,7 +31,7 @@ use windows::Win32::{
 use windows_core::{GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface};
 
 use crate::{
-    apo_cfg_watcher::{ApoCfgWatcher, RtConfig},
+    apo_config_watcher::{ApoConfigWatcher, RtConfig},
     com::{
         effects::{
             get_controllable_effects_list, get_effects_list, get_registration_properties,
@@ -85,7 +85,7 @@ struct ApoCom {
 struct ControlState {
     // This lease also covers the APO and RtConfig allocations.
     resident_pages: Option<LockedPages>,
-    config_watcher: Option<ApoCfgWatcher>,
+    config_watcher: Option<ApoConfigWatcher>,
     soundboard_name: Option<String>,
     injection_stop: Option<Arc<AtomicBool>>,
     initialized: bool,

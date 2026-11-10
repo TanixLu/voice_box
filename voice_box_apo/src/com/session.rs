@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use voice_box_shared::{apo_cfg::ApoCfg, dsp::AudioProcessor};
+use voice_box_shared::{apo_config::ApoConfig, dsp::AudioProcessor};
 
 use crate::{memory::Resident, soundboard::Injection};
 
@@ -147,7 +147,7 @@ impl ProcessGuard<'_> {
 
     /// Reset and process without transferring ownership of any session resource.
     /// Returns whether the effects chain ran; bypass preserves input buffer flags.
-    pub(super) fn process(&mut self, buffer: &mut [u8], config: &ApoCfg, reset: bool) -> bool {
+    pub(super) fn process(&mut self, buffer: &mut [u8], config: &ApoConfig, reset: bool) -> bool {
         let ProcessingSession { dsp, injection, .. } = &mut *self.session;
         if reset {
             dsp.reset(config);

@@ -8,7 +8,7 @@ use crate::{
     gui::{
         Busy,
         batch_rename::{self, BatchRename},
-        hotkey_binding::KeyCapture,
+        key_capture::KeyCapture,
         overlay::Overlay,
         recording_import::{self, RecordingImport},
         sound_list::{self, SoundList},

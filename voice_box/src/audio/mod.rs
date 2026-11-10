@@ -1,11 +1,11 @@
-//! WASAPI capture and playback, offline preview and session coordination.
+//! WASAPI capture and playback, and the voice tab's recording preview.
 
 pub mod capture;
 pub mod loopback;
 pub mod monitor;
 pub mod playback;
 mod preview;
-pub mod session;
+pub mod voice_preview;
 
 use anyhow::bail;
 use wasapi::WaveFormat;

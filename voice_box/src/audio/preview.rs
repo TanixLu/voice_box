@@ -5,7 +5,7 @@ use std::{mem::size_of, slice};
 use anyhow::ensure;
 
 use voice_box_shared::{
-    apo_cfg::ApoCfg,
+    apo_config::ApoConfig,
     dsp::{AudioProcessor, MAX_CHANNELS, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE, SampleFormat},
 };
 
@@ -14,7 +14,7 @@ use crate::{
     i18n::{Text, UserContext},
 };
 
-pub fn process(recording: &Recording, config: &ApoCfg) -> anyhow::Result<Vec<f32>> {
+pub fn process(recording: &Recording, config: &ApoConfig) -> anyhow::Result<Vec<f32>> {
     let channels = usize::from(recording.channels);
     let samples = &recording.samples;
     ensure!(

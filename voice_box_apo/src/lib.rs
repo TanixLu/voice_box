@@ -1,6 +1,6 @@
 //! VoiceBox APO: high-pass filtering, UL-UNAS denoising and peak limiting.
 
-mod apo_cfg_watcher;
+mod apo_config_watcher;
 mod com;
 mod etw;
 mod memory;

@@ -1,8 +1,8 @@
-//! Cancellable background recording, offline preview and playback.
+//! Cancellable background recording of the voice tab, played back original or processed.
 
 use std::sync::{Arc, atomic::Ordering};
 
-use voice_box_shared::apo_cfg::ApoCfg;
+use voice_box_shared::apo_config::ApoConfig;
 
 use crate::{
     audio::{
@@ -20,7 +20,7 @@ pub enum Activity {
 }
 
 struct ProcessedRecording {
-    config: ApoCfg,
+    config: ApoConfig,
     samples: Arc<Vec<f32>>,
 }
 
@@ -29,14 +29,14 @@ enum Outcome {
     Played(Option<ProcessedRecording>),
 }
 
-pub struct AudioSession {
+pub struct VoicePreview {
     wake: Wake,
     task: Option<(Activity, Task<Outcome>)>,
     recording: Option<Arc<Recording>>,
     processed: Option<ProcessedRecording>,
 }
 
-impl AudioSession {
+impl VoicePreview {
     pub fn new(wake: Wake) -> Self {
         Self {
             wake,
@@ -104,7 +104,7 @@ impl AudioSession {
         self.task = Some((Activity::Recording, task));
     }
 
-    pub fn play(&mut self, config: Option<ApoCfg>) {
+    pub fn play(&mut self, config: Option<ApoConfig>) {
         let Some(recording) = self.recording.clone() else {
             return;
         };

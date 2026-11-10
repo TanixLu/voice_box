@@ -14,18 +14,18 @@ use windows::{
 use crate::utils::GainDb;
 
 /// Under HKEY_LOCAL_MACHINE, which the audio engine's service account can read and watch.
-pub const APO_CFG_KEY: &str = r"SOFTWARE\VoiceBox";
-const APO_CFG_VALUE: &str = "ApoConfig";
+pub const APO_CONFIG_KEY: &str = r"SOFTWARE\VoiceBox";
+const APO_CONFIG_VALUE: &str = "ApoConfig";
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct ApoCfg {
+pub struct ApoConfig {
     pub denoising_enabled: bool,
     pub gain_db: GainDb,
     pub playback_include_microphone_audio: bool,
 }
 
-impl Default for ApoCfg {
+impl Default for ApoConfig {
     fn default() -> Self {
         Self {
             denoising_enabled: false,
@@ -35,10 +35,13 @@ impl Default for ApoCfg {
     }
 }
 
-impl ApoCfg {
+impl ApoConfig {
     /// The saved configuration, or the defaults when none has been saved.
     pub fn load() -> anyhow::Result<Self> {
-        let (key, value) = (HSTRING::from(APO_CFG_KEY), HSTRING::from(APO_CFG_VALUE));
+        let (key, value) = (
+            HSTRING::from(APO_CONFIG_KEY),
+            HSTRING::from(APO_CONFIG_VALUE),
+        );
         let mut bytes = 0;
         let query = |data: Option<*mut _>, bytes: &mut u32| unsafe {
             RegGetValueW(
@@ -70,8 +73,8 @@ impl ApoCfg {
         unsafe {
             RegSetKeyValueW(
                 HKEY_LOCAL_MACHINE,
-                &HSTRING::from(APO_CFG_KEY),
-                &HSTRING::from(APO_CFG_VALUE),
+                &HSTRING::from(APO_CONFIG_KEY),
+                &HSTRING::from(APO_CONFIG_VALUE),
                 REG_SZ.0,
                 Some(text.as_ptr().cast()),
                 size_of_val(text.as_slice()) as u32,

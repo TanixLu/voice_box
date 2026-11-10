@@ -109,12 +109,12 @@ pub unsafe extern "system" fn initialize(this: *mut c_void, size: u32, data: *co
     if mode != AUDIO_SIGNALPROCESSINGMODE_RAW {
         // Discovery objects also expose live effect lists and change events.
         // They watch APO configuration but still cannot allocate/process a DSP graph.
-        match crate::apo_cfg_watcher::ApoCfgWatcher::start(Arc::clone(&object.config)) {
+        match crate::apo_config_watcher::ApoConfigWatcher::start(Arc::clone(&object.config)) {
             Ok(worker) => control.config_watcher = Some(worker),
             Err(error) => {
                 apo_log!(
                     etw::WARNING,
-                    etw::APO_CFG,
+                    etw::APO_CONFIG,
                     "APO configuration watcher failed: {error}"
                 );
             }

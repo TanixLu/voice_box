@@ -24,7 +24,7 @@ use windows::{
 };
 
 use voice_box_shared::{
-    apo_cfg::{APO_CFG_KEY, ApoCfg},
+    apo_config::{APO_CONFIG_KEY, ApoConfig},
     utils::GainDb,
 };
 
@@ -34,7 +34,7 @@ const DENOISING_ENABLED_MASK: u32 = 0x0100;
 const GAIN_DB_MASK: u32 = 0x00FF;
 const INCLUDE_MICROPHONE_MASK: u32 = 1 << 9;
 
-fn apo_cfg_to_bits(apo_config: ApoCfg) -> u32 {
+fn apo_config_to_bits(apo_config: ApoConfig) -> u32 {
     (if apo_config.denoising_enabled {
         DENOISING_ENABLED_MASK
     } else {
@@ -47,8 +47,8 @@ fn apo_cfg_to_bits(apo_config: ApoCfg) -> u32 {
         }
 }
 
-fn bits_to_apo_cfg(bits: u32) -> ApoCfg {
-    ApoCfg {
+fn bits_to_apo_config(bits: u32) -> ApoConfig {
+    ApoConfig {
         denoising_enabled: (bits & DENOISING_ENABLED_MASK) != 0,
         gain_db: GainDb::new((bits & GAIN_DB_MASK) as i8),
         playback_include_microphone_audio: (bits & INCLUDE_MICROPHONE_MASK) != 0,
@@ -72,63 +72,59 @@ impl Drop for Event {
     }
 }
 
-pub struct GetEffectsListEventSlots {
-    get_effects_list_event: Option<Event>,
-    get_controllable_effects_list_event: Option<Event>,
+struct EffectsListEvents {
+    all: Option<Event>,
+    controllable: Option<Event>,
 }
 
 pub struct RtConfig {
     atomic_bits: AtomicU32,
     // Only APO configuration updates and COM discovery touch this mutex. RT loads bits alone.
-    get_effects_list_event_slots: Mutex<GetEffectsListEventSlots>,
+    effects_list_events: Mutex<EffectsListEvents>,
 }
 
 impl Default for RtConfig {
     fn default() -> Self {
         Self {
-            atomic_bits: AtomicU32::new(apo_cfg_to_bits(ApoCfg::default())),
-            get_effects_list_event_slots: Mutex::new(GetEffectsListEventSlots {
-                get_effects_list_event: None,
-                get_controllable_effects_list_event: None,
+            atomic_bits: AtomicU32::new(apo_config_to_bits(ApoConfig::default())),
+            effects_list_events: Mutex::new(EffectsListEvents {
+                all: None,
+                controllable: None,
             }),
         }
     }
 }
 impl RtConfig {
-    fn lock_slots(&self) -> MutexGuard<'_, GetEffectsListEventSlots> {
-        self.get_effects_list_event_slots
+    fn lock_events(&self) -> MutexGuard<'_, EffectsListEvents> {
+        self.effects_list_events
             .lock()
             .unwrap_or_else(|error| error.into_inner())
     }
 
-    pub fn load(&self) -> ApoCfg {
-        // The entire RT snapshot fits in one atomic; subscriptions use lock_slots.
-        bits_to_apo_cfg(self.atomic_bits.load(Ordering::Relaxed))
+    pub fn load(&self) -> ApoConfig {
+        // The entire RT snapshot fits in one atomic; subscriptions use lock_events.
+        bits_to_apo_config(self.atomic_bits.load(Ordering::Relaxed))
     }
-    pub fn store(&self, apo_config: ApoCfg) {
+    pub fn store(&self, apo_config: ApoConfig) {
         // Subscription plus its returned snapshot must be serialized with updates.
-        let slots = self.lock_slots();
+        let events = self.lock_events();
         let previous = self
             .atomic_bits
-            .swap(apo_cfg_to_bits(apo_config.clone()), Ordering::Relaxed);
+            .swap(apo_config_to_bits(apo_config.clone()), Ordering::Relaxed);
         let denoising_was_enabled = (previous & DENOISING_ENABLED_MASK) != 0;
         if denoising_was_enabled != apo_config.denoising_enabled {
             unsafe {
-                if let Some(event) = &slots.get_effects_list_event {
+                if let Some(event) = &events.all {
                     let _ = SetEvent(event.handle());
                 }
-                if let Some(event) = &slots.get_controllable_effects_list_event {
+                if let Some(event) = &events.controllable {
                     let _ = SetEvent(event.handle());
                 }
             }
         }
     }
 
-    fn subscribe_effects_list_aux(
-        &self,
-        event: HANDLE,
-        controllable: bool,
-    ) -> windows::core::Result<bool> {
+    fn subscribe(&self, event: HANDLE, controllable: bool) -> windows::core::Result<bool> {
         let event = if event.0.is_null() {
             None
         } else {
@@ -147,53 +143,53 @@ impl RtConfig {
             }
             Some(Event(duplicate))
         };
-        let mut slots = self.lock_slots();
+        let mut events = self.lock_events();
         if controllable {
-            slots.get_controllable_effects_list_event = event;
+            events.controllable = event;
         } else {
-            slots.get_effects_list_event = event;
+            events.all = event;
         }
         Ok(self.load().denoising_enabled)
     }
 
     pub fn subscribe_effects_list(&self, event: HANDLE) -> windows::core::Result<bool> {
-        self.subscribe_effects_list_aux(event, false)
+        self.subscribe(event, false)
     }
 
     pub fn subscribe_controllable_effects_list(
         &self,
         event: HANDLE,
     ) -> windows::core::Result<bool> {
-        self.subscribe_effects_list_aux(event, true)
+        self.subscribe(event, true)
     }
 
     pub fn clear_effects_events(&self) {
         // store() holds this same lock while signalling, so no notification can
         // be sent through these subscriptions after they have been cleared.
-        let mut slots = self.lock_slots();
-        slots.get_effects_list_event = None;
-        slots.get_controllable_effects_list_event = None;
+        let mut events = self.lock_events();
+        events.all = None;
+        events.controllable = None;
     }
 }
 
-pub struct ApoCfgWatcher {
+pub struct ApoConfigWatcher {
     stop: Arc<Event>,
 }
-impl ApoCfgWatcher {
+impl ApoConfigWatcher {
     pub fn start(config: Arc<RtConfig>) -> windows::core::Result<Self> {
-        if let Ok(cfg) = ApoCfg::load() {
-            config.store(cfg);
+        if let Ok(apo_config) = ApoConfig::load() {
+            config.store(apo_config);
         }
         let stop = Arc::new(Event(unsafe { CreateEventW(None, true, false, None)? }));
         let changed = Event(unsafe { CreateEventW(None, false, false, None)? });
         let worker_stop = Arc::clone(&stop);
-        worker::spawn("VoiceBoxApoCfgWatcher", move || {
+        worker::spawn("VoiceBoxApoConfigWatcher", move || {
             run(&worker_stop, &changed, &config)
         })?;
         Ok(Self { stop })
     }
 }
-impl Drop for ApoCfgWatcher {
+impl Drop for ApoConfigWatcher {
     fn drop(&mut self) {
         unsafe {
             let _ = SetEvent(self.stop.handle());
@@ -217,7 +213,7 @@ impl Drop for Key {
 
 fn open_key() -> Option<Key> {
     let mut key = HKEY::default();
-    let path = HSTRING::from(APO_CFG_KEY);
+    let path = HSTRING::from(APO_CONFIG_KEY);
     unsafe { RegOpenKeyExW(HKEY_LOCAL_MACHINE, &path, None, KEY_NOTIFY, &mut key) }
         .ok()
         .ok()?;
@@ -234,9 +230,9 @@ fn run(stop: &Event, changed: &Event, config: &RtConfig) {
             unsafe { RegNotifyChangeKeyValue(key.0, false, filter, Some(changed.handle()), true) }
                 .is_ok()
         });
-        match ApoCfg::load() {
-            Ok(cfg) => {
-                config.store(cfg);
+        match ApoConfig::load() {
+            Ok(apo_config) => {
+                config.store(apo_config);
                 log_status_change(&mut faulted, None);
             }
             Err(error) => log_status_change(&mut faulted, Some(&error)),
@@ -253,7 +249,7 @@ fn run(stop: &Event, changed: &Event, config: &RtConfig) {
                 let error = windows::core::Error::from_thread();
                 etw::apo_log!(
                     etw::ERROR,
-                    etw::APO_CFG,
+                    etw::APO_CONFIG,
                     "APO configuration wait failed; watcher exiting: {error}"
                 );
                 break;
@@ -271,13 +267,13 @@ fn log_status_change(faulted: &mut bool, error: Option<&anyhow::Error>) {
     if let Some(error) = error {
         etw::apo_log!(
             etw::WARNING,
-            etw::APO_CFG,
+            etw::APO_CONFIG,
             "APO configuration reload failed; will retry: {error:#}"
         );
     } else {
         etw::apo_log!(
             etw::INFO,
-            etw::APO_CFG,
+            etw::APO_CONFIG,
             "APO configuration reload recovered"
         );
     }

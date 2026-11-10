@@ -19,7 +19,7 @@ pub use self::{
 };
 
 use self::{delay::FrameDelay, enhancement::Enhancement, limiter::LookaheadLimiter, ramp::Ramp};
-use crate::{apo_cfg::ApoCfg, pcm_transport::PcmFrame};
+use crate::{apo_config::ApoConfig, pcm_transport::PcmFrame};
 
 pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
 pub const MAX_SAMPLE_RATE: f64 = 192_000.0;
@@ -36,7 +36,7 @@ struct ProcessingChain {
 }
 
 impl ProcessingChain {
-    fn new(sample_rate: f64, channels: usize, config: &ApoCfg) -> Self {
+    fn new(sample_rate: f64, channels: usize, config: &ApoConfig) -> Self {
         let enhancement = Enhancement::new(sample_rate, channels, config.denoising_enabled);
         let delay = FrameDelay::new(enhancement.latency_frames(), channels);
         Self {
@@ -54,14 +54,14 @@ impl ProcessingChain {
         self.enhancement.latency_frames() + self.limiter.latency_frames()
     }
 
-    fn reset(&mut self, config: &ApoCfg) {
+    fn reset(&mut self, config: &ApoConfig) {
         self.enhancement.reset(config.denoising_enabled);
         self.delay.reset();
         self.gain.reset(config.gain_db.as_f32_gain());
         self.limiter.reset();
     }
 
-    fn configure(&mut self, config: &ApoCfg) {
+    fn configure(&mut self, config: &ApoConfig) {
         self.gain.set_target(config.gain_db.as_f32_gain());
         self.enhancement.set_enabled(config.denoising_enabled);
     }
@@ -90,7 +90,7 @@ impl AudioProcessor {
         channels: usize,
         sample_rate: f64,
         process_effect: bool,
-        config: &ApoCfg,
+        config: &ApoConfig,
     ) -> windows::core::Result<Self> {
         if !(1..=MAX_CHANNELS).contains(&channels)
             || !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sample_rate)
@@ -113,7 +113,7 @@ impl AudioProcessor {
 
     /// Discard pending audio and controls and start a stream with this config.
     /// An enabled denoiser resumes fully wet after its buffers have warmed up.
-    pub fn reset(&mut self, config: &ApoCfg) {
+    pub fn reset(&mut self, config: &ApoConfig) {
         if let Some(chain) = &mut self.chain {
             chain.reset(config);
         }
@@ -153,7 +153,7 @@ impl AudioProcessor {
     pub fn process_with_config(
         &mut self,
         buffer: &mut [u8],
-        config: &ApoCfg,
+        config: &ApoConfig,
         playback: Option<&[PcmFrame]>,
     ) {
         let format = self.format;

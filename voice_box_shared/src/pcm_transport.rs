@@ -206,7 +206,8 @@ impl PcmSlot {
 fn make_stamp(frame: u64, generation: u16) -> u64 {
     (frame << 16) | (generation as u64)
 }
-pub fn pcm_frame() -> u64 {
+/// The current frame on the shared clock every PCM writer and reader schedules by.
+pub fn pcm_now() -> u64 {
     let mut ticks = 0;
     if unsafe { QueryPerformanceCounter(&mut ticks) }.is_err() {
         0
@@ -214,7 +215,7 @@ pub fn pcm_frame() -> u64 {
         (i128::from(ticks.max(0)) * i128::from(PCM_SAMPLE_RATE) / i128::from(win_qpf())) as u64
     }
 }
-pub fn pcm_frame_f64() -> f64 {
+pub fn pcm_now_f64() -> f64 {
     let mut ticks = 0;
     if unsafe { QueryPerformanceCounter(&mut ticks) }.is_err() {
         0.0
