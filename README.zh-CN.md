@@ -4,7 +4,7 @@
 
 [English](README.md) | 简体中文
 
-VoiceBox 是一款基于 APO 技术的 Windows 实时麦克风处理工具，目前正在开发中……
+VoiceBox 是一款基于 [APO 技术](https://learn.microsoft.com/windows-hardware/drivers/audio/windows-audio-processing-objects)的 Windows 实时麦克风处理工具，目前正在开发中……
 
 ## 开源协议
 
