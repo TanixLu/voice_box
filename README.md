@@ -2,10 +2,10 @@
 
 # VoiceBox
 
-VoiceBox是一款Windows麦克风助手，正在开发中。。。
+VoiceBox is a real-time microphone processing tool for Windows built on APO technology. Currently under development...
 
-## 开源协议
+## License
 
-本项目采用 [MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE) 协议，
-第三方组件和模型声明见 [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES)，
-也可在程序的“更多 → 版权声明”中查看。
+This project is licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE).
+
+Third-party component and model licenses are listed in [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES) and can also be viewed in the application under "More → Licenses and notices".
