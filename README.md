@@ -2,6 +2,8 @@
 
 # VoiceBox
 
+English | [简体中文](README.zh-CN.md)
+
 VoiceBox is a real-time microphone processing tool for Windows built on APO technology. Currently under development...
 
 ## License
