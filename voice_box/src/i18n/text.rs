@@ -164,9 +164,11 @@ catalog! {
     ConfirmUninstall => ("Confirm uninstall", "确认卸载");
     UninstallingPlugin => ("Uninstalling plugin…", "正在卸载插件…");
     VoiceConfig => ("Voice settings", "语音设置");
-    EnableDenoising => ("Enable noise reduction", "启用降噪");
+    NoiseReduction => ("Noise reduction", "降噪");
+    DenoisingDisabled => ("Disabled", "不启用");
     VolumeAdjustment => ("Volume adjustment", "音量调节");
     Mute => ("Mute", "静音");
+    OriginalVolume => ("Original volume", "原始音量");
     AdjustVolumeHint => ("Drag to adjust, or click the value to type.", "拖动调整，或点击数值直接输入。");
     ResetGain => ("Reset", "重置");
     ResetGainHint => ("Reset to 0 dB", "恢复到 0 dB");

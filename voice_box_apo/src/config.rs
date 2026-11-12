@@ -23,20 +23,17 @@ use windows::{
     core::HSTRING,
 };
 
-use voice_box_shared::apo_config::{APO_CONFIG_KEY, ApoConfig, GainDb};
+use voice_box_shared::apo_config::{APO_CONFIG_KEY, ApoConfig, GainDb, NoiseReductionDb};
 
 use crate::{etw, worker};
 
-const DENOISING_ENABLED_MASK: u32 = 0x0100;
+const NOISE_REDUCTION_MASK: u32 = 0xFF00;
 const GAIN_DB_MASK: u32 = 0x00FF;
-const INCLUDE_MICROPHONE_MASK: u32 = 1 << 9;
+const INCLUDE_MICROPHONE_MASK: u32 = 1 << 16;
 
 fn apo_config_to_bits(apo_config: ApoConfig) -> u32 {
-    (if apo_config.denoising_enabled {
-        DENOISING_ENABLED_MASK
-    } else {
-        0
-    }) | (apo_config.gain_db.as_i8() as u32 & GAIN_DB_MASK)
+    (u32::from(apo_config.noise_reduction_db.as_u8()) << 8)
+        | (apo_config.gain_db.as_i8() as u32 & GAIN_DB_MASK)
         | if apo_config.playback_include_microphone_audio {
             INCLUDE_MICROPHONE_MASK
         } else {
@@ -46,7 +43,7 @@ fn apo_config_to_bits(apo_config: ApoConfig) -> u32 {
 
 fn bits_to_apo_config(bits: u32) -> ApoConfig {
     ApoConfig {
-        denoising_enabled: (bits & DENOISING_ENABLED_MASK) != 0,
+        noise_reduction_db: NoiseReductionDb::new(((bits & NOISE_REDUCTION_MASK) >> 8) as u8),
         gain_db: GainDb::new((bits & GAIN_DB_MASK) as i8),
         playback_include_microphone_audio: (bits & INCLUDE_MICROPHONE_MASK) != 0,
     }
@@ -108,8 +105,8 @@ impl RtConfig {
         let previous = self
             .atomic_bits
             .swap(apo_config_to_bits(apo_config.clone()), Ordering::Relaxed);
-        let denoising_was_enabled = (previous & DENOISING_ENABLED_MASK) != 0;
-        if denoising_was_enabled != apo_config.denoising_enabled {
+        let denoising_was_enabled = (previous & NOISE_REDUCTION_MASK) != 0;
+        if denoising_was_enabled != apo_config.noise_reduction_db.is_enabled() {
             unsafe {
                 if let Some(event) = &events.all {
                     let _ = SetEvent(event.handle());
@@ -146,7 +143,7 @@ impl RtConfig {
         } else {
             events.all = event;
         }
-        Ok(self.load().denoising_enabled)
+        Ok(self.load().noise_reduction_db.is_enabled())
     }
 
     pub fn subscribe_effects_list(&self, event: HANDLE) -> windows::core::Result<bool> {

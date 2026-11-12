@@ -1,12 +1,17 @@
 //! One channel's fixed-rate enhancement and host-rate output queue.
 
-use ul_unas_rs::{ALGORITHM_DELAY, Denoiser, FRAME_SIZE, SAMPLE_RATE};
+use dfn3_rs::{ALGORITHM_DELAY, Denoiser, FRAME_SIZE, SAMPLE_RATE};
+use std::time::Duration;
 
-use super::{StreamingResampler, finite_sample, high_pass::HighPass};
+use super::{
+    RAMP_SECONDS, StreamingResampler, finite_sample, high_pass::HighPass, pre_gain::PreGain,
+};
+use crate::apo_config::NoiseReductionDb;
 
 pub(super) struct Channel {
     denoiser: Box<Denoiser>,
     high_pass: HighPass,
+    pre_gain: PreGain,
     input_resampler: StreamingResampler,
     output_resampler: StreamingResampler,
     input: [f32; FRAME_SIZE],
@@ -32,6 +37,7 @@ impl Channel {
         Self {
             denoiser: Box::new(Denoiser::new()),
             high_pass: HighPass::new(rate),
+            pre_gain: PreGain::new(),
             input_resampler,
             output_resampler,
             input: [0.0; FRAME_SIZE],
@@ -47,14 +53,17 @@ impl Channel {
 
     pub(super) fn delay_frames(&self, sample_rate: f64) -> f64 {
         self.prefill as f64
-            + ALGORITHM_DELAY as f64 * sample_rate / f64::from(SAMPLE_RATE)
+            + (ALGORITHM_DELAY + FRAME_SIZE) as f64 * sample_rate / f64::from(SAMPLE_RATE)
             + (self.input_resampler.delay_seconds() + self.output_resampler.delay_seconds())
                 * sample_rate
     }
 
-    pub(super) fn reset(&mut self) {
+    pub(super) fn reset(&mut self, strength: NoiseReductionDb) {
+        self.denoiser
+            .set_attenuation_limit(f32::from(strength.as_u8()));
         self.denoiser.reset();
         self.high_pass.reset();
+        self.pre_gain.reset();
         self.input_resampler.reset();
         self.output_resampler.reset();
         self.input.fill(0.0);
@@ -66,13 +75,22 @@ impl Channel {
         self.queued = self.prefill;
     }
 
+    pub(super) fn set_strength(&mut self, strength: NoiseReductionDb) {
+        self.denoiser.set_attenuation_limit_smooth(
+            f32::from(strength.as_u8()),
+            Duration::from_secs_f64(RAMP_SECONDS),
+        );
+    }
+
     pub(super) fn process_sample(&mut self, input: f32) -> f32 {
         self.input_resampler.push(input);
         while let Some(sample) = self.input_resampler.next_sample() {
             self.input[self.pending] = self.high_pass.process_sample(sample);
             self.pending += 1;
             if self.pending == FRAME_SIZE {
+                self.pre_gain.prepare(&mut self.input);
                 self.denoiser.process(&self.input, &mut self.output);
+                self.pre_gain.restore(&mut self.output);
                 self.pending = 0;
                 for &sample in &self.output {
                     self.output_resampler.push(finite_sample(sample));

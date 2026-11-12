@@ -6,11 +6,12 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+dfn3_rs = { version = "0.1.1" }
+earshot = "1.2.2"
 num-traits = "0.2.19"
 rubato = { version = "5.0", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
-ul_unas_rs = "0.1.2"
 windows = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",

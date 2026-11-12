@@ -1,6 +1,7 @@
-//! Denoising lifecycle and dry/wet transitions, independent of microphone gain.
+//! Denoising lifecycle and bypass fades; the model controls attenuation strength.
 
 use super::{RAMP_SECONDS, channel::Channel, ramp::Ramp};
+use crate::apo_config::NoiseReductionDb;
 
 #[derive(Clone, Copy)]
 enum State {
@@ -14,10 +15,11 @@ pub(super) struct Enhancement {
     state: State,
     wet: Ramp,
     latency_frames: usize,
+    strength: NoiseReductionDb,
 }
 
 impl Enhancement {
-    pub(super) fn new(sample_rate: f64, channels: usize, enabled: bool) -> Self {
+    pub(super) fn new(sample_rate: f64, channels: usize, strength: NoiseReductionDb) -> Self {
         let channels: Vec<_> = (0..channels).map(|_| Channel::new(sample_rate)).collect();
         let latency_frames = channels[0].delay_frames(sample_rate).ceil() as usize;
         let mut enhancement = Self {
@@ -25,8 +27,9 @@ impl Enhancement {
             state: State::Off,
             wet: Ramp::new(0.0, (sample_rate * RAMP_SECONDS).ceil() as usize),
             latency_frames,
+            strength,
         };
-        enhancement.reset(enabled);
+        enhancement.reset(strength);
         enhancement
     }
 
@@ -40,7 +43,7 @@ impl Enhancement {
 
     fn start(&mut self) {
         for channel in &mut self.channels {
-            channel.reset();
+            channel.reset(self.strength);
         }
         self.state = State::Warming {
             remaining: self.latency_frames,
@@ -48,16 +51,22 @@ impl Enhancement {
     }
 
     /// Stream initialization selects the configured path without a user fade.
-    pub(super) fn reset(&mut self, enabled: bool) {
-        self.wet.reset(if enabled { 1.0 } else { 0.0 });
-        if enabled {
-            self.start();
-        } else {
-            self.state = State::Off;
-        }
+    pub(super) fn reset(&mut self, strength: NoiseReductionDb) {
+        self.strength = strength;
+        self.state = State::Off;
+        self.set_strength(strength);
+        self.wet
+            .reset(if strength.is_enabled() { 1.0 } else { 0.0 });
     }
 
-    pub(super) fn set_enabled(&mut self, enabled: bool) {
+    pub(super) fn set_strength(&mut self, strength: NoiseReductionDb) {
+        if self.strength != strength {
+            self.strength = strength;
+            for channel in &mut self.channels {
+                channel.set_strength(strength);
+            }
+        }
+        let enabled = strength.is_enabled();
         self.wet.set_target(if enabled { 1.0 } else { 0.0 });
         match (self.state, enabled) {
             (State::Off, true) => self.start(),

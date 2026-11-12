@@ -1,4 +1,4 @@
-use voice_box_shared::apo_config::{ApoConfig, GainDb};
+use voice_box_shared::apo_config::{ApoConfig, GainDb, NoiseReductionDb};
 
 use crate::{
     devices::Microphone,
@@ -98,10 +98,48 @@ impl VoicePanel {
         let busy = self.save.is_some();
         ui.strong(Text::VoiceConfig.text());
         ui.add_enabled_ui(!busy, |ui| {
-            ui.checkbox(
-                &mut self.config.denoising_enabled,
-                Text::EnableDenoising.text(),
-            );
+            let mut reduction_db = self.config.noise_reduction_db.as_u8();
+            let mut reduction_changed = false;
+            ui.horizontal(|ui| {
+                ui.label(Text::NoiseReduction.text());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    reduction_changed = ui
+                        .add(
+                            egui::DragValue::new(&mut reduction_db)
+                                .range(0..=NoiseReductionDb::MAX_VALUE)
+                                .speed(1.0)
+                                .fixed_decimals(0)
+                                .custom_formatter(|value, _| {
+                                    if value == 0.0 {
+                                        Text::DenoisingDisabled.text().into()
+                                    } else {
+                                        format!("{value:.0} dB")
+                                    }
+                                })
+                                .custom_parser(|text| {
+                                    if Text::DenoisingDisabled.matches_input(text) {
+                                        Some(0.0)
+                                    } else {
+                                        text.trim().trim_end_matches("dB").trim().parse().ok()
+                                    }
+                                }),
+                        )
+                        .changed();
+                });
+            });
+            ui.scope(|ui| {
+                ui.spacing_mut().slider_width = ui.available_width();
+                reduction_changed |= ui
+                    .add(
+                        egui::Slider::new(&mut reduction_db, 0..=NoiseReductionDb::MAX_VALUE)
+                            .step_by(1.0)
+                            .show_value(false),
+                    )
+                    .changed();
+            });
+            if reduction_changed {
+                self.config.noise_reduction_db = NoiseReductionDb::new(reduction_db);
+            }
             const MIN_DB: f64 = GainDb::MIN_VALUE as f64;
             const MAX_DB: f64 = GainDb::MAX_VALUE as f64;
             let mut gain_db = self.config.gain_db.as_i8();
@@ -118,6 +156,8 @@ impl VoicePanel {
                                 .custom_formatter(|value, _| {
                                     if value <= MIN_DB {
                                         Text::Mute.text().into()
+                                    } else if value == 0.0 {
+                                        Text::OriginalVolume.text().into()
                                     } else if value > 0.0 {
                                         format!("+{value:.0} dB")
                                     } else {
@@ -127,6 +167,8 @@ impl VoicePanel {
                                 .custom_parser(|text| {
                                     if Text::Mute.matches_input(text) {
                                         Some(MIN_DB)
+                                    } else if Text::OriginalVolume.matches_input(text) {
+                                        Some(0.0)
                                     } else {
                                         text.trim().trim_end_matches("dB").trim().parse().ok()
                                     }

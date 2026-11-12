@@ -1,4 +1,4 @@
-//! VoiceBox APO: high-pass filtering, UL-UNAS denoising and peak limiting.
+//! VoiceBox APO: high-pass filtering, DeepFilterNet3 denoising and peak limiting.
 //!
 //! Layout: `com` is the only module the audio engine calls into. It reaches the non-real-time
 //! services below it: `config` (registry watcher feeding `RtConfig`), `injection` (soundboard

@@ -209,7 +209,7 @@ pub unsafe extern "system" fn lock_for_process(
         max_input_frames,
         max_output_frames,
         input_format.dwSamplesPerFrame,
-        object.config.load().denoising_enabled,
+        object.config.load().noise_reduction_db.is_enabled(),
         latency_hns,
     );
     S_OK

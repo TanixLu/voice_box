@@ -6,6 +6,7 @@ mod delay;
 mod enhancement;
 mod high_pass;
 mod limiter;
+mod pre_gain;
 mod ramp;
 mod rate_matcher;
 mod resampler;
@@ -37,7 +38,7 @@ struct ProcessingChain {
 
 impl ProcessingChain {
     fn new(sample_rate: f64, channels: usize, config: &ApoConfig) -> Self {
-        let enhancement = Enhancement::new(sample_rate, channels, config.denoising_enabled);
+        let enhancement = Enhancement::new(sample_rate, channels, config.noise_reduction_db);
         let delay = FrameDelay::new(enhancement.latency_frames(), channels);
         Self {
             enhancement,
@@ -55,7 +56,7 @@ impl ProcessingChain {
     }
 
     fn reset(&mut self, config: &ApoConfig) {
-        self.enhancement.reset(config.denoising_enabled);
+        self.enhancement.reset(config.noise_reduction_db);
         self.delay.reset();
         self.gain.reset(config.gain_db.as_f32_gain());
         self.limiter.reset();
@@ -63,7 +64,7 @@ impl ProcessingChain {
 
     fn configure(&mut self, config: &ApoConfig) {
         self.gain.set_target(config.gain_db.as_f32_gain());
-        self.enhancement.set_enabled(config.denoising_enabled);
+        self.enhancement.set_strength(config.noise_reduction_db);
     }
 
     fn process_microphone(&mut self, samples: &mut [f32], enhanced: &mut [f32]) {
@@ -112,7 +113,7 @@ impl AudioProcessor {
     }
 
     /// Discard pending audio and controls and start a stream with this config.
-    /// An enabled denoiser resumes fully wet after its buffers have warmed up.
+    /// An enabled denoiser resumes at its configured mix after warming its buffers.
     pub fn reset(&mut self, config: &ApoConfig) {
         if let Some(chain) = &mut self.chain {
             chain.reset(config);

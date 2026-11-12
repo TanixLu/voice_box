@@ -18,7 +18,7 @@ const APO_CONFIG_VALUE: &str = "ApoConfig";
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ApoConfig {
-    pub denoising_enabled: bool,
+    pub noise_reduction_db: NoiseReductionDb,
     pub gain_db: GainDb,
     pub playback_include_microphone_audio: bool,
 }
@@ -26,7 +26,7 @@ pub struct ApoConfig {
 impl Default for ApoConfig {
     fn default() -> Self {
         Self {
-            denoising_enabled: false,
+            noise_reduction_db: NoiseReductionDb::new(0),
             gain_db: GainDb::new(0),
             playback_include_microphone_audio: true,
         }
@@ -80,6 +80,38 @@ impl ApoConfig {
         }
         .ok()?;
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "u8", into = "u8")]
+pub struct NoiseReductionDb(u8);
+
+impl From<u8> for NoiseReductionDb {
+    fn from(value: u8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<NoiseReductionDb> for u8 {
+    fn from(value: NoiseReductionDb) -> Self {
+        value.0
+    }
+}
+
+impl NoiseReductionDb {
+    pub const MAX_VALUE: u8 = 100;
+
+    pub fn new(value: u8) -> Self {
+        Self(value.min(Self::MAX_VALUE))
+    }
+
+    pub fn as_u8(self) -> u8 {
+        self.0
+    }
+
+    pub fn is_enabled(self) -> bool {
+        self.0 != 0
     }
 }
 
