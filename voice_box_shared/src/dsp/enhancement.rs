@@ -2,6 +2,7 @@
 
 use super::{RAMP_SECONDS, channel::Channel, ramp::Ramp};
 use crate::apo_config::NoiseReductionDb;
+use dfn3_rs::Model;
 
 #[derive(Clone, Copy)]
 enum State {
@@ -19,8 +20,15 @@ pub(super) struct Enhancement {
 }
 
 impl Enhancement {
-    pub(super) fn new(sample_rate: f64, channels: usize, strength: NoiseReductionDb) -> Self {
-        let channels: Vec<_> = (0..channels).map(|_| Channel::new(sample_rate)).collect();
+    pub(super) fn new(
+        sample_rate: f64,
+        channels: usize,
+        model: Model,
+        strength: NoiseReductionDb,
+    ) -> Self {
+        let channels: Vec<_> = (0..channels)
+            .map(|_| Channel::new(sample_rate, model))
+            .collect();
         let latency_frames = channels[0].delay_frames(sample_rate).ceil() as usize;
         let mut enhancement = Self {
             channels,

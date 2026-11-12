@@ -13,6 +13,7 @@ use voice_box_shared::{
 
 use crate::{
     audio::{Recording, microphone, playback},
+    embedded,
     i18n::{Text, UserContext},
     task::{Task, Wake},
 };
@@ -173,6 +174,7 @@ fn process_loop<'a>(
         recording.channels.into(),
         recording.sample_rate.into(),
         true,
+        embedded::denoiser_model(),
         &lock(config),
     )
     .user_context(Text::ProcessPreviewFailed)?;

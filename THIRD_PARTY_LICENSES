@@ -3134,7 +3134,7 @@ Third-party terms remain in effect independently of VoiceBox's dual license.
 
 
 ===== Apache License 2.0 (Apache-2.0) =====
-- dfn3_rs 0.1.1: https://github.com/TanixLu/dfn3_rs
+- dfn3_rs 0.1.2: https://github.com/TanixLu/dfn3_rs
 
                               Apache License
                         Version 2.0, January 2004
@@ -7509,7 +7509,7 @@ the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 
 
-===== Additional notice: dfn3_rs 0.1.1 / NOTICE =====
+===== Additional notice: dfn3_rs 0.1.2 / NOTICE =====
 dfn3_rs implements DeepFilterNet3 inference.
 
 DSP, streaming conventions, and model parameters are derived from DeepFilterNet

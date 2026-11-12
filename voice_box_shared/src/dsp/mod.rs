@@ -21,6 +21,7 @@ pub use self::{
 
 use self::{delay::FrameDelay, enhancement::Enhancement, limiter::LookaheadLimiter, ramp::Ramp};
 use crate::{apo_config::ApoConfig, pcm_transport::PcmFrame};
+use dfn3_rs::Model;
 
 pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
 pub const MAX_SAMPLE_RATE: f64 = 192_000.0;
@@ -37,8 +38,8 @@ struct ProcessingChain {
 }
 
 impl ProcessingChain {
-    fn new(sample_rate: f64, channels: usize, config: &ApoConfig) -> Self {
-        let enhancement = Enhancement::new(sample_rate, channels, config.noise_reduction_db);
+    fn new(sample_rate: f64, channels: usize, model: Model, config: &ApoConfig) -> Self {
+        let enhancement = Enhancement::new(sample_rate, channels, model, config.noise_reduction_db);
         let delay = FrameDelay::new(enhancement.latency_frames(), channels);
         Self {
             enhancement,
@@ -91,6 +92,7 @@ impl AudioProcessor {
         channels: usize,
         sample_rate: f64,
         process_effect: bool,
+        model: Model,
         config: &ApoConfig,
     ) -> windows::core::Result<Self> {
         if !(1..=MAX_CHANNELS).contains(&channels)
@@ -102,7 +104,8 @@ impl AudioProcessor {
         }
         let frame_bytes = channels * format.bytes();
         // RAW-mode instances keep only format metadata and introduce no delay.
-        let chain = process_effect.then(|| ProcessingChain::new(sample_rate, channels, config));
+        let chain =
+            process_effect.then(|| ProcessingChain::new(sample_rate, channels, model, config));
         let latency_frames = chain.as_ref().map_or(0, ProcessingChain::latency_frames);
         Ok(Self {
             format,

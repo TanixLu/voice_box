@@ -9,6 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow.workspace = true
+dfn3_rs = { workspace = true, features = ["embedded-model"] }
 voice_box_shared.workspace = true
 windows = { workspace = true, features = [
     "Win32_Foundation",

@@ -1,6 +1,6 @@
 //! One channel's fixed-rate enhancement and host-rate output queue.
 
-use dfn3_rs::{ALGORITHM_DELAY, Denoiser, FRAME_SIZE, SAMPLE_RATE};
+use dfn3_rs::{ALGORITHM_DELAY, Denoiser, FRAME_SIZE, Model, SAMPLE_RATE};
 use std::time::Duration;
 
 use super::{
@@ -25,7 +25,7 @@ pub(super) struct Channel {
 }
 
 impl Channel {
-    pub(super) fn new(sample_rate: f64) -> Self {
+    pub(super) fn new(sample_rate: f64, model: Model) -> Self {
         let rate = f64::from(SAMPLE_RATE);
         let input_resampler = StreamingResampler::new(sample_rate, rate);
         let output_resampler = StreamingResampler::new(rate, sample_rate);
@@ -35,7 +35,7 @@ impl Channel {
             + input_resampler.input_chunk_size()
             + 2;
         Self {
-            denoiser: Box::new(Denoiser::new()),
+            denoiser: Box::new(Denoiser::with_model(model)),
             high_pass: HighPass::new(rate),
             pre_gain: PreGain::new(),
             input_resampler,

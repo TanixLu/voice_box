@@ -158,6 +158,7 @@ pub unsafe extern "system" fn lock_for_process(
             input_format.dwSamplesPerFrame as usize,
             f64::from(input_format.fFramesPerSecond),
             control.supports_effects,
+            dfn3_rs::Model::embedded(),
             &object.config.load(),
         )
     }) {
