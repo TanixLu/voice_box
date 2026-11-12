@@ -21,6 +21,7 @@
 mod app_dialogs;
 mod batch_rename_dialog;
 mod fonts;
+mod forwarding_panel;
 mod key_capture;
 mod microphone_panel;
 mod overlay;

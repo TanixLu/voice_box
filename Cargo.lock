@@ -3589,6 +3589,7 @@ dependencies = [
  "voice_box_shared",
  "wasapi",
  "windows",
+ "windows-collections",
  "windows-core",
  "winreg",
 ]

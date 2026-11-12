@@ -97,6 +97,6 @@ pub fn microphone_guid(device_id: Option<&str>) -> anyhow::Result<String> {
 }
 
 /// An endpoint ID ends with the GUID that keys the endpoint's registry entries.
-fn endpoint_guid(id: &str) -> &str {
+pub fn endpoint_guid(id: &str) -> &str {
     id.rsplit_once('.').map_or(id, |(_, guid)| guid)
 }

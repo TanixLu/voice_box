@@ -6,7 +6,7 @@
 //! - Infrastructure: `audio` (WASAPI streams), `database`, `devices`, `embedded`, `hotkeys`,
 //!   `i18n`, `logging`, `paths`, `registry`, `task`, `win`, and the system integrations
 //!   `plugin`, `startup` and `uninstall`.
-//! - Features: `soundboard` and `voice` own their rules and background work, and report
+//! - Features: `forwarding`, `soundboard` and `voice` own their rules and background work, and report
 //!   results shaped for the view.
 //! - `settings`: the persisted app settings, which embed each feature's own settings.
 //! - `gui`: widgets and the app shell; it renders feature state and returns intents. A panel
@@ -32,6 +32,7 @@ mod audio;
 mod database;
 mod devices;
 mod embedded;
+mod forwarding;
 mod gui;
 mod hotkeys;
 mod i18n;

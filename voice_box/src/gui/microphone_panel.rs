@@ -1,13 +1,14 @@
 use crate::{
-    devices::{self, Microphone},
-    gui::{Busy, widgets::microphone_label},
+    devices::{self, Microphone, Speaker},
+    forwarding::Target,
+    gui::{Busy, forwarding_panel::ForwardingPanel, widgets::microphone_label},
     i18n::{Details, Message, Text},
     plugin::{self, PluginAction, PluginOutcome, PluginStatus},
     task::{Task, Wake},
 };
 
 enum Outcome {
-    Devices(Vec<Microphone>),
+    Devices(Vec<Microphone>, Vec<Speaker>),
     Plugin(PluginOutcome),
 }
 
@@ -15,9 +16,11 @@ enum Outcome {
 pub enum Command {
     Refresh,
     Plugin(Text, PluginAction),
+    ConfigureForwarding(Target),
 }
 
 pub struct MicrophonePanel {
+    forwarding: ForwardingPanel,
     wake: Wake,
     devices: Vec<Microphone>,
     selected: usize,
@@ -31,6 +34,7 @@ pub struct MicrophonePanel {
 impl MicrophonePanel {
     pub fn new(wake: Wake) -> Self {
         Self {
+            forwarding: ForwardingPanel::new(wake.clone()),
             wake,
             devices: Vec::new(),
             selected: 0,
@@ -53,13 +57,23 @@ impl MicrophonePanel {
         }
     }
     pub fn poll(&mut self) {
+        self.poll_job();
+        let source = self
+            .devices
+            .get(self.selected)
+            .map(|mic| mic.device_id.as_str());
+        self.forwarding.poll(source);
+    }
+
+    fn poll_job(&mut self) {
         let Some(result) = self.job.as_mut().and_then(|(_, task)| task.poll()) else {
             return;
         };
         self.job = None;
         let error = match result {
-            Ok(Outcome::Devices(devices)) => {
+            Ok(Outcome::Devices(devices, speakers)) => {
                 self.replace_devices(devices);
+                self.forwarding.set_speakers(speakers);
                 None
             }
             Ok(Outcome::Plugin(PluginOutcome { result, statuses })) => {
@@ -106,7 +120,8 @@ impl MicrophonePanel {
     }
     pub fn refresh(&mut self) {
         self.start(Text::ReadingMicrophones, || {
-            devices::enumerate_microphones().map(Outcome::Devices)
+            devices::enumerate_all()
+                .map(|(microphones, speakers)| Outcome::Devices(microphones, speakers))
         });
     }
     fn run_plugin_action(&mut self, status: Text, action: PluginAction) {
@@ -121,6 +136,13 @@ impl MicrophonePanel {
         match command {
             Command::Refresh => self.refresh(),
             Command::Plugin(status, action) => self.run_plugin_action(status, action),
+            Command::ConfigureForwarding(target) => {
+                let source = self
+                    .devices
+                    .get(self.selected)
+                    .map(|mic| mic.device_id.as_str());
+                self.forwarding.configure(source, target);
+            }
         }
     }
 
@@ -172,8 +194,15 @@ impl MicrophonePanel {
         if self.selected != previous {
             self.confirm_uninstall = false;
             self.preferred_guid = self.devices.get(self.selected).map(|mic| mic.guid.clone());
+            command = Some(Command::ConfigureForwarding(self.forwarding.target()));
         }
-        self.plugin_ui(ui, idle).or(command)
+        let plugin_command = self.plugin_ui(ui, idle);
+        ui.separator();
+        self.forwarding
+            .ui(ui, self.selected().is_some())
+            .map(Command::ConfigureForwarding)
+            .or(plugin_command)
+            .or(command)
     }
 
     pub fn status_ui(&self, ui: &mut egui::Ui) {

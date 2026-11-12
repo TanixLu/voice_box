@@ -26,6 +26,13 @@ macro_rules! catalog {
 }
 
 catalog! {
+    SoundForwarding => ("Sound forwarding", "声音转发");
+    ForwardingOff => ("Do not forward", "不转发");
+    DefaultSpeaker => ("Default speaker", "默认扬声器");
+    ForwardingRetrying => ("Forwarding unavailable; retrying…", "声音转发暂不可用，正在重试…");
+    ForwardingWaitingForMicrophone => ("Waiting for a microphone…", "正在等待麦克风…");
+    ForwardingActive => ("Forwarding microphone audio", "正在转发麦克风声音");
+    OpenMicrophoneForwardingFailed => ("Failed to open the microphone for forwarding", "开启麦克风声音转发失败");
     OpenDatabaseFailed => ("Cannot open database", "无法打开数据库");
     AudioChangedDuringImport => ("The audio file changed during import. Try again", "导入过程中音频文件已变化，请重试");
     OpeningMicrophone => ("Opening microphone…", "正在打开麦克风…");
