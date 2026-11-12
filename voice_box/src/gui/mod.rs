@@ -402,6 +402,7 @@ impl VoiceBoxApp {
                 ..self.settings.clone()
             };
             self.save_settings(settings);
+            ui.close();
         }
     }
 
@@ -417,47 +418,61 @@ impl VoiceBoxApp {
                 ..self.settings.clone()
             };
             self.save_settings(settings);
+            ui.close();
         }
     }
 
     fn more_menu_ui(&mut self, ui: &mut egui::Ui, busy: Busy) {
         let more = ui.button(Text::More.text());
+        let frame = egui::Frame::popup(ui.style());
+        let max_height =
+            (ui.ctx().content_rect().bottom() - more.rect.bottom() - frame.total_margin().sum().y)
+                .max(0.0);
         egui::Popup::menu(&more)
             .align(egui::RectAlign::BOTTOM)
+            .frame(frame)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
                 ui.set_min_width(100.0);
+                ui.set_max_height(max_height);
                 ui.spacing_mut().button_padding.x = 25.0;
+                ui.spacing_mut().scroll.floating = false;
+                egui::ScrollArea::vertical()
+                    .id_salt("more_menu_scroll")
+                    .max_height(max_height)
+                    .min_scrolled_height(0.0)
+                    .show(ui, |ui| {
+                        ui.add_enabled_ui(!busy.working, |ui| self.language_ui(ui));
+                        ui.separator();
 
-                ui.add_enabled_ui(!busy.working, |ui| self.language_ui(ui));
-                ui.separator();
+                        ui.add_enabled_ui(!busy.working, |ui| self.theme_ui(ui));
+                        ui.separator();
 
-                ui.add_enabled_ui(!busy.working, |ui| self.theme_ui(ui));
-                ui.separator();
+                        self.startup_ui(ui, busy.working);
+                        ui.separator();
 
-                self.startup_ui(ui, busy.working);
-                ui.separator();
+                        if ui
+                            .add_enabled(!busy.any(), egui::Button::new(Text::FullUninstall.text()))
+                            .clicked()
+                        {
+                            self.microphones.cancel_uninstall();
+                            self.lifecycle = Lifecycle::ConfirmUninstall;
+                            ui.close();
+                        }
+                        if ui.button(Text::Licenses.text()).clicked() {
+                            self.show_licenses = true;
+                            ui.close();
+                        }
+                        ui.separator();
 
-                if ui
-                    .add_enabled(!busy.any(), egui::Button::new(Text::FullUninstall.text()))
-                    .clicked()
-                {
-                    self.microphones.cancel_uninstall();
-                    self.lifecycle = Lifecycle::ConfirmUninstall;
-                    ui.close();
-                }
-                if ui.button(Text::Licenses.text()).clicked() {
-                    self.show_licenses = true;
-                    ui.close();
-                }
-                ui.separator();
-
-                if ui
-                    .add_enabled(!busy.working, egui::Button::new(Text::Exit.text()))
-                    .clicked()
-                {
-                    self.request_exit(ui.ctx());
-                    ui.close();
-                }
+                        if ui
+                            .add_enabled(!busy.working, egui::Button::new(Text::Exit.text()))
+                            .clicked()
+                        {
+                            self.request_exit(ui.ctx());
+                            ui.close();
+                        }
+                    });
             });
     }
 
