@@ -3,6 +3,8 @@
 
 mod channel;
 mod delay;
+#[cfg(target_arch = "x86_64")]
+mod denormals;
 mod enhancement;
 mod high_pass;
 mod limiter;
@@ -19,6 +21,8 @@ pub use self::{
     sample::{SampleFormat, clamp_sample, finite_sample},
 };
 
+#[cfg(target_arch = "x86_64")]
+use self::denormals::DenormalGuard;
 use self::{delay::FrameDelay, enhancement::Enhancement, limiter::LookaheadLimiter, ramp::Ramp};
 use crate::{apo_config::ApoConfig, pcm_transport::PcmFrame};
 use dfn3_rs::Model;
@@ -154,6 +158,8 @@ impl AudioProcessor {
     /// after `latency_frames()`. A zero gain does not stop the denoiser.
     /// `buffer` must contain complete frames; playback, when present, has one
     /// stereo frame per buffer frame. No playback means microphone-only output.
+    /// x86-64 processing enables FTZ/DAZ for this call and restores the caller's
+    /// floating-point control state before returning. RAW bypass leaves it alone.
     pub fn process_with_config(
         &mut self,
         buffer: &mut [u8],
@@ -166,6 +172,8 @@ impl AudioProcessor {
         };
         debug_assert!(buffer.len().is_multiple_of(self.frame_bytes));
         debug_assert!(playback.is_none_or(|sound| sound.len() == buffer.len() / self.frame_bytes));
+        #[cfg(target_arch = "x86_64")]
+        let _denormals = DenormalGuard::new();
         chain.configure(config);
         let channels = chain.enhancement.channels();
         let mut samples = [0.0; MAX_CHANNELS];
