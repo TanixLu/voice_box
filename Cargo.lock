@@ -3566,7 +3566,7 @@ dependencies = [
 
 [[package]]
 name = "voice_box"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "atomic-write-file",
@@ -3597,7 +3597,7 @@ dependencies = [
 
 [[package]]
 name = "voice_box_apo"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "dfn3_rs",
@@ -3608,7 +3608,7 @@ dependencies = [
 
 [[package]]
 name = "voice_box_shared"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "dfn3_rs",
