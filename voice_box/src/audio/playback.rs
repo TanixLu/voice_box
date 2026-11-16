@@ -41,7 +41,7 @@ pub fn play(
     let format = WaveFormat::new(
         32,
         32,
-        &SampleType::Float,
+        SampleType::Float,
         recording.sample_rate as usize,
         recording.channels as usize,
         Some(recording.channel_mask),

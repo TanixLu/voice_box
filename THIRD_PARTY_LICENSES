@@ -1889,8 +1889,8 @@ Third-party terms remain in effect independently of VoiceBox's dual license.
 
 
 ===== Apache License 2.0 (Apache-2.0) =====
-- toml_datetime 1.1.2+spec-1.1.0: https://github.com/toml-rs/toml
-- toml_edit 0.25.17+spec-1.1.0: https://github.com/toml-rs/toml
+- toml_datetime 1.1.3+spec-1.1.0: https://github.com/toml-rs/toml
+- toml_edit 0.25.19+spec-1.1.0: https://github.com/toml-rs/toml
 - toml_parser 1.1.5+spec-1.1.0: https://github.com/toml-rs/toml
 
                                  Apache License
@@ -2304,7 +2304,7 @@ Third-party terms remain in effect independently of VoiceBox's dual license.
 
 
 ===== Apache License 2.0 (Apache-2.0) =====
-- crc32fast 1.5.3: https://github.com/srijs/rust-crc32fast
+- crc32fast 1.5.5: https://github.com/srijs/rust-crc32fast
 - fallible-iterator 0.3.0: https://github.com/sfackler/rust-fallible-iterator
 - fallible-streaming-iterator 0.1.9: https://github.com/sfackler/fallible-streaming-iterator
 
@@ -2513,7 +2513,7 @@ Third-party terms remain in effect independently of VoiceBox's dual license.
 
 
 ===== Apache License 2.0 (Apache-2.0) =====
-- rubato 5.0.1: https://github.com/HEnquist/rubato
+- rubato 5.1.0: https://github.com/HEnquist/rubato
 
                                  Apache License
                            Version 2.0, January 2004
@@ -3344,7 +3344,7 @@ limitations under the License.
 - arrayvec 0.7.8: https://github.com/bluss/arrayvec
 - autocfg 1.5.1: https://github.com/cuviper/autocfg
 - bitflags 2.13.2: https://github.com/bitflags/bitflags
-- cc 1.10.0: https://github.com/rust-lang/cc-rs
+- cc 1.11.2: https://github.com/rust-lang/cc-rs
 - cfg-if 1.0.5: https://github.com/rust-lang/cfg-if
 - data-url 0.3.2: https://github.com/servo/rust-url
 - displaydoc 0.2.7: https://github.com/yaahc/displaydoc
@@ -3352,7 +3352,7 @@ limitations under the License.
 - equivalent 1.0.3: https://github.com/indexmap-rs/equivalent
 - euclid 0.22.14: https://github.com/servo/euclid
 - find-msvc-tools 0.1.15: https://github.com/rust-lang/cc-rs
-- flate2 1.1.10: https://github.com/rust-lang/flate2-rs
+- flate2 1.1.11: https://github.com/rust-lang/flate2-rs
 - form_urlencoded 1.2.2: https://github.com/servo/rust-url
 - hashbrown 0.17.1: https://github.com/rust-lang/hashbrown
 - heck 0.5.0: https://github.com/withoutboats/heck
@@ -3378,15 +3378,15 @@ limitations under the License.
 - roxmltree 0.21.2: https://github.com/RazrFalcon/roxmltree
 - scopeguard 1.2.0: https://github.com/bluss/scopeguard
 - simplecss 0.2.2: https://github.com/linebender/simplecss
-- smallvec 1.16.4: https://github.com/servo/rust-smallvec
+- smallvec 1.16.5: https://github.com/servo/rust-smallvec
 - smol_str 0.2.2: https://github.com/rust-analyzer/smol_str
 - stable_deref_trait 1.2.1: https://github.com/storyyeller/stable_deref_trait
-- svgtypes 0.16.1: https://github.com/linebender/svgtypes
+- svgtypes 0.16.2: https://github.com/linebender/svgtypes
 - thread_local 1.1.10: https://github.com/Amanieu/thread_local-rs
-- unicode-properties 0.1.4: https://github.com/unicode-rs/unicode-properties
+- unicode-properties 0.1.5: https://github.com/unicode-rs/unicode-properties
 - unicode-segmentation 1.13.3: https://github.com/unicode-rs/unicode-segmentation
 - url 2.5.8: https://github.com/servo/rust-url
-- uuid 1.29.0: https://github.com/uuid-rs/uuid
+- uuid 1.29.2: https://github.com/uuid-rs/uuid
 - version_check 0.9.5: https://github.com/SergioBenitez/version_check
 
                               Apache License
@@ -4005,7 +4005,7 @@ limitations under the License.
 
 
 ===== Apache License 2.0 (Apache-2.0) =====
-- webbrowser 1.2.6: https://github.com/amodm/webbrowser-rs
+- webbrowser 1.2.7: https://github.com/amodm/webbrowser-rs
 
                               Apache License
                         Version 2.0, January 2004
@@ -6013,9 +6013,9 @@ limitations under the License.
 - proc-macro2 1.0.107: https://github.com/dtolnay/proc-macro2
 - profiling 1.0.18: https://github.com/aclysma/profiling
 - quote 1.0.47: https://github.com/dtolnay/quote
-- rand 0.10.3: https://github.com/rust-random/rand
+- rand 0.10.4: https://github.com/rust-random/rand
 - raw-window-handle 0.6.2: https://github.com/rust-windowing/raw-window-handle
-- resvg 0.49.0: https://github.com/linebender/resvg
+- resvg 0.50.0: https://github.com/linebender/resvg
 - rustversion 1.0.23: https://github.com/dtolnay/rustversion
 - serde 1.0.229: https://github.com/serde-rs/serde
 - serde_core 1.0.229: https://github.com/serde-rs/serde
@@ -6023,12 +6023,12 @@ limitations under the License.
 - serde_json 1.0.154: https://github.com/serde-rs/json
 - shlex 2.0.1: https://github.com/comex/rust-shlex
 - syn 2.0.119: https://github.com/dtolnay/syn
-- syn 3.0.9: https://github.com/dtolnay/syn
+- syn 3.0.10: https://github.com/dtolnay/syn
 - thiserror-impl 2.0.21: https://github.com/dtolnay/thiserror
 - thiserror 2.0.21: https://github.com/dtolnay/thiserror
 - typeid 1.0.3: https://github.com/dtolnay/typeid
 - unicode-ident 1.0.27: https://github.com/dtolnay/unicode-ident
-- usvg 0.49.0: https://github.com/linebender/resvg
+- usvg 0.50.0: https://github.com/linebender/resvg
 - vello_common 0.2.0: https://github.com/linebender/vello
 - vello_cpu 0.2.0: https://github.com/linebender/vello
 
@@ -6292,8 +6292,8 @@ The `cfg_aliases!` macro uses a lot of the code from [`tectonic_cfg_support::tar
 
 
 ===== MIT License (MIT) =====
-- libsqlite3-sys 0.39.1: https://github.com/rusqlite/rusqlite
-- rusqlite 0.41.1: https://github.com/rusqlite/rusqlite
+- libsqlite3-sys 0.40.0: https://github.com/rusqlite/rusqlite
+- rusqlite 0.43.0: https://github.com/rusqlite/rusqlite
 
 Copyright (c) 2014 The rusqlite developers
 
@@ -6448,7 +6448,7 @@ THE SOFTWARE.
 
 
 ===== MIT License (MIT) =====
-- wasapi 0.26.0: https://github.com/HEnquist/wasapi-rs
+- wasapi 0.27.0: https://github.com/HEnquist/wasapi-rs
 
 Copyright (c) 2020 Henrik Enquist
 
@@ -6751,7 +6751,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ===== MIT License (MIT) =====
-- winnow 1.0.4: https://github.com/winnow-rs/winnow
+- winnow 1.0.5: https://github.com/winnow-rs/winnow
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -6853,7 +6853,7 @@ THE SOFTWARE.
 
 
 ===== MIT License (MIT) =====
-- lz4_flex 0.14.0: https://github.com/pseitz/lz4_flex
+- lz4_flex 0.14.2: https://github.com/pseitz/lz4_flex
 
 The MIT License (MIT)
 
@@ -7418,6 +7418,50 @@ authorization of the copyright holder.
 
 
 ===== Unicode License v3 (Unicode-3.0) =====
+- unicode-properties 0.1.5: https://github.com/unicode-rs/unicode-properties
+
+UNICODE LICENSE V3
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 1991-2026 Unicode, Inc.
+
+NOTICE TO USER: Carefully read the following legal agreement. BY
+DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
+SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
+DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of data files and any associated documentation (the "Data Files") or
+software and any associated documentation (the "Software") to deal in the
+Data Files or Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, and/or sell
+copies of the Data Files or Software, and to permit persons to whom the
+Data Files or Software are furnished to do so, provided that either (a)
+this copyright and permission notice appear with all copies of the Data
+Files or Software, or (b) this copyright and permission notice appear in
+associated Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+THIRD PARTY RIGHTS.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
+BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
+OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
+FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall
+not be used in advertising or otherwise to promote the sale, use or other
+dealings in these Data Files or Software without prior written
+authorization of the copyright holder.
+
+
+===== Unicode License v3 (Unicode-3.0) =====
 - icu_collections 2.4.0: https://github.com/unicode-org/icu4x
 - icu_locale_core 2.4.0: https://github.com/unicode-org/icu4x
 - icu_normalizer 2.4.0: https://github.com/unicode-org/icu4x
@@ -7536,7 +7580,7 @@ option. All files in the project carrying such notice may not be
 copied, modified, or distributed except according to those terms.
 
 
-===== Additional notice: rand 0.10.3 / COPYRIGHT =====
+===== Additional notice: rand 0.10.4 / COPYRIGHT =====
 Copyrights in the Rand project are retained by their contributors. No
 copyright assignment is required to contribute to the Rand project.
 
@@ -7551,7 +7595,7 @@ The Rand project includes code from the Rust project
 published under these same licenses.
 
 
-===== Additional notice: unicode-properties 0.1.4 / COPYRIGHT =====
+===== Additional notice: unicode-properties 0.1.5 / COPYRIGHT =====
 Licensed under the Apache License, Version 2.0
 <LICENSE-APACHE or
 http://www.apache.org/licenses/LICENSE-2.0> or the MIT

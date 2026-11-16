@@ -57,7 +57,7 @@ impl Monitor {
         let format = WaveFormat::new(
             32,
             32,
-            &SampleType::Float,
+            SampleType::Float,
             PCM_SAMPLE_RATE as usize,
             PCM_CHANNELS,
             Some(3),

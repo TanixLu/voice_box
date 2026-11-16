@@ -8,23 +8,23 @@ license.workspace = true
 anyhow.workspace = true
 atomic-write-file.workspace = true
 dfn3_rs.workspace = true
-eframe = { version = "0.37", default-features = false, features = [
+eframe = { workspace = true, features = [
     "accesskit",
     "clipboard",
     "glow",
     "links",
     "persistence",
 ] }
-egui = { version = "0.37", default-features = false, features = ["serde"] }
-egui-winit = { version = "0.37", default-features = false }
+egui = { workspace = true, features = ["serde"] }
+egui-winit.workspace = true
 lz4_flex.workspace = true
 num_enum.workspace = true
-restart-manager = "0.1.0"
-rusqlite = { version = "0.41.0", features = ["bundled"] }
+restart-manager.workspace = true
+rusqlite = { workspace = true, features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true
-symphonia = { version = "0.6.1", default-features = false, features = [
+symphonia = { workspace = true, features = [
     "mp3",
     "id3v2",
     "wav",
@@ -33,10 +33,10 @@ symphonia = { version = "0.6.1", default-features = false, features = [
     "ogg",
     "vorbis",
 ] }
-tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
 voice_box_shared.workspace = true
-wasapi = "0.26.0"
+wasapi.workspace = true
 windows = { workspace = true, features = [
     "Devices_Enumeration",
     "Foundation",
@@ -69,12 +69,12 @@ windows = { workspace = true, features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
+windows-collections.workspace = true
 windows-core.workspace = true
-windows-collections = "0.3.2"
-winreg = { version = "0.56.0", features = ["transactions"] }
+winreg = { workspace = true, features = ["transactions"] }
 
 [build-dependencies]
-find-msvc-tools = "0.1"
-image = { version = "0.25", default-features = false, features = ["ico"] }
+find-msvc-tools.workspace = true
+image = { workspace = true, features = ["ico"] }
 lz4_flex.workspace = true
-resvg = { version = "0.49.0", default-features = false }
+resvg.workspace = true

@@ -27,11 +27,11 @@ pub fn enumerate_microphones() -> anyhow::Result<Vec<Microphone>> {
     let _com_guard = ComGuard::mta()?;
     let enumerator = DeviceEnumerator::new()?;
     let default_id = enumerator
-        .get_default_device(&Direction::Capture)
+        .get_default_device(Direction::Capture)
         .and_then(|device| device.get_id())
         .ok();
     let mut microphones = Vec::new();
-    for device in &enumerator.get_device_collection(&Direction::Capture)? {
+    for device in &enumerator.get_device_collection(Direction::Capture)? {
         let device = device?;
         let id = device.get_id()?;
         let guid = endpoint_guid(&id).to_owned();
@@ -58,10 +58,10 @@ pub fn enumerate_all() -> anyhow::Result<(Vec<Microphone>, Vec<Speaker>)> {
     let _com_guard = ComGuard::mta()?;
     let enumerator = DeviceEnumerator::new()?;
     let default_id = enumerator
-        .get_default_device(&Direction::Render)
+        .get_default_device(Direction::Render)
         .and_then(|device| device.get_id())
         .ok();
-    let collection = enumerator.get_device_collection(&Direction::Render)?;
+    let collection = enumerator.get_device_collection(Direction::Render)?;
     let speakers = (&collection)
         .into_iter()
         .map(|device| {
@@ -83,7 +83,7 @@ pub fn microphone_guid(device_id: Option<&str>) -> anyhow::Result<String> {
     let enumerator = DeviceEnumerator::new()?;
     let device = match device_id {
         Some(id) => enumerator.get_device(id)?,
-        None => enumerator.get_default_device(&Direction::Capture)?,
+        None => enumerator.get_default_device(Direction::Capture)?,
     };
     anyhow::ensure!(
         device.get_direction() == Direction::Capture,
