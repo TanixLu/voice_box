@@ -1,5 +1,5 @@
 //! Preallocated audio processing with capture-time gain envelopes.
-//! Audio and gain share a delay line; mute never resets buffers or stops models.
+//! Audio and gain share a variable delay line; mute never resets processing.
 
 mod channel;
 mod delay;
@@ -33,50 +33,75 @@ pub const MAX_CHANNELS: usize = 32;
 
 const RAMP_SECONDS: f64 = 0.020;
 
+/// Steady-state microphone latency for a validated sample rate and live config.
+/// Smooth transitions may still be in progress when this target is queried.
+pub fn target_latency_hns(sample_rate: f64, config: &ApoConfig) -> i64 {
+    let enhancement = if config.noise_reduction_db.is_enabled() {
+        channel::Channel::latency_frames(sample_rate)
+    } else {
+        0
+    };
+    let frames = enhancement + LookaheadLimiter::latency_frames(sample_rate);
+    (frames as f64 / sample_rate * 10_000_000.0).ceil() as i64
+}
+
 /// A continuous float pipeline through the single final limiter.
 struct ProcessingChain {
     enhancement: Enhancement,
     delay: FrameDelay,
     gain: Ramp,
+    wet: Ramp,
+    enabled: bool,
     limiter: LookaheadLimiter,
 }
 
 impl ProcessingChain {
     fn new(sample_rate: f64, channels: usize, model: Model, config: &ApoConfig) -> Self {
         let enhancement = Enhancement::new(sample_rate, channels, model, config.noise_reduction_db);
-        let delay = FrameDelay::new(enhancement.latency_frames(), channels);
+        let mut delay = FrameDelay::new(enhancement.latency_frames(), channels, sample_rate);
+        let enabled = config.noise_reduction_db.is_enabled();
+        delay.reset(enabled);
+        let ramp_frames = (sample_rate * RAMP_SECONDS).ceil() as usize;
         Self {
             enhancement,
             delay,
-            gain: Ramp::new(
-                config.gain_db.as_f32_gain(),
-                (sample_rate * RAMP_SECONDS).ceil() as usize,
-            ),
+            gain: Ramp::new(config.gain_db.as_f32_gain(), ramp_frames),
+            wet: Ramp::new(0.0, ramp_frames),
+            enabled,
             limiter: LookaheadLimiter::new(sample_rate, channels),
         }
     }
 
-    fn latency_frames(&self) -> usize {
-        self.enhancement.latency_frames() + self.limiter.latency_frames()
-    }
-
     fn reset(&mut self, config: &ApoConfig) {
+        self.enabled = config.noise_reduction_db.is_enabled();
         self.enhancement.reset(config.noise_reduction_db);
-        self.delay.reset();
+        self.delay.reset(self.enabled);
         self.gain.reset(config.gain_db.as_f32_gain());
+        self.wet.reset(0.0);
         self.limiter.reset();
     }
 
     fn configure(&mut self, config: &ApoConfig) {
+        self.enabled = config.noise_reduction_db.is_enabled();
         self.gain.set_target(config.gain_db.as_f32_gain());
         self.enhancement.set_strength(config.noise_reduction_db);
     }
 
     fn process_microphone(&mut self, samples: &mut [f32], enhanced: &mut [f32]) {
-        let wet = self.enhancement.process_frame(samples, enhanced);
-        let gain = self.delay.process_frame(samples, self.gain.next());
+        // While any wet audio is audible, pin dry delay at the wet latency.
+        // Retargeting reverses the same ramps/cursor without clearing history.
+        let hold = self.enabled || self.wet.current() != 0.0;
+        let ready = self.enhancement.process_frame(samples, enhanced, hold);
+        let gain = self.delay.process_frame(samples, self.gain.next(), hold);
+        self.wet
+            .set_target(if self.enabled && ready && self.delay.is_full() {
+                1.0
+            } else {
+                0.0
+            });
+        let wet = self.wet.next();
         for (dry, &enhanced) in samples.iter_mut().zip(enhanced.iter()) {
-            *dry = (*dry * (1.0 - wet) + enhanced * wet) * gain;
+            *dry = *dry * (1.0 - wet) + enhanced * gain * wet;
         }
     }
 }
@@ -87,7 +112,6 @@ pub struct AudioProcessor {
     format: SampleFormat,
     frame_bytes: usize,
     chain: Option<ProcessingChain>,
-    latency_hns: i64,
 }
 
 impl AudioProcessor {
@@ -110,12 +134,10 @@ impl AudioProcessor {
         // RAW-mode instances keep only format metadata and introduce no delay.
         let chain =
             process_effect.then(|| ProcessingChain::new(sample_rate, channels, model, config));
-        let latency_frames = chain.as_ref().map_or(0, ProcessingChain::latency_frames);
         Ok(Self {
             format,
             frame_bytes,
             chain,
-            latency_hns: (latency_frames as f64 / sample_rate * 10_000_000.0).ceil() as i64,
         })
     }
 
@@ -143,19 +165,10 @@ impl AudioProcessor {
         self.chain.is_none()
     }
 
-    pub fn latency_hns(&self) -> i64 {
-        self.latency_hns
-    }
-
-    pub fn latency_frames(&self) -> usize {
-        self.chain
-            .as_ref()
-            .map_or(0, ProcessingChain::latency_frames)
-    }
-
     /// Mix host-rate stereo playback before limiting and encoding exactly once.
-    /// Microphone gain travels with input audio and takes effect at the output
-    /// after `latency_frames()`. A zero gain does not stop the denoiser.
+    /// Microphone gain travels with input audio through the current delay.
+    /// Live configuration changes retime the microphone toward its target latency.
+    /// A zero gain does not stop the denoiser.
     /// `buffer` must contain complete frames; playback, when present, has one
     /// stereo frame per buffer frame. No playback means microphone-only output.
     /// x86-64 processing enables FTZ/DAZ for this call and restores the caller's

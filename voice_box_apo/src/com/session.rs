@@ -31,10 +31,6 @@ impl ProcessingSession {
         }
     }
 
-    pub(super) fn latency_hns(&self) -> i64 {
-        self.dsp.latency_hns()
-    }
-
     pub(super) fn cancellation(&self) -> Option<Arc<AtomicBool>> {
         self.injection.as_ref().map(Injection::cancellation)
     }

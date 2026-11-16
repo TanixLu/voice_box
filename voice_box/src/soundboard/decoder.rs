@@ -63,7 +63,10 @@ impl SoundDecoder {
             StreamingResampler::new(f64::from(rate), f64::from(PCM_SAMPLE_RATE))
         });
         let delay_frames_remaining =
-            (resamplers[0].delay_seconds().max(0.0) * f64::from(PCM_SAMPLE_RATE)).round() as usize;
+            (StreamingResampler::delay_seconds(f64::from(rate), f64::from(PCM_SAMPLE_RATE))
+                .max(0.0)
+                * f64::from(PCM_SAMPLE_RATE))
+            .round() as usize;
         Ok(Self {
             format,
             decoder,
@@ -121,7 +124,11 @@ impl SoundDecoder {
                 self.eof = true;
                 // Flush the converter's filter and partial chunk, but never append
                 // its padding to the musical duration.
-                let padding = (self.rate / 20) as usize + self.resamplers[0].input_chunk_size();
+                let padding = (self.rate / 20) as usize
+                    + StreamingResampler::input_chunk_size(
+                        f64::from(self.rate),
+                        f64::from(PCM_SAMPLE_RATE),
+                    );
                 for _ in 0..padding {
                     self.push(PcmFrame::default());
                 }

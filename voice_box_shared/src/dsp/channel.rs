@@ -29,11 +29,7 @@ impl Channel {
         let rate = f64::from(SAMPLE_RATE);
         let input_resampler = StreamingResampler::new(sample_rate, rate);
         let output_resampler = StreamingResampler::new(rate, sample_rate);
-        let prefill = ((FRAME_SIZE + output_resampler.input_chunk_size()) as f64 * sample_rate
-            / rate)
-            .ceil() as usize
-            + input_resampler.input_chunk_size()
-            + 2;
+        let prefill = Self::prefill_frames(sample_rate);
         Self {
             denoiser: Box::new(Denoiser::with_model(model)),
             high_pass: HighPass::new(rate),
@@ -51,11 +47,24 @@ impl Channel {
         }
     }
 
-    pub(super) fn delay_frames(&self, sample_rate: f64) -> f64 {
-        self.prefill as f64
-            + (ALGORITHM_DELAY + FRAME_SIZE) as f64 * sample_rate / f64::from(SAMPLE_RATE)
-            + (self.input_resampler.delay_seconds() + self.output_resampler.delay_seconds())
-                * sample_rate
+    fn prefill_frames(sample_rate: f64) -> usize {
+        let rate = f64::from(SAMPLE_RATE);
+        ((FRAME_SIZE + StreamingResampler::input_chunk_size(rate, sample_rate)) as f64
+            * sample_rate
+            / rate)
+            .ceil() as usize
+            + StreamingResampler::input_chunk_size(sample_rate, rate)
+            + 2
+    }
+
+    pub(super) fn latency_frames(sample_rate: f64) -> usize {
+        let rate = f64::from(SAMPLE_RATE);
+        (Self::prefill_frames(sample_rate) as f64
+            + (ALGORITHM_DELAY + FRAME_SIZE) as f64 * sample_rate / rate
+            + (StreamingResampler::delay_seconds(sample_rate, rate)
+                + StreamingResampler::delay_seconds(rate, sample_rate))
+                * sample_rate)
+            .ceil() as usize
     }
 
     pub(super) fn reset(&mut self, strength: NoiseReductionDb) {

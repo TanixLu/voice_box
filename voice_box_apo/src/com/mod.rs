@@ -93,9 +93,9 @@ struct ControlState {
     discovery_only: bool,
     supports_effects: bool,
     // Query snapshots: channels may come from negotiation before a session exists;
-    // latency comes from the last successful lock. Unlock preserves both values.
+    // sample rate comes from the most recent successful lock. Unlock preserves both.
     input_channels: u32,
-    latency_hns: i64,
+    sample_rate: Option<f64>,
 }
 
 impl ApoCom {
@@ -339,7 +339,7 @@ fn create_apo(outer: *mut c_void) -> Result<*mut ApoCom, HRESULT> {
                 discovery_only: false,
                 supports_effects: true,
                 input_channels: 0,
-                latency_hns: 0,
+                sample_rate: None,
             }),
             config: Arc::new(RtConfig::default()),
             processing: ProcessingCell::new(),

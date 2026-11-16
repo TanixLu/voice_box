@@ -26,7 +26,7 @@ impl LookaheadLimiter {
     /// Formats and resource bounds have already been validated by AudioProcessor.
     pub fn new(sample_rate: f64, channels: usize) -> Self {
         debug_assert!(sample_rate.is_finite() && sample_rate > 0.0 && channels > 0);
-        let delay_frames = (sample_rate * LOOKAHEAD_SECONDS).ceil() as usize;
+        let delay_frames = Self::latency_frames(sample_rate);
         let window_frames = delay_frames + 1;
         let leaves = window_frames.next_power_of_two();
         let mut limiter = Self {
@@ -59,8 +59,8 @@ impl LookaheadLimiter {
         self.gain = 1.0;
     }
 
-    pub fn latency_frames(&self) -> usize {
-        self.delay_frames
+    pub fn latency_frames(sample_rate: f64) -> usize {
+        (sample_rate * LOOKAHEAD_SECONDS).ceil() as usize
     }
 
     pub fn process_frame(&mut self, frame: &mut [f32]) {

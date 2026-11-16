@@ -26,6 +26,10 @@ impl Ramp {
         self.remaining = 0;
     }
 
+    pub fn current(&self) -> f32 {
+        self.current
+    }
+
     pub fn set_target(&mut self, target: f32) {
         if target != self.target {
             self.target = target;

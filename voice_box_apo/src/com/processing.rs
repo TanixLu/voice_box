@@ -14,7 +14,7 @@ use windows::Win32::{
 };
 use windows_core::{HRESULT, Interface};
 
-use voice_box_shared::dsp::AudioProcessor;
+use voice_box_shared::dsp::{AudioProcessor, target_latency_hns};
 
 use crate::{
     com::{
@@ -40,7 +40,18 @@ pub unsafe extern "system" fn get_latency(this: *mut c_void, latency: *mut i64) 
         return E_POINTER;
     }
     let object = unsafe { &*object_from(this) };
-    unsafe { *latency = object.control().latency_hns };
+    let control = object.control();
+    let config = object.config.load();
+    // Report the current configuration's steady-state target, not the transition cursor.
+    unsafe {
+        *latency = if control.supports_effects {
+            control
+                .sample_rate
+                .map_or(0, |rate| target_latency_hns(rate, &config))
+        } else {
+            0
+        }
+    };
     S_OK
 }
 
@@ -115,6 +126,7 @@ pub unsafe extern "system" fn lock_for_process(
     }
     let sample_format = sample_format(&input_format)
         .expect("UNREACHABLE: validated format should have a supported sample format");
+    let sample_rate = f64::from(input_format.fFramesPerSecond);
     let frame_bytes = input_format.dwSamplesPerFrame as usize * sample_format.bytes();
     if max_output_frames < max_input_frames {
         return fail(
@@ -152,14 +164,15 @@ pub unsafe extern "system" fn lock_for_process(
     };
     // Capture all DSP allocations before publishing the prepared state.
     // A failed construction or page lock leaves the previous state intact.
+    let config = object.config.load();
     let dsp = match Resident::new(|| {
         AudioProcessor::new(
             sample_format,
             input_format.dwSamplesPerFrame as usize,
-            f64::from(input_format.fFramesPerSecond),
+            sample_rate,
             control.supports_effects,
             dfn3_rs::Model::embedded(),
-            &object.config.load(),
+            &config,
         )
     }) {
         Ok(dsp) => dsp,
@@ -173,11 +186,7 @@ pub unsafe extern "system" fn lock_for_process(
     let injection = if control.supports_effects
         && let Some(name) = control.soundboard_name.clone()
     {
-        match crate::injection::Injection::start(
-            name,
-            f64::from(input_format.fFramesPerSecond),
-            max_input_frames as usize,
-        ) {
+        match crate::injection::Injection::start(name, sample_rate, max_input_frames as usize) {
             Ok(injection) => Some(injection),
             Err(error) => {
                 apo_log!(
@@ -192,12 +201,11 @@ pub unsafe extern "system" fn lock_for_process(
         None
     };
     let session = ProcessingSession::new(dsp, injection, max_input_frames);
-    let latency_hns = session.latency_hns();
     if let Some(pages) = resident_pages {
         control.resident_pages = Some(pages);
     }
     control.injection_stop = session.cancellation();
-    control.latency_hns = latency_hns;
+    control.sample_rate = Some(sample_rate);
     control.input_channels = input_format.dwSamplesPerFrame;
     object.process_calls.store(0, Ordering::Relaxed);
     object.processed_frames.store(0, Ordering::Relaxed);
@@ -206,12 +214,16 @@ pub unsafe extern "system" fn lock_for_process(
     apo_log!(
         etw::level::INFO,
         etw::keyword::APO_CONFIG,
-        "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} effect=denoise enabled={} latency_hns={}",
+        "LockForProcess completed instance={object:p} input_max_frames={} output_max_frames={} channels={} frame_bytes={frame_bytes} effect=denoise enabled={} target_latency_hns={}",
         max_input_frames,
         max_output_frames,
         input_format.dwSamplesPerFrame,
-        object.config.load().noise_reduction_db.is_enabled(),
-        latency_hns,
+        config.noise_reduction_db.is_enabled(),
+        if control.supports_effects {
+            target_latency_hns(sample_rate, &config)
+        } else {
+            0
+        },
     );
     S_OK
 }

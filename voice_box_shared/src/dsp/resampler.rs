@@ -5,6 +5,16 @@ use rubato::{
     WindowFunction, audioadapter_buffers::direct::SequentialSlice,
 };
 
+fn sinc_parameters(ratio: f64) -> SincInterpolationParameters {
+    SincInterpolationParameters {
+        sinc_len: (64.0 / ratio.min(1.0)).ceil() as usize,
+        f_cutoff: Some(0.9),
+        oversampling_factor: 128,
+        interpolation: SincInterpolationType::Linear,
+        window: WindowFunction::Blackman,
+    }
+}
+
 /// Rubato sinc conversion with fixed one-millisecond input chunks and buffers.
 pub struct StreamingResampler {
     engine: Option<Async<f32>>,
@@ -13,7 +23,6 @@ pub struct StreamingResampler {
     pending: usize,
     read: usize,
     available: usize,
-    delay_seconds: f64,
 }
 
 impl StreamingResampler {
@@ -26,31 +35,19 @@ impl StreamingResampler {
                 pending: 0,
                 read: 0,
                 available: 0,
-                delay_seconds: 0.0,
             };
         }
         let ratio = output_rate / input_rate;
-        let parameters = SincInterpolationParameters {
-            sinc_len: (64.0 / ratio.min(1.0)).ceil() as usize,
-            f_cutoff: Some(0.9),
-            oversampling_factor: 128,
-            interpolation: SincInterpolationType::Linear,
-            window: WindowFunction::Blackman,
-        };
+        let parameters = sinc_parameters(ratio);
         let engine = Async::new_sinc(
             ratio,
             1.0,
             &parameters,
-            (input_rate / 1000.0).ceil() as usize,
+            Self::input_chunk_size(input_rate, output_rate),
             1,
             FixedAsync::Input,
         )
         .expect("UNREACHABLE: validated rates and fixed parameters should create a resampler");
-        // Account for Rubato's sinc-table phase offset and initial index advance.
-        let sinc_len = parameters.sinc_len.next_multiple_of(8);
-        let delay_seconds = (sinc_len as f64 / 2.0 - 1.0 / parameters.oversampling_factor as f64)
-            / input_rate
-            - 1.0 / output_rate;
         Self {
             input: vec![0.0; engine.input_frames_max()],
             output: vec![0.0; engine.output_frames_max()],
@@ -58,18 +55,25 @@ impl StreamingResampler {
             pending: 0,
             read: 0,
             available: 0,
-            delay_seconds,
         }
     }
 
-    pub fn delay_seconds(&self) -> f64 {
-        self.delay_seconds
+    pub fn delay_seconds(input_rate: f64, output_rate: f64) -> f64 {
+        if input_rate == output_rate {
+            return 0.0;
+        }
+        let parameters = sinc_parameters(output_rate / input_rate);
+        // Account for Rubato's sinc-table phase offset and initial index advance.
+        let sinc_len = parameters.sinc_len.next_multiple_of(8);
+        (sinc_len as f64 / 2.0 - 1.0 / parameters.oversampling_factor as f64) / input_rate
+            - 1.0 / output_rate
     }
-    pub fn input_chunk_size(&self) -> usize {
-        if self.engine.is_some() {
-            self.input.len()
-        } else {
+
+    pub fn input_chunk_size(input_rate: f64, output_rate: f64) -> usize {
+        if input_rate == output_rate {
             0
+        } else {
+            (input_rate / 1000.0).ceil() as usize
         }
     }
 

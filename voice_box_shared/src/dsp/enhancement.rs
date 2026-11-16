@@ -1,21 +1,23 @@
-//! Denoising lifecycle and bypass fades; the model controls attenuation strength.
+//! Denoiser lifetime and warmup, independent of output retiming and mixing.
 
-use super::{RAMP_SECONDS, channel::Channel, ramp::Ramp};
+use super::channel::Channel;
 use crate::apo_config::NoiseReductionDb;
 use dfn3_rs::Model;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
-    Off,
-    Warming { remaining: usize },
+    Ready,
     Running,
+    Stopped,
 }
 
 pub(super) struct Enhancement {
     channels: Vec<Channel>,
-    state: State,
-    wet: Ramp,
     latency_frames: usize,
+    remaining: usize,
+    state: State,
+    idle_frames: usize,
+    idle_remaining: usize,
     strength: NoiseReductionDb,
 }
 
@@ -29,14 +31,17 @@ impl Enhancement {
         let channels: Vec<_> = (0..channels)
             .map(|_| Channel::new(sample_rate, model))
             .collect();
-        let latency_frames = channels[0].delay_frames(sample_rate).ceil() as usize;
+        let latency_frames = Channel::latency_frames(sample_rate);
         let mut enhancement = Self {
             channels,
-            state: State::Off,
-            wet: Ramp::new(0.0, (sample_rate * RAMP_SECONDS).ceil() as usize),
             latency_frames,
+            remaining: 0,
+            state: State::Ready,
+            idle_frames: (sample_rate * super::RAMP_SECONDS).ceil() as usize,
+            idle_remaining: 0,
             strength,
         };
+        // Prepare every channel off the real-time thread, including bypassed streams.
         enhancement.reset(strength);
         enhancement
     }
@@ -44,79 +49,62 @@ impl Enhancement {
     pub(super) fn channels(&self) -> usize {
         self.channels.len()
     }
-
     pub(super) fn latency_frames(&self) -> usize {
         self.latency_frames
     }
 
-    fn start(&mut self) {
-        for channel in &mut self.channels {
-            channel.reset(self.strength);
-        }
-        self.state = State::Warming {
-            remaining: self.latency_frames,
-        };
-    }
-
-    /// Stream initialization selects the configured path without a user fade.
     pub(super) fn reset(&mut self, strength: NoiseReductionDb) {
+        for channel in &mut self.channels {
+            channel.reset(strength);
+        }
         self.strength = strength;
-        self.state = State::Off;
-        self.set_strength(strength);
-        self.wet
-            .reset(if strength.is_enabled() { 1.0 } else { 0.0 });
+        self.state = State::Ready;
+        self.remaining = self.latency_frames;
+        self.idle_remaining = 0;
     }
 
     pub(super) fn set_strength(&mut self, strength: NoiseReductionDb) {
-        if self.strength != strength {
+        // Keep the previous attenuation during an off fade. Zero means bypass,
+        // not a request to alter the model while its last output is audible.
+        if strength.is_enabled() && self.strength != strength {
             self.strength = strength;
             for channel in &mut self.channels {
                 channel.set_strength(strength);
             }
         }
-        let enabled = strength.is_enabled();
-        self.wet.set_target(if enabled { 1.0 } else { 0.0 });
-        match (self.state, enabled) {
-            (State::Off, true) => self.start(),
-            (State::Warming { .. }, false) => {
-                // No wet audio has been exposed yet; cancellation needs no fade.
-                self.state = State::Off;
-                self.wet.reset(0.0);
-            }
-            _ => {}
-        }
     }
 
-    /// Return the wet mix for this frame. The caller supplies aligned dry audio.
-    pub(super) fn process_frame(&mut self, input: &[f32], output: &mut [f32]) -> f32 {
-        let wet = match self.state {
-            State::Off => {
-                output.fill(0.0);
-                return 0.0;
+    pub(super) fn process_frame(
+        &mut self,
+        input: &[f32],
+        output: &mut [f32],
+        active: bool,
+    ) -> bool {
+        // Brief off pulses keep the model warm rather than repeatedly resetting
+        // all channels on the real-time thread. Long-term bypass still stops it.
+        if active {
+            if self.state == State::Stopped {
+                self.reset(self.strength);
             }
-            State::Warming { remaining } => {
-                self.state = if remaining == 1 {
-                    State::Running
-                } else {
-                    State::Warming {
-                        remaining: remaining - 1,
-                    }
-                };
-                0.0
+            self.idle_remaining = self.idle_frames;
+        } else if self.state != State::Running || self.idle_remaining == 0 {
+            // An unused, prepared channel stays ready however long bypass lasts.
+            if self.state == State::Running {
+                self.state = State::Stopped;
             }
-            State::Running => {
-                let wet = self.wet.next();
-                if wet == 0.0 {
-                    self.state = State::Off;
-                    output.fill(0.0);
-                    return 0.0;
-                }
-                wet
-            }
-        };
+            output.fill(0.0);
+            return false;
+        } else {
+            self.idle_remaining -= 1;
+        }
+        self.state = State::Running;
         for ((&sample, channel), output) in input.iter().zip(&mut self.channels).zip(output) {
             *output = channel.process_sample(sample);
         }
-        wet
+        if self.remaining != 0 {
+            self.remaining -= 1;
+            return false;
+        }
+        true
     }
 }
