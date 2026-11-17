@@ -4,7 +4,8 @@ use dfn3_rs::{ALGORITHM_DELAY, Denoiser, FRAME_SIZE, Model, SAMPLE_RATE};
 use std::time::Duration;
 
 use super::{
-    RAMP_SECONDS, StreamingResampler, finite_sample, high_pass::HighPass, pre_gain::PreGain,
+    PARAMETER_RAMP_SECONDS, StreamingResampler, finite_sample, high_pass::HighPass,
+    pre_gain::PreGain,
 };
 use crate::apo_config::NoiseReductionDb;
 
@@ -59,6 +60,8 @@ impl Channel {
 
     pub(super) fn latency_frames(sample_rate: f64) -> usize {
         let rate = f64::from(SAMPLE_RATE);
+        // PreGain::prepare emits the previous block, adding one FRAME_SIZE
+        // (10 ms) of lookahead on top of the queue prefill and ALGORITHM_DELAY.
         (Self::prefill_frames(sample_rate) as f64
             + (ALGORITHM_DELAY + FRAME_SIZE) as f64 * sample_rate / rate
             + (StreamingResampler::delay_seconds(sample_rate, rate)
@@ -87,7 +90,7 @@ impl Channel {
     pub(super) fn set_strength(&mut self, strength: NoiseReductionDb) {
         self.denoiser.set_attenuation_limit_smooth(
             f32::from(strength.as_u8()),
-            Duration::from_secs_f64(RAMP_SECONDS),
+            Duration::from_secs_f64(PARAMETER_RAMP_SECONDS),
         );
     }
 

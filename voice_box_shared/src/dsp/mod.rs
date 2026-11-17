@@ -1,5 +1,5 @@
 //! Preallocated audio processing with capture-time gain envelopes.
-//! Audio and gain share a variable delay line; mute never resets processing.
+//! The denoised path uses delayed gain. Live switches fade the mic output to zero.
 
 mod channel;
 mod delay;
@@ -23,7 +23,7 @@ pub use self::{
 
 #[cfg(target_arch = "x86_64")]
 use self::denormals::DenormalGuard;
-use self::{delay::FrameDelay, enhancement::Enhancement, limiter::LookaheadLimiter, ramp::Ramp};
+use self::{delay::GainDelay, enhancement::Enhancement, limiter::LookaheadLimiter, ramp::Ramp};
 use crate::{apo_config::ApoConfig, pcm_transport::PcmFrame};
 use dfn3_rs::Model;
 
@@ -31,10 +31,11 @@ pub const MIN_SAMPLE_RATE: f64 = 8_000.0;
 pub const MAX_SAMPLE_RATE: f64 = 192_000.0;
 pub const MAX_CHANNELS: usize = 32;
 
-const RAMP_SECONDS: f64 = 0.020;
+const PARAMETER_RAMP_SECONDS: f64 = 0.020;
+const SWITCH_FADE_SECONDS: f64 = 0.010;
 
 /// Steady-state microphone latency for a validated sample rate and live config.
-/// Smooth transitions may still be in progress when this target is queried.
+/// A live switch may still be in progress when this target is queried.
 pub fn target_latency_hns(sample_rate: f64, config: &ApoConfig) -> i64 {
     let enhancement = if config.noise_reduction_db.is_enabled() {
         channel::Channel::latency_frames(sample_rate)
@@ -45,63 +46,90 @@ pub fn target_latency_hns(sample_rate: f64, config: &ApoConfig) -> i64 {
     (frames as f64 / sample_rate * 10_000_000.0).ceil() as i64
 }
 
-/// A continuous float pipeline through the single final limiter.
+/// State for microphone processing and the final mixed-output limiter.
 struct ProcessingChain {
     enhancement: Enhancement,
-    delay: FrameDelay,
+    gain_delay: GainDelay,
     gain: Ramp,
-    wet: Ramp,
-    enabled: bool,
+    switch_fade: Ramp,
+    using_denoised_path: bool,
     limiter: LookaheadLimiter,
 }
 
 impl ProcessingChain {
     fn new(sample_rate: f64, channels: usize, model: Model, config: &ApoConfig) -> Self {
         let enhancement = Enhancement::new(sample_rate, channels, model, config.noise_reduction_db);
-        let mut delay = FrameDelay::new(enhancement.latency_frames(), channels, sample_rate);
-        let enabled = config.noise_reduction_db.is_enabled();
-        delay.reset(enabled);
-        let ramp_frames = (sample_rate * RAMP_SECONDS).ceil() as usize;
+        let gain_delay = GainDelay::new(enhancement.latency_frames());
+        let using_denoised_path = config.noise_reduction_db.is_enabled();
+        let gain_ramp_frames = (sample_rate * PARAMETER_RAMP_SECONDS).ceil() as usize;
+        let fade_frames = (sample_rate * SWITCH_FADE_SECONDS).ceil() as usize;
         Self {
             enhancement,
-            delay,
-            gain: Ramp::new(config.gain_db.as_f32_gain(), ramp_frames),
-            wet: Ramp::new(0.0, ramp_frames),
-            enabled,
+            gain_delay,
+            gain: Ramp::new(config.gain_db.as_f32_gain(), gain_ramp_frames),
+            switch_fade: Ramp::new(1.0, fade_frames),
+            using_denoised_path,
             limiter: LookaheadLimiter::new(sample_rate, channels),
         }
     }
 
     fn reset(&mut self, config: &ApoConfig) {
-        self.enabled = config.noise_reduction_db.is_enabled();
+        self.using_denoised_path = config.noise_reduction_db.is_enabled();
         self.enhancement.reset(config.noise_reduction_db);
-        self.delay.reset(self.enabled);
+        self.gain_delay.reset();
         self.gain.reset(config.gain_db.as_f32_gain());
-        self.wet.reset(0.0);
+        self.switch_fade.reset(1.0);
         self.limiter.reset();
     }
 
     fn configure(&mut self, config: &ApoConfig) {
-        self.enabled = config.noise_reduction_db.is_enabled();
         self.gain.set_target(config.gain_db.as_f32_gain());
         self.enhancement.set_strength(config.noise_reduction_db);
     }
 
-    fn process_microphone(&mut self, samples: &mut [f32], enhanced: &mut [f32]) {
-        // While any wet audio is audible, pin dry delay at the wet latency.
-        // Retargeting reverses the same ramps/cursor without clearing history.
-        let hold = self.enabled || self.wet.current() != 0.0;
-        let ready = self.enhancement.process_frame(samples, enhanced, hold);
-        let gain = self.delay.process_frame(samples, self.gain.next(), hold);
-        self.wet
-            .set_target(if self.enabled && ready && self.delay.is_full() {
-                1.0
-            } else {
-                0.0
-            });
-        let wet = self.wet.next();
-        for (dry, &enhanced) in samples.iter_mut().zip(enhanced.iter()) {
-            *dry = *dry * (1.0 - wet) + enhanced * gain * wet;
+    fn process_microphone(
+        &mut self,
+        samples: &mut [f32],
+        enhanced: &mut [f32],
+        denoising_requested: bool,
+    ) {
+        let denoiser_active = denoising_requested || self.using_denoised_path;
+        let denoiser_ready = self
+            .enhancement
+            .process_frame(samples, enhanced, denoiser_active);
+        let gain = self.gain.next();
+        let delayed_gain = self.gain_delay.process_frame(gain);
+
+        if self.using_denoised_path && !denoiser_ready {
+            if denoising_requested {
+                // At startup, hold silence until the selected path has valid audio.
+                samples.fill(0.0);
+                return;
+            }
+            // Cancelling warmup starts the dry fade from silence.
+            self.switch_fade.reset(0.0);
+        }
+
+        let target_uses_denoising = denoising_requested && denoiser_ready;
+        // Switch at silence. The latency jump can replay captured audio when
+        // enabling and skip buffered audio when disabling.
+        if self.switch_fade.current() == 0.0 {
+            self.using_denoised_path = target_uses_denoising;
+        }
+
+        let fade_in = self.using_denoised_path == target_uses_denoising;
+        self.switch_fade.set_target(f32::from(fade_in));
+        let level = self.switch_fade.next();
+        if self.using_denoised_path {
+            let gain = delayed_gain * level;
+            for (sample, &enhanced) in samples.iter_mut().zip(enhanced.iter()) {
+                *sample = enhanced * gain;
+            }
+        } else {
+            let gain = gain * level;
+            for sample in samples {
+                *sample *= gain;
+            }
         }
     }
 }
@@ -142,7 +170,7 @@ impl AudioProcessor {
     }
 
     /// Discard pending audio and controls and start a stream with this config.
-    /// An enabled denoiser resumes at its configured mix after warming its buffers.
+    /// An enabled denoiser emits silence until its buffers are ready.
     pub fn reset(&mut self, config: &ApoConfig) {
         if let Some(chain) = &mut self.chain {
             chain.reset(config);
@@ -166,8 +194,8 @@ impl AudioProcessor {
     }
 
     /// Mix host-rate stereo playback before limiting and encoding exactly once.
-    /// Microphone gain travels with input audio through the current delay.
-    /// Live configuration changes retime the microphone toward its target latency.
+    /// Denoised audio uses the microphone gain from its capture time.
+    /// Live denoising switches fade the microphone output to zero before changing paths.
     /// A zero gain does not stop the denoiser.
     /// `buffer` must contain complete frames; playback, when present, has one
     /// stereo frame per buffer frame. No playback means microphone-only output.
@@ -188,16 +216,18 @@ impl AudioProcessor {
         #[cfg(target_arch = "x86_64")]
         let _denormals = DenormalGuard::new();
         chain.configure(config);
-        let channels = chain.enhancement.channels();
+        let denoising_requested = config.noise_reduction_db.is_enabled();
+        let sample_bytes = format.bytes();
+        let channels = self.frame_bytes / sample_bytes;
         let mut samples = [0.0; MAX_CHANNELS];
         let samples = &mut samples[..channels];
         let mut enhanced = [0.0; MAX_CHANNELS];
         let enhanced = &mut enhanced[..channels];
         for (index, frame) in buffer.chunks_exact_mut(self.frame_bytes).enumerate() {
-            for (sample, value) in frame.chunks_exact(format.bytes()).zip(samples.iter_mut()) {
+            for (sample, value) in frame.chunks_exact(sample_bytes).zip(samples.iter_mut()) {
                 *value = format.decode(sample) as f32;
             }
-            chain.process_microphone(samples, enhanced);
+            chain.process_microphone(samples, enhanced, denoising_requested);
             if let Some(playback) = playback {
                 if !config.playback_include_microphone_audio {
                     samples.fill(0.0);
@@ -212,7 +242,7 @@ impl AudioProcessor {
                 }
             }
             chain.limiter.process_frame(samples);
-            for (sample, &value) in frame.chunks_exact_mut(format.bytes()).zip(samples.iter()) {
+            for (sample, &value) in frame.chunks_exact_mut(sample_bytes).zip(samples.iter()) {
                 format.encode(sample, f64::from(value));
             }
         }

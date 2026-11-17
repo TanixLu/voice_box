@@ -124,7 +124,7 @@ impl PreGain {
     }
 
     /// Consume the next block and replace it with the calibrated previous block.
-    /// The added FRAME_SIZE delay must also be included in the dry audio path.
+    /// This one-block lookahead lets the gain anticipate peaks in the next block.
     pub(super) fn prepare(&mut self, frame: &mut [f32; FRAME_SIZE]) {
         self.analyze(frame);
         let noise_limit = self.noise_db.map_or(MAX_GAIN_DB, |db| MAX_NOISE_DB - db);

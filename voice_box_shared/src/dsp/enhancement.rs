@@ -1,12 +1,14 @@
-//! Denoiser lifetime and warmup, independent of output retiming and mixing.
+//! Denoiser lifetime and warmup, independent of output fades and mixing.
 
 use super::channel::Channel;
 use crate::apo_config::NoiseReductionDb;
 use dfn3_rs::Model;
 
+const KEEP_WARM_SECONDS: f64 = 0.020;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
-    Ready,
+    Prepared,
     Running,
     Stopped,
 }
@@ -14,10 +16,10 @@ enum State {
 pub(super) struct Enhancement {
     channels: Vec<Channel>,
     latency_frames: usize,
-    remaining: usize,
+    warmup_remaining: usize,
     state: State,
-    idle_frames: usize,
-    idle_remaining: usize,
+    keep_warm_frames: usize,
+    keep_warm_remaining: usize,
     strength: NoiseReductionDb,
 }
 
@@ -35,10 +37,10 @@ impl Enhancement {
         let mut enhancement = Self {
             channels,
             latency_frames,
-            remaining: 0,
-            state: State::Ready,
-            idle_frames: (sample_rate * super::RAMP_SECONDS).ceil() as usize,
-            idle_remaining: 0,
+            warmup_remaining: 0,
+            state: State::Prepared,
+            keep_warm_frames: (sample_rate * KEEP_WARM_SECONDS).ceil() as usize,
+            keep_warm_remaining: 0,
             strength,
         };
         // Prepare every channel off the real-time thread, including bypassed streams.
@@ -46,9 +48,6 @@ impl Enhancement {
         enhancement
     }
 
-    pub(super) fn channels(&self) -> usize {
-        self.channels.len()
-    }
     pub(super) fn latency_frames(&self) -> usize {
         self.latency_frames
     }
@@ -58,9 +57,9 @@ impl Enhancement {
             channel.reset(strength);
         }
         self.strength = strength;
-        self.state = State::Ready;
-        self.remaining = self.latency_frames;
-        self.idle_remaining = 0;
+        self.state = State::Prepared;
+        self.warmup_remaining = self.latency_frames;
+        self.keep_warm_remaining = 0;
     }
 
     pub(super) fn set_strength(&mut self, strength: NoiseReductionDb) {
@@ -86,23 +85,23 @@ impl Enhancement {
             if self.state == State::Stopped {
                 self.reset(self.strength);
             }
-            self.idle_remaining = self.idle_frames;
-        } else if self.state != State::Running || self.idle_remaining == 0 {
-            // An unused, prepared channel stays ready however long bypass lasts.
+            self.keep_warm_remaining = self.keep_warm_frames;
+        } else if self.state != State::Running || self.keep_warm_remaining == 0 {
+            // Only channels that have processed input need a reset on reactivation.
             if self.state == State::Running {
                 self.state = State::Stopped;
             }
             output.fill(0.0);
             return false;
         } else {
-            self.idle_remaining -= 1;
+            self.keep_warm_remaining -= 1;
         }
         self.state = State::Running;
         for ((&sample, channel), output) in input.iter().zip(&mut self.channels).zip(output) {
             *output = channel.process_sample(sample);
         }
-        if self.remaining != 0 {
-            self.remaining -= 1;
+        if self.warmup_remaining != 0 {
+            self.warmup_remaining -= 1;
             return false;
         }
         true
