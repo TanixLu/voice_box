@@ -27,7 +27,7 @@ macro_rules! catalog {
 
 catalog! {
     SoundForwarding => ("Sound forwarding", "声音转发");
-    ForwardingOff => ("Do not forward", "不转发");
+    ForwardingOff => ("Off", "关闭");
     DefaultSpeaker => ("Default speaker", "默认扬声器");
     ForwardingRetrying => ("Forwarding unavailable; retrying…", "声音转发暂不可用，正在重试…");
     ForwardingWaitingForMicrophone => ("Waiting for a microphone…", "正在等待麦克风…");
@@ -172,7 +172,7 @@ catalog! {
     UninstallingPlugin => ("Uninstalling plugin…", "正在卸载插件…");
     VoiceConfig => ("Voice settings", "语音设置");
     NoiseReduction => ("Noise reduction", "降噪");
-    DenoisingDisabled => ("Disabled", "不启用");
+    DenoisingDisabled => ("Off", "关闭");
     VolumeAdjustment => ("Volume adjustment", "音量调节");
     Mute => ("Mute", "静音");
     OriginalVolume => ("Original volume", "原始音量");
