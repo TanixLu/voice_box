@@ -183,7 +183,7 @@ catalog! {
     UndoChanges => ("Undo changes", "撤销修改");
     RestoreDefaults => ("Restore defaults", "恢复默认");
     UnsavedVoiceConfig => ("There are unsaved changes. Preview uses the current settings; save to apply them to microphone plugins.", "有未保存的修改；试听使用当前设置，保存后应用于麦克风插件。");
-    VoiceConfigApplied => ("Settings are applied to all microphones with the VoiceBox plugin installed.", "设置已应用到所有安装 VoiceBox 插件的麦克风。");
+    VoiceConfigApplied => ("Settings apply to all microphones with the VoiceBox plugin, even after closing the app.", "设置已应用到所有安装 VoiceBox 插件的麦克风，界面退出后依旧生效。");
     RecordingPreview => ("Voice preview", "语音试听");
     FinishRecording => ("Finish recording", "结束录音");
     StartRecording => ("Start recording", "开始录音");
