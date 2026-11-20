@@ -6,9 +6,7 @@ mod delay;
 #[cfg(target_arch = "x86_64")]
 mod denormals;
 mod enhancement;
-mod high_pass;
 mod limiter;
-mod pre_gain;
 mod ramp;
 mod rate_matcher;
 mod resampler;

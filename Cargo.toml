@@ -12,7 +12,6 @@ license = "MIT OR Apache-2.0"
 anyhow = "1.0.104"
 atomic-write-file = "0.3.1"
 dfn3_rs = { version = "0.1.2", default-features = false }
-earshot = "1.2.2"
 eframe = { version = "0.37.0", default-features = false }
 egui = { version = "0.37.0", default-features = false }
 egui-winit = { version = "0.37.0", default-features = false }

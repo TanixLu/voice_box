@@ -5987,7 +5987,6 @@ limitations under the License.
 - audio-codec-algorithms 0.8.1: https://github.com/karip/audio-codec-algorithms
 - color 0.3.3: https://github.com/linebender/color
 - document-features 0.2.12: https://github.com/slint-ui/document-features
-- earshot 1.2.2: https://github.com/pykeio/earshot
 - ecolor 0.37.0: https://github.com/emilk/egui
 - eframe 0.37.0: https://github.com/emilk/egui/tree/main/crates/eframe
 - egui-winit 0.37.0: https://github.com/emilk/egui/tree/main/crates/egui-winit

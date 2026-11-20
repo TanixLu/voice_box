@@ -3,16 +3,11 @@
 use dfn3_rs::{ALGORITHM_DELAY, Denoiser, FRAME_SIZE, Model, SAMPLE_RATE};
 use std::time::Duration;
 
-use super::{
-    PARAMETER_RAMP_SECONDS, StreamingResampler, finite_sample, high_pass::HighPass,
-    pre_gain::PreGain,
-};
+use super::{PARAMETER_RAMP_SECONDS, StreamingResampler, finite_sample};
 use crate::apo_config::NoiseReductionDb;
 
 pub(super) struct Channel {
     denoiser: Box<Denoiser>,
-    high_pass: HighPass,
-    pre_gain: PreGain,
     input_resampler: StreamingResampler,
     output_resampler: StreamingResampler,
     input: [f32; FRAME_SIZE],
@@ -33,8 +28,6 @@ impl Channel {
         let prefill = Self::prefill_frames(sample_rate);
         Self {
             denoiser: Box::new(Denoiser::with_model(model)),
-            high_pass: HighPass::new(rate),
-            pre_gain: PreGain::new(),
             input_resampler,
             output_resampler,
             input: [0.0; FRAME_SIZE],
@@ -60,10 +53,8 @@ impl Channel {
 
     pub(super) fn latency_frames(sample_rate: f64) -> usize {
         let rate = f64::from(SAMPLE_RATE);
-        // PreGain::prepare emits the previous block, adding one FRAME_SIZE
-        // (10 ms) of lookahead on top of the queue prefill and ALGORITHM_DELAY.
         (Self::prefill_frames(sample_rate) as f64
-            + (ALGORITHM_DELAY + FRAME_SIZE) as f64 * sample_rate / rate
+            + ALGORITHM_DELAY as f64 * sample_rate / rate
             + (StreamingResampler::delay_seconds(sample_rate, rate)
                 + StreamingResampler::delay_seconds(rate, sample_rate))
                 * sample_rate)
@@ -74,8 +65,6 @@ impl Channel {
         self.denoiser
             .set_attenuation_limit(f32::from(strength.as_u8()));
         self.denoiser.reset();
-        self.high_pass.reset();
-        self.pre_gain.reset();
         self.input_resampler.reset();
         self.output_resampler.reset();
         self.input.fill(0.0);
@@ -97,12 +86,10 @@ impl Channel {
     pub(super) fn process_sample(&mut self, input: f32) -> f32 {
         self.input_resampler.push(input);
         while let Some(sample) = self.input_resampler.next_sample() {
-            self.input[self.pending] = self.high_pass.process_sample(sample);
+            self.input[self.pending] = finite_sample(sample);
             self.pending += 1;
             if self.pending == FRAME_SIZE {
-                self.pre_gain.prepare(&mut self.input);
                 self.denoiser.process(&self.input, &mut self.output);
-                self.pre_gain.restore(&mut self.output);
                 self.pending = 0;
                 for &sample in &self.output {
                     self.output_resampler.push(finite_sample(sample));
