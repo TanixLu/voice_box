@@ -1,6 +1,6 @@
 //! Single-writer / multiple-reader PCM broadcast. Only background
 //! workers access the named shared memory; the APO copies into its own locked memory.
-//! Samples retain floating-point headroom; output limiting belongs after mixing.
+//! Samples retain floating-point headroom for resampling and mixing.
 
 use std::{
     mem::size_of,

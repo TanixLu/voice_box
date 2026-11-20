@@ -1,4 +1,4 @@
-//! The playback thread: decodes one sound into the microphone transport and the speaker monitor.
+//! The playback thread: decodes one sound into the microphone transport and the speaker stream.
 
 use std::{
     collections::VecDeque,
@@ -14,7 +14,7 @@ use voice_box_shared::pcm_transport::{
 };
 
 use crate::{
-    audio::monitor::Monitor,
+    audio::speaker_stream::SpeakerStream,
     database::blob::AudioSource,
     hotkeys::HeldKeys,
     i18n::{Details, Message, Text, UserContext},
@@ -213,8 +213,7 @@ impl MicrophoneRoute {
         Ok(())
     }
 
-    /// Bakes this route's gain into PCM without clipping; the APO limits
-    /// only after resampling and mixing with the microphone.
+    /// Applies this route's gain while retaining floating-point headroom for the APO mix.
     fn write(&mut self, buffer: &PlaybackBuffer, gain: f32) {
         let Some(writer) = self.writer.as_mut().filter(|_| self.generation != 0) else {
             return;
@@ -233,31 +232,31 @@ impl MicrophoneRoute {
 /// Monitoring on a speaker; after a failure it stays off until the next configuration.
 #[derive(Default)]
 struct SpeakerRoute {
-    monitor: Option<Monitor>,
+    stream: Option<SpeakerStream>,
     failed: bool,
 }
 
 impl SpeakerRoute {
     fn play(&mut self, config: &PlaybackConfig, buffer: &PlaybackBuffer) -> anyhow::Result<()> {
         if config.speaker_gain_percent.is_mute() || self.failed {
-            self.monitor = None;
+            self.stream = None;
             return Ok(());
         }
         let gain = config.speaker_gain_percent.as_f32_gain();
         let result = self
-            .monitor
+            .stream
             .take()
-            .map_or_else(|| Monitor::open(config.speaker_device.as_deref()), Ok)
-            .and_then(|monitor| {
+            .map_or_else(|| SpeakerStream::open(config.speaker_device.as_deref()), Ok)
+            .and_then(|stream| {
                 // Opening a device or decoding a packet can take time. Read the
                 // current clock so the render queue does not use a stale timeline.
-                self.monitor.insert(monitor).fill(pcm_now(), |frame| {
+                self.stream.insert(stream).fill(pcm_now(), |frame| {
                     let [left, right] = buffer.sample(frame);
                     [left * gain, right * gain]
                 })
             });
         if result.is_err() {
-            self.monitor = None;
+            self.stream = None;
             self.failed = true;
         }
         result
@@ -330,7 +329,7 @@ pub fn run(
             // Keep the render client running on its owning COM thread. Its short
             // queue drains while the new sound's timeline is prepared.
             tracing::info!(sound_id = next_id, duration_secs = ?source.decoder.duration_secs,
-                speaker_stream_reused = speaker.monitor.is_some(), "Soundboard playback switched");
+                speaker_stream_reused = speaker.stream.is_some(), "Soundboard playback switched");
             let _ = events.send(PlaybackEvent::Started {
                 revision,
                 duration_secs: source.decoder.duration_secs,

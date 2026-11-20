@@ -3,8 +3,8 @@
 
 pub mod loopback;
 pub mod microphone;
-pub mod monitor;
 pub mod playback;
+pub mod speaker_stream;
 
 use anyhow::bail;
 use wasapi::WaveFormat;

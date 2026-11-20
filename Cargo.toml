@@ -23,7 +23,6 @@ lz4_flex = { version = "0.14.2", default-features = false, features = [
     "safe-decode",
     "checked-decode",
 ] }
-num-traits = "0.2.19"
 num_enum = "0.7.6"
 restart-manager = "0.1.0"
 resvg = { version = "0.50.0", default-features = false }

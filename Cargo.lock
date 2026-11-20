@@ -3606,7 +3606,6 @@ version = "2.0.0"
 dependencies = [
  "anyhow",
  "dfn3_rs",
- "num-traits",
  "rubato",
  "serde",
  "serde_json",

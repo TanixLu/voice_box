@@ -15,7 +15,7 @@ use windows::{
 };
 
 use voice_box_shared::{
-    dsp::{RateMatcher, ZeroLatencyLimiter},
+    dsp::{RateMatcher, finite_sample},
     pcm_transport::{PCM_CHANNELS, PCM_MAX_CURSOR_DRIFT_FRAMES, PCM_SAMPLE_RATE, PcmFrame},
     win::wide_null,
 };
@@ -28,7 +28,7 @@ use crate::{
 
 /// The soundboard reuses the same WASAPI/COM lifetime and format negotiation as
 /// preview playback, with a shorter queue so route and volume changes feel quick.
-pub struct Monitor {
+pub struct SpeakerStream {
     // Service interfaces must be released before the client and its event handle;
     // COM must remain initialized until all of them have been released.
     render: IAudioRenderClient,
@@ -39,10 +39,9 @@ pub struct Monitor {
     last_position: u64,
     last_progress: Instant,
     matcher: RateMatcher,
-    limiter: ZeroLatencyLimiter,
     _com_guard: ComGuard,
 }
-impl Monitor {
+impl SpeakerStream {
     pub fn open(device_id: Option<&str>) -> anyhow::Result<Self> {
         let _com_guard = ComGuard::mta()?;
         let enumerator = enumerator()?;
@@ -80,7 +79,6 @@ impl Monitor {
             last_position: 0,
             last_progress: Instant::now(),
             matcher: RateMatcher::new(f64::from(PCM_SAMPLE_RATE), capacity as usize),
-            limiter: ZeroLatencyLimiter::new(f64::from(PCM_SAMPLE_RATE)),
             _com_guard,
         })
     }
@@ -124,9 +122,8 @@ impl Monitor {
                 self.cursor += 1;
                 stereo
             });
-            for (destination, mut stereo) in data.iter_mut().zip(output.iter().copied()) {
-                self.limiter.process_frame(&mut stereo);
-                destination.write(stereo);
+            for (destination, &stereo) in data.iter_mut().zip(output) {
+                destination.write(stereo.map(finite_sample));
             }
             unsafe {
                 self.render.ReleaseBuffer(frames, 0)?;

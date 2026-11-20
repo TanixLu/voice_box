@@ -21,7 +21,7 @@ use windows::Win32::{
 };
 
 use voice_box_shared::{
-    dsp::clamp_sample,
+    dsp::finite_sample,
     pcm_transport::{PCM_CHANNELS, PCM_SAMPLE_RATE, PcmFrame},
 };
 
@@ -49,7 +49,7 @@ fn place_packet(samples: &mut Vec<f32>, start: usize, frames: usize, data: Optio
     let destination = &mut samples.as_chunks_mut::<PCM_CHANNELS>().0[start..end];
     if let Some(data) = data {
         for (output, &input) in destination.iter_mut().zip(data) {
-            *output = input.map(clamp_sample);
+            *output = input.map(finite_sample);
         }
     } else {
         destination.fill(PcmFrame::default());

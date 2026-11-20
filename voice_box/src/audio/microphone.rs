@@ -112,7 +112,7 @@ pub fn capture(
                 recording.samples.extend(
                     bytes
                         .chunks_exact(sample_format.bytes())
-                        .map(|sample| sample_format.decode(sample) as f32),
+                        .map(|sample| sample_format.decode(sample)),
                 );
             } else {
                 unsafe {

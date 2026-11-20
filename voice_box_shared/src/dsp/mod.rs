@@ -6,22 +6,20 @@ mod delay;
 #[cfg(target_arch = "x86_64")]
 mod denormals;
 mod enhancement;
-mod limiter;
 mod ramp;
 mod rate_matcher;
 mod resampler;
 mod sample;
 
 pub use self::{
-    limiter::ZeroLatencyLimiter,
     rate_matcher::RateMatcher,
     resampler::{RandomAccessResampler, StreamingResampler},
-    sample::{SampleFormat, clamp_sample, finite_sample},
+    sample::{SampleFormat, finite_sample},
 };
 
 #[cfg(target_arch = "x86_64")]
 use self::denormals::DenormalGuard;
-use self::{delay::GainDelay, enhancement::Enhancement, limiter::LookaheadLimiter, ramp::Ramp};
+use self::{delay::GainDelay, enhancement::Enhancement, ramp::Ramp};
 use crate::{apo_config::ApoConfig, pcm_transport::PcmFrame};
 use dfn3_rs::Model;
 
@@ -35,23 +33,21 @@ const SWITCH_FADE_SECONDS: f64 = 0.010;
 /// Steady-state microphone latency for a validated sample rate and live config.
 /// A live switch may still be in progress when this target is queried.
 pub fn target_latency_hns(sample_rate: f64, config: &ApoConfig) -> i64 {
-    let enhancement = if config.noise_reduction_db.is_enabled() {
+    let frames = if config.noise_reduction_db.is_enabled() {
         channel::Channel::latency_frames(sample_rate)
     } else {
         0
     };
-    let frames = enhancement + LookaheadLimiter::latency_frames(sample_rate);
     (frames as f64 / sample_rate * 10_000_000.0).ceil() as i64
 }
 
-/// State for microphone processing and the final mixed-output limiter.
+/// State for microphone enhancement, gain, and bypass transitions.
 struct ProcessingChain {
     enhancement: Enhancement,
     gain_delay: GainDelay,
     gain: Ramp,
     switch_fade: Ramp,
     using_denoised_path: bool,
-    limiter: LookaheadLimiter,
 }
 
 impl ProcessingChain {
@@ -67,7 +63,6 @@ impl ProcessingChain {
             gain: Ramp::new(config.gain_db.as_f32_gain(), gain_ramp_frames),
             switch_fade: Ramp::new(1.0, fade_frames),
             using_denoised_path,
-            limiter: LookaheadLimiter::new(sample_rate, channels),
         }
     }
 
@@ -77,7 +72,6 @@ impl ProcessingChain {
         self.gain_delay.reset();
         self.gain.reset(config.gain_db.as_f32_gain());
         self.switch_fade.reset(1.0);
-        self.limiter.reset();
     }
 
     fn configure(&mut self, config: &ApoConfig) {
@@ -191,7 +185,7 @@ impl AudioProcessor {
         self.chain.is_none()
     }
 
-    /// Mix host-rate stereo playback before limiting and encoding exactly once.
+    /// Mix host-rate stereo playback before encoding exactly once.
     /// Denoised audio uses the microphone gain from its capture time.
     /// Live denoising switches fade the microphone output to zero before changing paths.
     /// A zero gain does not stop the denoiser.
@@ -223,7 +217,7 @@ impl AudioProcessor {
         let enhanced = &mut enhanced[..channels];
         for (index, frame) in buffer.chunks_exact_mut(self.frame_bytes).enumerate() {
             for (sample, value) in frame.chunks_exact(sample_bytes).zip(samples.iter_mut()) {
-                *value = format.decode(sample) as f32;
+                *value = format.decode(sample);
             }
             chain.process_microphone(samples, enhanced, denoising_requested);
             if let Some(playback) = playback {
@@ -239,9 +233,8 @@ impl AudioProcessor {
                     }
                 }
             }
-            chain.limiter.process_frame(samples);
             for (sample, &value) in frame.chunks_exact_mut(sample_bytes).zip(samples.iter()) {
-                format.encode(sample, f64::from(value));
+                format.encode(sample, value);
             }
         }
     }
